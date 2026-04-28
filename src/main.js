@@ -1,11 +1,14 @@
 import './style.css';
 import { auth } from './firebase.js';
-import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
+import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
+import { loadUserInfo } from './app.js';
+import { renderLayout } from './layout.js';
 
 // 앱 시작
-onAuthStateChanged(auth, (user) => {
+onAuthStateChanged(auth, async (user) => {
   if (user) {
-    showApp(user);
+    await loadUserInfo(user);
+    renderLayout();
   } else {
     showLogin();
   }
@@ -40,7 +43,6 @@ function showLogin() {
   });
 }
 
-// 로그인 처리
 async function handleLogin() {
   const email = document.getElementById('email').value.trim();
   const password = document.getElementById('password').value;
@@ -64,18 +66,3 @@ async function handleLogin() {
     btn.disabled = false;
   }
 }
-
-// 메인 화면 (임시)
-function showApp(user) {
-  document.getElementById('app').innerHTML = `
-    <div style="padding: 40px; text-align: center;">
-      <h2>로그인 성공!</h2>
-      <p style="margin-top: 8px; color: #888;">${user.email}</p>
-      <button onclick="handleLogout()" style="margin-top: 24px; padding: 8px 20px; cursor: pointer;">로그아웃</button>
-    </div>
-  `;
-}
-
-window.handleLogout = async () => {
-  await signOut(auth);
-};
