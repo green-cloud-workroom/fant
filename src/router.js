@@ -8,12 +8,16 @@ import { renderFrozenPan } from './pages/frozenPan.js';
 import { renderFrozenSep } from './pages/frozenSep.js';
 import { renderSchedule } from './pages/schedule.js';
 import { renderProduction } from './pages/production.js';
+import { renderMain } from './pages/main.js';
 
 export async function renderPage(menuId) {
   const content = document.getElementById('mainContent');
   if (!content) return;
 
   switch(menuId) {
+    case 'main':
+      await renderMain();
+      break;
     case 'settings':
       await renderSettings();
       break;
