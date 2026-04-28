@@ -6,6 +6,7 @@ import { renderEgg } from './pages/egg.js';
 import { renderFrozenProduct } from './pages/frozenProduct.js';
 import { renderFrozenPan } from './pages/frozenPan.js';
 import { renderFrozenSep } from './pages/frozenSep.js';
+import { renderSchedule } from './pages/schedule.js';
 
 export async function renderPage(menuId) {
   const content = document.getElementById('mainContent');
@@ -35,6 +36,9 @@ export async function renderPage(menuId) {
       break;
     case 'frozenSep':
       await renderFrozenSep();
+      break;
+    case 'schedule':
+      await renderSchedule();
       break;
     default:
       content.innerHTML = `
