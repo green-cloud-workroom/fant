@@ -1,6 +1,7 @@
 import { renderSettings } from './pages/settings.js';
 import { renderRecipe } from './pages/recipe.js';
 import { renderMeat } from './pages/meat.js';
+import { renderBag } from './pages/bag.js';
 
 export async function renderPage(menuId) {
   const content = document.getElementById('mainContent');
@@ -15,6 +16,9 @@ export async function renderPage(menuId) {
       break;
     case 'meat':
       await renderMeat();
+      break;
+    case 'bag':
+      await renderBag();
       break;
     default:
       content.innerHTML = `
