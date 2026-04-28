@@ -119,3 +119,105 @@
 .page-placeholder p {
   font-size: 13px;
 }
+/* 설정 페이지 */
+.settings-wrap {
+  padding: 24px;
+  max-width: 900px;
+}
+
+.settings-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin-bottom: 24px;
+}
+
+.settings-section {
+  background: white;
+  border-radius: 8px;
+  padding: 20px 24px;
+  margin-bottom: 16px;
+  border: 1px solid #e8e8e8;
+}
+
+.settings-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.staff-groups {
+  display: flex;
+  gap: 24px;
+}
+
+.staff-group {
+  flex: 1;
+  background: #fafafa;
+  border-radius: 6px;
+  padding: 14px;
+  border: 1px solid #efefef;
+}
+
+.staff-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.staff-group-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #444;
+}
+
+.btn-add-staff {
+  background: #4A7C59;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-family: 'Noto Sans KR', sans-serif;
+  cursor: pointer;
+}
+
+.btn-add-staff:hover {
+  background: #3d6b4a;
+}
+
+.staff-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  background: white;
+  border-radius: 4px;
+  margin-bottom: 6px;
+  border: 1px solid #efefef;
+  font-size: 13px;
+}
+
+.btn-del-staff {
+  background: none;
+  border: none;
+  color: #e53e3e;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: 'Noto Sans KR', sans-serif;
+}
+
+.btn-del-staff:hover {
+  text-decoration: underline;
+}
+
+.staff-empty {
+  font-size: 12px;
+  color: #aaa;
+  text-align: center;
+  padding: 8px 0;
+}
