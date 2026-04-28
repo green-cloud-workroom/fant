@@ -4,6 +4,7 @@ import { renderMeat } from './pages/meat.js';
 import { renderBag } from './pages/bag.js';
 import { renderEgg } from './pages/egg.js';
 import { renderFrozenProduct } from './pages/frozenProduct.js';
+import { renderFrozenPan } from './pages/frozenPan.js';
 
 export async function renderPage(menuId) {
   const content = document.getElementById('mainContent');
@@ -27,6 +28,9 @@ export async function renderPage(menuId) {
       break;
     case 'frozenProduct':
       await renderFrozenProduct();
+      break;
+    case 'frozenPan':
+      await renderFrozenPan();
       break;
     default:
       content.innerHTML = `
