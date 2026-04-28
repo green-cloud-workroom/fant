@@ -1,4 +1,5 @@
 import { renderSettings } from './pages/settings.js';
+import { renderRecipe } from './pages/recipe.js';
 
 export async function renderPage(menuId) {
   const content = document.getElementById('mainContent');
@@ -7,6 +8,9 @@ export async function renderPage(menuId) {
   switch(menuId) {
     case 'settings':
       await renderSettings();
+      break;
+    case 'recipe':
+      await renderRecipe();
       break;
     default:
       content.innerHTML = `
