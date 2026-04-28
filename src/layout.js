@@ -64,12 +64,10 @@ async function updateSubbar() {
     const { db } = await import('./firebase.js');
     const { getDoc, getDocs, doc, collection } = await import('firebase/firestore');
 
-    // 계란 재고
     const eggSnap = await getDoc(doc(db, 'eggStock', 'global'));
     const eggQty = eggSnap.exists() ? eggSnap.data().currentQty : 0;
     document.getElementById('subEgg').textContent = `🥚 ${eggQty}개`;
 
-    // 부족재고
     const meatTypesSnap = await getDocs(collection(db, 'meatTypes'));
     const meatTypes = meatTypesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const meatStocksSnap = await getDocs(collection(db, 'meatStocks'));
@@ -91,7 +89,6 @@ async function updateSubbar() {
     });
     document.getElementById('subLowStock').textContent = `⚠️ 부족재고 ${lowCount}개`;
 
-    // 입고예정
     const todayStr = kst.toISOString().split('T')[0];
     const scheduleSnap = await getDocs(collection(db, 'schedules'));
     const pendingSchedules = scheduleSnap.docs
