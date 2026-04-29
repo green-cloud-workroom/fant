@@ -3,13 +3,16 @@ import { auth } from './firebase.js';
 import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import { loadUserInfo } from './app.js';
 import { renderLayout } from './layout.js';
+import { setupMidnightLogout, clearMidnightLogout } from './midnightLogout.js';
 
 // 앱 시작
 onAuthStateChanged(auth, async (user) => {
   if (user) {
     await loadUserInfo(user);
     renderLayout();
+    setupMidnightLogout();
   } else {
+    clearMidnightLogout();
     showLogin();
   }
 });
