@@ -1,6 +1,6 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy
+  collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy, setDoc
 } from 'firebase/firestore';
 import { getTodayKST as getToday, getNextBusinessDay } from '../utils/date.js';
 
@@ -306,7 +306,7 @@ async function executeProductionLoad(today, staffName) {
     });
 
     // productionCompletion 저장
-    await addDoc(collection(db, 'productionCompletion'), {
+    await setDoc(doc(db, 'productionCompletion', today), {
       runDate: today,
       targetProductionDate: nextBizDay,
       status: 'completed',
