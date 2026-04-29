@@ -2,6 +2,7 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, setDoc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc
 } from 'firebase/firestore';
+import { getTodayKST as getToday } from '../utils/date.js';
 
 let meatTypes = [];
 let currentTab = 'frozen';
@@ -633,9 +634,6 @@ function showMeatTypesModal() {
 }
 
 // 유틸
-function getToday() {
-  return new Date().toISOString().split('T')[0];
-}
 
 function getRandomColor() {
   const colors = ['#e8f4ea', '#e8eef8', '#fef0e8', '#f0e8fe', '#fff0e8', '#e8f8f4'];

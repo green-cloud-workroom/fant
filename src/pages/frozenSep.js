@@ -2,6 +2,7 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc
 } from 'firebase/firestore';
+import { getTodayKST as getToday } from '../utils/date.js';
 
 export async function renderFrozenSep() {
   const content = document.getElementById('mainContent');
@@ -441,9 +442,6 @@ function showAdjustModal(stocks) {
 }
 
 // 유틸
-function getToday() {
-  return new Date().toISOString().split('T')[0];
-}
 
 let staffCache = {};
 async function loadStaffCache() {

@@ -2,6 +2,7 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, setDoc, addDoc, updateDoc, getDoc, query, orderBy
 } from 'firebase/firestore';
+import { getTodayKST as getToday } from '../utils/date.js';
 
 export async function renderEgg() {
   const content = document.getElementById('mainContent');
@@ -278,9 +279,6 @@ function showSetMinModal(eggStock) {
 }
 
 // 유틸
-function getToday() {
-  return new Date().toISOString().split('T')[0];
-}
 
 let staffCache = {};
 async function loadStaffCache() {

@@ -2,6 +2,7 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy
 } from 'firebase/firestore';
+import { getTodayKST as getToday, getNextBusinessDay } from '../utils/date.js';
 
 let productions = [];
 let nextProductions = [];
@@ -39,19 +40,7 @@ async function loadAllData() {
   completionDoc = compSnap.exists() ? { id: compSnap.id, ...compSnap.data() } : null;
 }
 
-function getToday() {
-  const now = new Date();
-  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-  return kst.toISOString().split('T')[0];
-}
 
-function getNextBusinessDay(dateStr) {
-  const date = new Date(dateStr);
-  do {
-    date.setDate(date.getDate() + 1);
-  } while (date.getDay() === 0 || date.getDay() === 6);
-  return date.toISOString().split('T')[0];
-}
 
 function renderMainLayout() {
   const content = document.getElementById('mainContent');

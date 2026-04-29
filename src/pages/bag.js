@@ -2,6 +2,7 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, setDoc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc
 } from 'firebase/firestore';
+import { getTodayKST as getToday } from '../utils/date.js';
 
 let bagTypes = [];
 
@@ -406,9 +407,6 @@ function showBagAdjustModal(bag) {
 }
 
 // 유틸
-function getToday() {
-  return new Date().toISOString().split('T')[0];
-}
 
 let staffCache = {};
 async function loadStaffCache() {

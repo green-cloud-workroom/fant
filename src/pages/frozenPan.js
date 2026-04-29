@@ -396,9 +396,6 @@ async function cancelOrder(row, lots) {
 }
 
 // 유틸
-function getToday() {
-  return new Date().toISOString().split('T')[0];
-}
 
 let staffCache = {};
 async function loadStaffCache() {
