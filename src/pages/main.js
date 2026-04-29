@@ -64,7 +64,7 @@ function renderMainLayout() {
             <button class="btn-secondary" id="btnBigView" style="font-size:11px;padding:3px 10px;">크게보기</button>
             ${isCompleted
               ? `<button class="btn-secondary" id="btnCancelCompletion" style="font-size:11px;padding:3px 10px;color:#e53e3e;">내일생산취소</button>`
-              : `<button class="btn-primary" id="btnTomorrowLoad" style="font-size:12px;padding:5px 14px;">내일생산불러오기</button>`
+              : `<button class="btn-primary" id="btnTomorrowLoad" style="font-size:12px;padding:5px 14px;" ${nextProductions.length === 0 ? 'disabled title="다음 영업일에 등록된 생산이 없습니다"' : ''}>내일생산불러오기</button>`
             }
           </div>
         </div>
@@ -205,6 +205,10 @@ function renderQuickInfo(isCompleted) {
 
 async function handleTomorrowLoad() {
   const today = getToday();
+  if (nextProductions.length === 0) {
+    alert('다음 영업일에 등록된 생산이 없습니다.');
+    return;
+  }
   if (completionDoc?.status === 'completed') {
     alert('오늘 내일생산불러오기는 이미 완료되었습니다.');
     return;

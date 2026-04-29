@@ -1036,3 +1036,20 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   line-height: 1;
   vertical-align: baseline;
 }
+/* ============================================
+   [Phase 3 side patch] 비활성 버튼 스타일
+   내일생산불러오기 빈 클릭 가드 등에 사용
+   ============================================ */
+
+.btn-primary:disabled,
+.btn-primary[disabled] {
+  background: #b0b0b0;
+  color: #f0f0f0;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.btn-primary:disabled:hover,
+.btn-primary[disabled]:hover {
+  background: #b0b0b0;
+}
