@@ -1,6 +1,6 @@
 // src/services/closingChecks.js
 //
-// 마감 차단 항목 체크 함수 4개 (Phase 2 — V1).
+// 마감 차단 항목 체크 함수 4개 (Phase 2 — V1) + wrapper 함수 1개 (Phase 3a).
 //
 // Firestore에서 데이터를 fetch한 뒤 closingChecksLogic.js의 순수 함수로 판정.
 // 각 함수 시그니처: (dateStr) => Promise<{ blocked: boolean, reason: string, count: number }>
@@ -14,7 +14,8 @@ import {
   judgeTomorrowProductionLoaded,
   judgeFrozenOrdersConfirmed,
   judgeSchedulesProcessed,
-  judgeEggOutputForProduction
+  judgeEggOutputForProduction,
+  aggregateBlockingItems
 } from './closingChecksLogic.js';
 
 /**
@@ -65,4 +66,41 @@ export async function checkEggOutputForProduction(dateStr) {
   const eggLogs = eggSnap.docs.map(d => d.data());
 
   return judgeEggOutputForProduction(productions, eggLogs, dateStr);
+}
+
+/**
+ * [Phase 3a 신규]
+ * 지정 날짜의 모든 마감 차단 항목 조회 — wrapper.
+ *
+ * V1 차단 항목 4개(1, 2, 3, 7)를 동시 조회 후 집계.
+ * Promise.all로 병렬 호출 → 단일 호출 4번보다 빠름.
+ *
+ * 사용처(예정):
+ *   - Phase 3b: 빨간 배너 (차단 항목 N개 표시)
+ *   - Phase 3c: 메뉴 ⚠️ 아이콘 (jumpMenu 매핑 사용)
+ *   - Phase 3d: 로그인 직후 모달 (items 리스트 + 점프 버튼)
+ *   - Phase 4: 마감 버튼 (totalBlocked > 0이면 마감 차단)
+ *
+ * @param {string} dateStr - 'YYYY-MM-DD' 마감하려는 날짜
+ * @returns {Promise<{
+ *   date: string,
+ *   totalBlocked: number,
+ *   items: Array<{ id: number, label: string, reason: string, count: number, jumpMenu: string }>
+ * }>}
+ */
+export async function getAllBlockingItems(dateStr) {
+  const [item1, item2, item3, item7] = await Promise.all([
+    checkTomorrowProductionLoaded(dateStr),
+    checkFrozenOrdersConfirmed(dateStr),
+    checkSchedulesProcessed(dateStr),
+    checkEggOutputForProduction(dateStr)
+  ]);
+
+  const aggregated = aggregateBlockingItems(item1, item2, item3, item7);
+
+  return {
+    date: dateStr,
+    totalBlocked: aggregated.totalBlocked,
+    items: aggregated.items
+  };
 }

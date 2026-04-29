@@ -47,6 +47,9 @@ function renderMainLayout() {
   const today = getToday();
   const nextBizDay = getNextBusinessDay(today);
   const isCompleted = completionDoc?.status === 'completed';
+  const activeProductions = isCompleted ? nextProductions : productions;
+  const activeDateLabel = isCompleted ? `불러온 다음 영업일 생산 (${nextBizDay})` : '오늘 생산';
+  const meatNeedsTitle = isCompleted ? '🥩 불러온 생산 원육 출고' : '🥩 오늘 원육 출고';
 
   const days = ['일', '월', '화', '수', '목', '금', '토'];
   const todayDate = new Date(today + 'T00:00:00');
@@ -65,32 +68,25 @@ function renderMainLayout() {
             }
           </div>
         </div>
-        <div style="padding:12px;">
-          <div style="font-size:11px;color:#888;margin-bottom:8px;">오늘 생산</div>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;">
-            ${productions.length === 0
-              ? '<div style="color:#aaa;font-size:12px;">오늘 생산 없음</div>'
-              : productions.map(p => renderMiniCard(p, false)).join('')}
+        <div class="main-production-area">
+          <div class="main-production-label">
+            <span>${activeDateLabel}</span>
+            ${isCompleted ? '<span class="main-completed-pill">내일생산불러오기 완료</span>' : ''}
           </div>
-        </div>
-        <div style="padding:12px;border-top:1px solid #f0f0f0;">
-          <div style="font-size:11px;color:#888;margin-bottom:8px;">
-            다음 영업일 생산 <span style="color:#aaa;margin-left:4px;">(${nextBizDay})</span>
-          </div>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;">
-            ${nextProductions.length === 0
-              ? '<div style="color:#aaa;font-size:12px;">다음 영업일 생산 없음</div>'
-              : nextProductions.map(p => renderMiniCard(p, isCompleted)).join('')}
+          <div class="main-production-grid">
+            ${activeProductions.length === 0
+              ? `<div class="main-empty">${isCompleted ? '불러온 다음 영업일 생산 없음' : '오늘 생산 없음'}</div>`
+              : activeProductions.map(p => renderProductionTableCard(p)).join('')}
           </div>
         </div>
       </div>
 
       <div class="main-panel-right-top">
         <div class="main-panel-header">
-          <span class="main-panel-title">🥩 오늘 원육 출고</span>
+          <span class="main-panel-title">${meatNeedsTitle}</span>
         </div>
         <div style="padding:12px;font-size:12px;">
-          ${renderMeatNeeds()}
+          ${renderMeatNeeds(activeProductions, isCompleted)}
         </div>
       </div>
 
@@ -110,27 +106,74 @@ function renderMainLayout() {
   document.getElementById('btnCancelCompletion')?.addEventListener('click', handleCancelCompletion);
 }
 
-function renderMiniCard(p, isNextDay) {
+function renderProductionTableCard(p) {
+  const ingredients = p.ingredientsSnapshot || [];
+  const unitRowName = getProductionUnitRowName(p, ingredients);
+
   return `
-    <div style="
-      background:${isNextDay ? '#fffdf0' : 'white'};
-      border:1px solid #e8e8e8;
-      border-left:4px solid ${p.color || '#4A7C59'};
-      border-radius:6px;
-      padding:8px 12px;
-      min-width:120px;
-    ">
-      <div style="font-size:12px;font-weight:600;margin-bottom:2px;">${p.recipeName}</div>
-      <div style="font-size:11px;color:#555;">${p.productionUnitQty} ${p.productionUnitName}</div>
-      ${p.category === 'raw' ? `<div style="font-size:10px;color:#888;">${p.rawBoxQty || 0}박스</div>` : ''}
+    <div class="main-production-card" style="--recipe-color:${p.color || '#ef7bd0'}">
+      <div class="main-production-card-title">
+        ${p.recipeName}${p.round > 1 ? ` <span>${p.round}회</span>` : ''}
+      </div>
+      <table class="main-ingredient-table">
+        <thead>
+          <tr>
+            <th>부위</th>
+            <th>생산수량</th>
+            <th>단위</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="unit-row">
+            <td>${unitRowName}</td>
+            <td>${formatQty(p.productionUnitQty)}</td>
+            <td>${p.productionUnitName || ''}</td>
+          </tr>
+          ${ingredients.map(ing => `
+            <tr>
+              <td>${ing.name}</td>
+              <td>${formatIngredientQty(ing)}</td>
+              <td>${getIngredientUnit(ing)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      <div class="main-production-meta">
+        ${p.category === 'raw' ? `<span>${p.rawBoxQty || 0}박스</span>` : ''}
+        ${p.category === 'freezeDry' ? `<span>${p.freezeDryBagQty || 0}봉</span><span>${p.breadPanQty || 0}빵판</span><span>${p.freezePanQty || 0}동결판</span>` : ''}
+      </div>
     </div>
   `;
 }
 
-function renderMeatNeeds() {
-  if (productions.length === 0) return '<div style="color:#aaa;">오늘 생산 없음</div>';
+function getProductionUnitRowName(p, ingredients) {
+  const unitName = (p.productionUnitName || '').trim();
+  const matched = ingredients.find(ing => ing.name === unitName);
+  if (matched) return matched.name;
+  const inventoryIngredient = ingredients.find(ing => ing.meatTypeId);
+  return inventoryIngredient?.name || unitName || '생산단위';
+}
+
+function formatIngredientQty(ing) {
+  const grams = Number(ing.requiredQtyG || 0);
+  if (ing.meatTypeId) return formatQty(grams / 1000, 1);
+  return formatQty(Math.round(grams));
+}
+
+function getIngredientUnit(ing) {
+  return ing.meatTypeId ? 'kg' : 'g';
+}
+
+function formatQty(value, maxDecimals = 1) {
+  const num = Number(value || 0);
+  if (Number.isInteger(num)) return String(num);
+  return num.toLocaleString('ko-KR', { maximumFractionDigits: maxDecimals });
+}
+
+function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
+  if (targetProductions.length === 0) return `<div style="color:#aaa;">${isCompleted ? '불러온 생산 없음' : '오늘 생산 없음'}</div>`;
   const needs = [];
-  productions.forEach(p => {
+  targetProductions.forEach(p => {
     (p.ingredientsSnapshot || []).forEach(ing => {
       if (ing.autoDeductInventory && ing.linkedToInventory) {
         needs.push({ name: ing.name, requiredG: ing.requiredQtyG });
@@ -377,17 +420,15 @@ async function handleCancelCompletion() {
 }
 
 function showBigView() {
+  const isCompleted = completionDoc?.status === 'completed';
+  const displayProductions = isCompleted ? nextProductions : productions;
+  const title = isCompleted ? `${getNextBusinessDay(getToday())} 불러온 생산` : `${getToday()} 생산 현황`;
+
   showModal(`
-    <h3 class="modal-title">${getToday()} 생산 현황</h3>
-    <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;">
-      ${productions.length === 0 ? '<p style="color:#aaa">생산 없음</p>' :
-        productions.map(p => `
-          <div style="border:1px solid #e8e8e8;border-radius:8px;padding:16px;min-width:160px;border-left:4px solid ${p.color || '#4A7C59'}">
-            <div style="font-size:14px;font-weight:600;margin-bottom:6px;">${p.recipeName}</div>
-            <div style="font-size:13px;color:#555;">${p.productionUnitQty} ${p.productionUnitName}</div>
-            ${p.category === 'raw' ? `<div style="font-size:12px;color:#888;margin-top:2px;">${p.rawBoxQty || 0}박스</div>` : ''}
-          </div>
-        `).join('')}
+    <h3 class="modal-title">${title}</h3>
+    <div class="main-production-grid big-view">
+      ${displayProductions.length === 0 ? '<p style="color:#aaa">생산 없음</p>' :
+        displayProductions.map(p => renderProductionTableCard(p)).join('')}
     </div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">닫기</button>
@@ -399,9 +440,10 @@ function showModal(html) {
   const existing = document.getElementById('modalOverlay');
   if (existing) existing.remove();
   const overlay = document.createElement('div');
+  const isWide = html.includes('main-production-grid big-view');
   overlay.id = 'modalOverlay';
   overlay.className = 'modal-overlay';
-  overlay.innerHTML = `<div class="modal-box">${html}</div>`;
+  overlay.innerHTML = `<div class="modal-box ${isWide ? 'modal-wide' : ''}">${html}</div>`;
   document.body.appendChild(overlay);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
 }

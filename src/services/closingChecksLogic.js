@@ -1,10 +1,11 @@
 // src/services/closingChecksLogic.js
 //
-// 마감 차단 항목 판정 — 순수 함수 4개.
+// 마감 차단 항목 판정 — 순수 함수 4개 + 집계 함수 1개 (Phase 3a 추가).
 // firebase 의존성 없음. 데이터 배열을 인자로 받아 판정만 수행.
 // 단위 테스트(test.js)는 이 파일만 import해서 검증한다.
 //
 // Phase 2 — V1: 차단 항목 1, 2, 3, 7번.
+// Phase 3a — aggregateBlockingItems, BLOCKING_ITEM_META 추가.
 
 /**
  * 1. 내일생산불러오기 처리 안 됨
@@ -132,5 +133,62 @@ export function judgeEggOutputForProduction(productions, eggLogs, dateStr) {
     blocked: true,
     reason: `오늘 노른자 사용 생산 ${eggUsingProductions.length}건인데 계란 출고 미입력`,
     count: eggUsingProductions.length
+  };
+}
+
+/**
+ * [Phase 3a 신규]
+ * 차단 항목 메타데이터 — V1 차단 항목 1, 2, 3, 7번.
+ *
+ * label: 모달/배너에 표시할 짧은 고정 라벨
+ * jumpMenu: 차단 항목 처리하러 갈 메뉴 ID (app.js MENUS의 id와 일치)
+ *   1 → 메인 (내일생산불러오기 버튼이 메인에 있음)
+ *   2 → 동결판 재고 (발주 행 확인)
+ *   3 → 입고 예정관리 (완료/취소 처리)
+ *   7 → 계란 (출고 입력)
+ */
+export const BLOCKING_ITEM_META = {
+  1: { label: '내일생산불러오기 처리 안 됨', jumpMenu: 'main' },
+  2: { label: '동결건조 발주 확인 처리 안 됨', jumpMenu: 'frozenPan' },
+  3: { label: '입고 예정 완료/취소 처리 안 됨', jumpMenu: 'schedule' },
+  7: { label: '계란 출고 미입력', jumpMenu: 'egg' }
+};
+
+/**
+ * [Phase 3a 신규]
+ * 4개 차단 항목 결과를 집계해서 모달/배너용 데이터로 변환.
+ *
+ * blocked=true인 항목만 items에 포함. 항목 ID 순(1→2→3→7) 정렬.
+ * 순수 함수 — Firestore 의존성 없음. 단위 테스트는 이 함수에서 수행.
+ *
+ * @param {Object} item1 - judgeTomorrowProductionLoaded 결과
+ * @param {Object} item2 - judgeFrozenOrdersConfirmed 결과
+ * @param {Object} item3 - judgeSchedulesProcessed 결과
+ * @param {Object} item7 - judgeEggOutputForProduction 결과
+ * @returns {{
+ *   totalBlocked: number,
+ *   items: Array<{ id: number, label: string, reason: string, count: number, jumpMenu: string }>
+ * }}
+ */
+export function aggregateBlockingItems(item1, item2, item3, item7) {
+  const map = { 1: item1, 2: item2, 3: item3, 7: item7 };
+  const items = [];
+
+  for (const id of [1, 2, 3, 7]) {
+    const result = map[id];
+    if (result && result.blocked) {
+      items.push({
+        id,
+        label: BLOCKING_ITEM_META[id].label,
+        reason: result.reason || '',
+        count: result.count || 0,
+        jumpMenu: BLOCKING_ITEM_META[id].jumpMenu
+      });
+    }
+  }
+
+  return {
+    totalBlocked: items.length,
+    items
   };
 }
