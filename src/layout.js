@@ -123,6 +123,7 @@ async function updateSubbar() {
  *   - 모두 마감되어 있으면 안 표시
  *
  * 표시할 때 차단 항목 데이터를 window.__blockingItems에 저장 (Phase 3d 모달이 사용).
+ * 끝에 updateMenuWarnings() 호출 (Phase 3c — 메뉴 ⚠️ 아이콘 갱신).
  */
 async function updateBlockingBanner() {
   const banner = document.getElementById('blockBanner');
@@ -138,6 +139,7 @@ async function updateBlockingBanner() {
     if (!earliest || earliest >= today) {
       banner.style.display = 'none';
       window.__blockingItems = null;
+      updateMenuWarnings();
       return;
     }
 
@@ -147,11 +149,42 @@ async function updateBlockingBanner() {
 
     banner.textContent = `⚠️ ${formatKstDateWithDay(earliest)} 마감 미처리 — 신규 등록이 차단되었습니다 (클릭하여 상세보기)`;
     banner.style.display = 'block';
+
+    updateMenuWarnings();
   } catch (err) {
     console.error('배너 업데이트 오류:', err);
     banner.style.display = 'none';
     window.__blockingItems = null;
+    updateMenuWarnings();
   }
+}
+
+/**
+ * [Phase 3c]
+ * 메뉴 버튼에 ⚠️ 아이콘 추가/제거.
+ *
+ * window.__blockingItems의 items[].jumpMenu와 일치하는 nav-btn에만 ⚠️ 표시.
+ * 매번 호출 시 기존 ⚠️를 모두 제거한 뒤 다시 그림 → idempotent.
+ */
+function updateMenuWarnings() {
+  // 기존 ⚠️ 다 제거 (idempotent 보장)
+  document.querySelectorAll('.nav-btn .warning-icon').forEach(el => el.remove());
+
+  const data = window.__blockingItems;
+  if (!data || data.totalBlocked === 0) return;
+
+  // 차단 항목의 jumpMenu 모음
+  const blockedMenus = new Set(data.items.map(it => it.jumpMenu));
+
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    const menuId = btn.dataset.menu;
+    if (blockedMenus.has(menuId)) {
+      const span = document.createElement('span');
+      span.className = 'warning-icon';
+      span.textContent = ' ⚠️';
+      btn.appendChild(span);
+    }
+  });
 }
 
 /**
