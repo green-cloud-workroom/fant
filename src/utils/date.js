@@ -63,3 +63,29 @@ export function diffDaysKST(dateAStr, dateBStr) {
   const b = new Date(dateBStr + 'T00:00:00+09:00');
   return Math.round((a - b) / (24 * 60 * 60 * 1000));
 }
+
+/**
+ * [Phase 3b 신규]
+ * KST 기준 'M/D(요일)' 형식 변환 (배너/모달 표시용).
+ * 예: '2026-04-28' -> '4/28(화)'
+ *
+ * 월/일은 입력 문자열을 그대로 파싱해서 환경 시간대 무관.
+ * 요일은 KST 정오를 anchor로 계산해 자정 경계 이슈 회피.
+ *
+ * @param {string} dateStr - 'YYYY-MM-DD'
+ * @returns {string} 'M/D(요일)' 또는 빈 문자열(입력이 falsy일 때)
+ */
+export function formatKstDateWithDay(dateStr) {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return '';
+  const month = parseInt(parts[1], 10);
+  const day = parseInt(parts[2], 10);
+  if (Number.isNaN(month) || Number.isNaN(day)) return '';
+
+  const days = ['일', '월', '화', '수', '목', '금', '토'];
+  const kstNoon = new Date(dateStr + 'T12:00:00+09:00');
+  const kstDayIdx = new Date(kstNoon.getTime() + KST_OFFSET_MS).getUTCDay();
+
+  return `${month}/${day}(${days[kstDayIdx]})`;
+}
