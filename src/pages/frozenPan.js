@@ -2,10 +2,15 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc
 } from 'firebase/firestore';
+import { getTodayKST as getToday } from '../utils/date.js';
+import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
+
+let freezeDryRecipes = [];
 
 export async function renderFrozenPan() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>동결판 재고 로딩 중...</p></div>`;
+  freezeDryRecipes = await getActiveFreezeDryRecipes();
   await loadStaffCache();
   const rows = await loadFrozenPanRows();
   const lots = await loadFrozenPanLots();
@@ -185,7 +190,7 @@ function showWorkRowModal(rows, lots) {
     </div>
     <div id="workItems">
       <div class="work-item" style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
-        <input type="text" class="wi-name cell-input" placeholder="제품명" style="flex:1" />
+        <select class="wi-name cell-input" style="flex:1">${getRecipeOptionsHtml(freezeDryRecipes)}</select>
         <input type="number" class="wi-bread cell-input" placeholder="빵판수" style="width:80px" />
         <input type="number" class="wi-freeze cell-input" placeholder="동결판수" style="width:80px" />
         <button class="btn-del-row wi-del">✕</button>
@@ -203,7 +208,7 @@ function showWorkRowModal(rows, lots) {
   document.getElementById('btnAddWorkItem').addEventListener('click', () => {
     document.getElementById('workItems').insertAdjacentHTML('beforeend', `
       <div class="work-item" style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
-        <input type="text" class="wi-name cell-input" placeholder="제품명" style="flex:1" />
+        <select class="wi-name cell-input" style="flex:1">${getRecipeOptionsHtml(freezeDryRecipes)}</select>
         <input type="number" class="wi-bread cell-input" placeholder="빵판수" style="width:80px" />
         <input type="number" class="wi-freeze cell-input" placeholder="동결판수" style="width:80px" />
         <button class="btn-del-row wi-del">✕</button>
@@ -268,7 +273,7 @@ function showOrderRowModal(rows, lots) {
     </div>
     <div id="orderItems">
       <div class="order-item" style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
-        <input type="text" class="oi-name cell-input" placeholder="제품명" style="flex:1" />
+        <select class="oi-name cell-input" style="flex:1">${getRecipeOptionsHtml(freezeDryRecipes)}</select>
         <input type="number" class="oi-qty cell-input" placeholder="돌릴 판수" style="width:100px" oninput="updateOrderTotal()" />
         <button class="btn-del-row oi-del">✕</button>
       </div>
@@ -289,7 +294,7 @@ function showOrderRowModal(rows, lots) {
   document.getElementById('btnAddOrderItem').addEventListener('click', () => {
     document.getElementById('orderItems').insertAdjacentHTML('beforeend', `
       <div class="order-item" style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
-        <input type="text" class="oi-name cell-input" placeholder="제품명" style="flex:1" />
+        <select class="oi-name cell-input" style="flex:1">${getRecipeOptionsHtml(freezeDryRecipes)}</select>
         <input type="number" class="oi-qty cell-input" placeholder="돌릴 판수" style="width:100px" oninput="updateOrderTotal()" />
         <button class="btn-del-row oi-del">✕</button>
       </div>

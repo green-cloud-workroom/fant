@@ -1,7 +1,15 @@
 // KST(Asia/Seoul) 기준 날짜 유틸
 // 스펙 18장: 모든 날짜는 Asia/Seoul 기준 YYYY-MM-DD 문자열로 저장
 
+import { db } from '../firebase.js';
+import { collection, getDocs } from 'firebase/firestore';
+
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+// [Phase 7A] holidays 캐시
+// 모듈 레벨 변수 — 앱 시작 시 1회 로드, 휴일 등록/삭제 시 갱신
+let holidaysCache = [];
+let holidaysCacheLoaded = false;
 
 /**
  * 주어진 Date 객체를 KST 기준 YYYY-MM-DD 문자열로 변환
@@ -37,8 +45,9 @@ export function getYesterdayKST() {
  *                              (Phase 1 V1: 토일만, 추후 holidays 컬렉션 연결 예정)
  * @returns {string} 다음 영업일 YYYY-MM-DD
  */
-export function getNextBusinessDay(dateStr, holidays = []) {
-  // KST 자정 anchor (UTC 기준 -9시간)
+export function getNextBusinessDay(dateStr, holidays = null) {
+  // [Phase 7A] holidays 인자 미전달 시 캐시 자동 사용
+  const effectiveHolidays = holidays !== null ? holidays : holidaysCache;
   let cursor = new Date(dateStr + 'T00:00:00+09:00');
 
   for (let i = 0; i < 365; i++) {
@@ -47,7 +56,7 @@ export function getNextBusinessDay(dateStr, holidays = []) {
     const kstDay = new Date(cursor.getTime() + KST_OFFSET_MS).getUTCDay();
     const candidate = formatKstDate(cursor);
 
-    if (kstDay !== 0 && kstDay !== 6 && !holidays.includes(candidate)) {
+    if (kstDay !== 0 && kstDay !== 6 && !effectiveHolidays.includes(candidate)) {
       return candidate;
     }
   }
@@ -88,4 +97,37 @@ export function formatKstDateWithDay(dateStr) {
   const kstDayIdx = new Date(kstNoon.getTime() + KST_OFFSET_MS).getUTCDay();
 
   return `${month}/${day}(${days[kstDayIdx]})`;
+}
+/**
+ * [Phase 7A]
+ * holidays 컬렉션 전체를 fetch해서 캐시에 저장.
+ * 앱 시작 시 1회 호출 + 휴일 등록/삭제 시 호출.
+ *
+ * @returns {Promise<string[]>} 캐시된 휴일 배열 (YYYY-MM-DD)
+ */
+export async function loadHolidaysCache() {
+  const snap = await getDocs(collection(db, 'holidays'));
+  holidaysCache = snap.docs.map(d => d.id);
+  holidaysCacheLoaded = true;
+  return holidaysCache;
+}
+
+/**
+ * [Phase 7A]
+ * 현재 캐시된 휴일 배열을 반환. 캐시 미로드면 빈 배열.
+ *
+ * @returns {string[]}
+ */
+export function getHolidaysCache() {
+  return holidaysCache;
+}
+
+/**
+ * [Phase 7A]
+ * 캐시 로드 여부 확인.
+ *
+ * @returns {boolean}
+ */
+export function isHolidaysCacheLoaded() {
+  return holidaysCacheLoaded;
 }

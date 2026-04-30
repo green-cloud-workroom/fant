@@ -85,6 +85,11 @@
   },
 
   read: false                             // 사무 로그 미확인 처리용 (Phase 추후)
+
+  acknowledged: false,                    // 확인 처리 여부 (Phase 5A)
+  acknowledgedAt: Timestamp | null,       // 확인 처리 시각
+  acknowledgedBy: string | null,          // 확인 처리한 담당자 표시명
+  acknowledgedByUid: string | null        // 확인 처리한 Firebase Auth uid
 }
 ```
 
@@ -97,4 +102,30 @@
 
 **불변 규칙**:
 - 한 번 생성된 activityLogs 문서는 **수정/삭제 금지** (감사 추적 신뢰성)
-- `read` 필드만 예외적으로 업데이트 가능 (사무 로그 확인 처리용)
+- `read`, `acknowledged`, `acknowledgedAt`, `acknowledgedBy`, `acknowledgedByUid` 필드만 예외적으로 업데이트 가능 (확인 처리용)
+- 삭제는 절대 금지
+---
+
+## holidays/{YYYY-MM-DD}
+
+수동 등록 휴일. 토/일은 코드(`getNextBusinessDay`)에서 자동 처리하므로 저장 안 함.
+
+**문서 ID**: 휴일 날짜 KST `YYYY-MM-DD` (예: `2026-05-01`). 같은 날짜 중복 등록 자동 차단.
+
+**필드**:
+
+​```
+{
+  date: "2026-05-01",       // 문서 ID와 동일 (조회 편의용)
+  label: "근로자의 날",       // 휴일명 (운영 식별용)
+  createdAt: Timestamp,     // 등록 시각 (UTC)
+  createdBy: string         // 등록자 Firebase Auth uid
+}
+​```
+
+**캐시 동작**:
+- 앱 로딩 시 `loadHolidaysCache()` 1회 호출 → `date.js` 모듈 변수에 저장
+- 설정 메뉴에서 휴일 등록/삭제 시 `loadHolidaysCache()` 재호출
+- `getNextBusinessDay(dateStr)` 호출 시 인자 생략하면 캐시 자동 사용
+
+**Firestore Rules**: read 인증 사용자, write admin/office (기존 유지).

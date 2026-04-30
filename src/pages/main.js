@@ -3,6 +3,10 @@ import {
   collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy, setDoc
 } from 'firebase/firestore';
 import { getTodayKST as getToday, getNextBusinessDay } from '../utils/date.js';
+import { getAllBlockingItems } from '../services/closingChecks.js';
+import { setCurrentMenu, currentUserRole } from '../app.js';
+import { renderLayout } from '../layout.js';
+import { renderPage } from '../router.js';
 
 let productions = [];
 let nextProductions = [];
@@ -10,6 +14,7 @@ let recipes = [];
 let meatStocks = [];
 let eggStock = { currentQty: 0, minimumQty: 0 };
 let completionDoc = null;
+let blockingData = { totalBlocked: 0, items: [] };
 
 export async function renderMain() {
   const content = document.getElementById('mainContent');
@@ -38,6 +43,8 @@ async function loadAllData() {
 
   const compSnap = await getDoc(doc(db, 'productionCompletion', today));
   completionDoc = compSnap.exists() ? { id: compSnap.id, ...compSnap.data() } : null;
+
+  blockingData = await getAllBlockingItems(today);
 }
 
 
@@ -52,8 +59,9 @@ function renderMainLayout() {
   const meatNeedsTitle = isCompleted ? '🥩 불러온 생산 원육 출고' : '🥩 오늘 원육 출고';
 
   const days = ['일', '월', '화', '수', '목', '금', '토'];
-  const todayDate = new Date(today + 'T00:00:00');
-  const todayStr = `${todayDate.getMonth()+1}/${todayDate.getDate()} (${days[todayDate.getDay()]})`;
+  const displayDate = isCompleted ? nextBizDay : today;
+  const displayDateObj = new Date(displayDate + 'T00:00:00');
+  const todayStr = `${displayDateObj.getMonth()+1}/${displayDateObj.getDate()} (${days[displayDateObj.getDay()]})`;
 
   content.innerHTML = `
     <div class="main-layout">
@@ -104,6 +112,16 @@ function renderMainLayout() {
   document.getElementById('btnBigView')?.addEventListener('click', showBigView);
   document.getElementById('btnTomorrowLoad')?.addEventListener('click', handleTomorrowLoad);
   document.getElementById('btnCancelCompletion')?.addEventListener('click', handleCancelCompletion);
+
+  // 알림 카드 점프 버튼들
+  document.querySelectorAll('.alert-card-jump').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const menuId = btn.dataset.jump;
+      setCurrentMenu(menuId);
+      renderLayout();
+      renderPage(menuId);
+    });
+  });
 }
 
 function renderProductionTableCard(p) {
@@ -190,21 +208,50 @@ function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
 }
 
 function renderQuickInfo(isCompleted) {
-  const items = [];
+  const cards = [];
+
+  // 1. 차단 항목 (빨강) — getAllBlockingItems 결과
+  blockingData.items.forEach(it => {
+    cards.push(`
+      <div class="alert-card alert-card-blocker">
+        <span class="alert-card-label">⛔ ${it.reason || it.label}</span>
+        <button class="alert-card-jump" data-jump="${it.jumpMenu}">처리하러 가기 →</button>
+      </div>
+    `);
+  });
+
+  // 2. 경고 항목 (노랑) — 계란 부족
   if (eggStock.minimumQty > 0 && eggStock.currentQty < eggStock.minimumQty) {
-    items.push(`<div style="color:#e53e3e;font-size:12px;padding:4px 0;">⚠️ 계란 부족 (현재: ${eggStock.currentQty}개)</div>`);
+    cards.push(`
+      <div class="alert-card alert-card-warning">
+        <span class="alert-card-label">⚠️ 계란 부족 (현재: ${eggStock.currentQty}개 / 최소: ${eggStock.minimumQty}개)</span>
+        <button class="alert-card-jump" data-jump="egg">처리하러 가기 →</button>
+      </div>
+    `);
   }
+
+  // 3. 정보 항목 (초록) — 내일생산불러오기 완료
   if (isCompleted) {
-    items.push(`<div style="color:#2d7a3a;font-size:12px;padding:4px 0;">✅ 내일생산불러오기 완료</div>`);
+    cards.push(`
+      <div class="alert-card alert-card-info">
+        <span class="alert-card-label">✅ 내일생산불러오기 완료</span>
+      </div>
+    `);
   }
-  if (items.length === 0) {
-    items.push('<div style="color:#aaa;font-size:12px;">알림 없음</div>');
+
+  if (cards.length === 0) {
+    return '<div class="alert-empty">오늘 처리할 항목 없음</div>';
   }
-  return items.join('');
+
+  return cards.join('');
 }
 
 async function handleTomorrowLoad() {
   const today = getToday();
+  if (currentUserRole !== 'production') {
+    alert('내일생산불러오기는 생산실 계정만 가능합니다.');
+    return;
+  }
   if (nextProductions.length === 0) {
     alert('다음 영업일에 등록된 생산이 없습니다.');
     return;
@@ -378,6 +425,10 @@ async function executeProductionLoad(today, staffName) {
 }
 
 async function handleCancelCompletion() {
+  if (currentUserRole !== 'production') {
+    alert('내일생산불러오기 취소는 생산실 계정만 가능합니다.');
+    return;
+  }
   if (!confirm('내일생산불러오기를 취소하시겠습니까?\n차감된 재고가 복원됩니다.')) return;
   const reason = prompt('취소 사유를 입력해주세요:');
   if (!reason) return;

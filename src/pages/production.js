@@ -2,7 +2,7 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc, where
 } from 'firebase/firestore';
-import { getTodayKST as getToday } from '../utils/date.js';
+import { getTodayKST as getToday, getHolidaysCache } from '../utils/date.js';
 
 let recipes = [];
 let productions = [];
@@ -40,9 +40,8 @@ function renderProductionLayout() {
       <div class="production-left">
         <div class="production-date-bar">
           <input type="date" id="productionDate" value="${selectedDate}" />
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#555;">
-            <input type="checkbox" id="isHoliday" /> 휴일 지정
-          </label>
+          <span id="holidayBadge">${renderHolidayBadge(selectedDate)}</span>
+          <span id="holidayMonthList">${renderHolidaysOfMonth(selectedDate)}</span>
           <button class="btn-secondary" id="btnBigView" style="margin-left:auto;">크게보기</button>
         </div>
         <div class="production-cards" id="productionCards">
@@ -71,6 +70,8 @@ function renderProductionLayout() {
     selectedDate = e.target.value;
     productions = await loadProductions(selectedDate);
     document.getElementById('productionCards').innerHTML = renderProductionCards();
+    document.getElementById('holidayBadge').innerHTML = renderHolidayBadge(selectedDate);
+    document.getElementById('holidayMonthList').innerHTML = renderHolidaysOfMonth(selectedDate);
     bindCardEvents();
   });
 
@@ -80,7 +81,43 @@ function renderProductionLayout() {
 
   bindCardEvents();
 }
+// [Phase 7B-2] 휴일 배지 렌더 (read-only)
+// 선택한 날짜가 holidays 캐시에 있으면 휴일명 배지 표시. 토/일은 자동 처리되므로 별도 표시 안 함.
+function renderHolidayBadge(dateStr) {
+  if (!dateStr) return '';
 
+  // 토/일 자동 표시
+  const dayOfWeek = new Date(dateStr + 'T00:00:00').getDay();
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    return `<span class="holiday-badge holiday-badge-weekend">${dayOfWeek === 0 ? '일요일' : '토요일'}</span>`;
+  }
+
+  // 등록된 공휴일 표시
+  const holidays = getHolidaysCache();
+  if (holidays.includes(dateStr)) {
+    return `<span class="holiday-badge holiday-badge-registered">🔴 등록 공휴일</span>`;
+  }
+
+  return '';
+}
+
+// [Phase 7B-2] 선택한 날짜의 같은 달 공휴일 목록 표시
+function renderHolidaysOfMonth(dateStr) {
+  if (!dateStr) return '';
+  const [year, month] = dateStr.split('-');
+  const prefix = `${year}-${month}-`;
+  const all = getHolidaysCache();
+  const monthly = all.filter(d => d.startsWith(prefix)).sort();
+
+  if (monthly.length === 0) return '';
+
+  const items = monthly.map(d => {
+    const day = parseInt(d.split('-')[2], 10);
+    return `${month}/${day}`;
+  }).join(', ');
+
+  return `<span class="holiday-month-list">이번 달 공휴일: ${items}</span>`;
+}
 function renderProductionCards() {
   if (productions.length === 0) {
     return '<div style="color:#aaa;font-size:13px;padding:20px;text-align:center;">오늘 생산 없음</div>';

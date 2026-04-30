@@ -1,7 +1,9 @@
 import { db } from '../firebase.js';
 import {
-  doc, getDoc, setDoc, updateDoc
+  collection, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc
 } from 'firebase/firestore';
+import { currentUser, currentUserRole } from '../app.js';
+import { loadHolidaysCache } from '../utils/date.js';
 
 // 설정 페이지 렌더
 export async function renderSettings() {
@@ -9,6 +11,7 @@ export async function renderSettings() {
   content.innerHTML = `<div style="padding:24px;"><p>설정 로딩 중...</p></div>`;
 
   const staffGroups = await loadStaffGroups();
+  const holidays = await loadHolidays();
   
   content.innerHTML = `
     <div class="settings-wrap">
@@ -23,11 +26,19 @@ export async function renderSettings() {
           ${renderStaffGroup('office', '사무', staffGroups.office)}
         </div>
       </div>
+
+      <!-- 공휴일 관리 -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">공휴일 관리</h3>
+        <p class="settings-section-desc">토/일은 자동 처리됩니다. 추가 공휴일만 등록하세요.</p>
+        ${renderHolidaysSection(holidays)}
+      </div>
     </div>
   `;
 
   // 이벤트 바인딩
   bindStaffEvents(staffGroups);
+  bindHolidayEvents(holidays);
 }
 
 // 담당자 그룹 로드
@@ -118,4 +129,102 @@ function renderStaffList(key, members) {
       <button class="btn-del-staff" data-group="${key}" data-index="${i}">삭제</button>
     </div>
   `).join('') || '<p class="staff-empty">담당자 없음</p>';
+}
+// ===== 공휴일 관리 (Phase 7B-1) =====
+
+// 휴일 목록 로드 (날짜 오름차순)
+async function loadHolidays() {
+  const snap = await getDocs(collection(db, 'holidays'));
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => b.id.localeCompare(a.id));
+  return list;
+}
+
+// 휴일 섹션 렌더 (등록 폼 + 목록)
+function renderHolidaysSection(holidays) {
+  const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
+
+  const formHtml = isWriter ? `
+    <div class="holiday-form">
+      <input type="date" id="hd_date" class="cell-input" />
+      <input type="text" id="hd_label" class="cell-input" placeholder="휴일명 (예: 근로자의 날)" />
+      <button class="btn-primary" id="btnAddHoliday">+ 등록</button>
+    </div>
+  ` : `<p class="staff-empty">읽기 전용입니다. 등록은 대표/사무실 계정에서 가능합니다.</p>`;
+
+  const listHtml = holidays.length === 0
+    ? '<p class="staff-empty">등록된 공휴일 없음</p>'
+    : `
+      <div class="holiday-list" id="holidayList">
+        ${holidays.map(h => `
+          <div class="holiday-item" data-id="${h.id}">
+            <span class="holiday-date">${h.id}</span>
+            <span class="holiday-label">${h.label || ''}</span>
+            ${isWriter ? `<button class="btn-del-holiday" data-id="${h.id}">삭제</button>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+  return formHtml + listHtml;
+}
+
+// 휴일 이벤트 바인딩
+function bindHolidayEvents() {
+  const addBtn = document.getElementById('btnAddHoliday');
+  if (addBtn) {
+    addBtn.addEventListener('click', handleAddHoliday);
+  }
+
+  document.querySelectorAll('.btn-del-holiday').forEach(btn => {
+    btn.addEventListener('click', () => handleDeleteHoliday(btn.dataset.id));
+  });
+}
+
+// 휴일 등록
+async function handleAddHoliday() {
+  const dateInput = document.getElementById('hd_date');
+  const labelInput = document.getElementById('hd_label');
+  const date = dateInput.value;
+  const label = labelInput.value.trim();
+
+  if (!date) { alert('날짜를 선택해주세요.'); return; }
+  if (!label) { alert('휴일명을 입력해주세요.'); return; }
+
+  // 같은 날짜 중복 체크
+  const existing = await getDoc(doc(db, 'holidays', date));
+  if (existing.exists()) {
+    alert(`${date}는 이미 등록된 공휴일입니다.`);
+    return;
+  }
+
+  try {
+    await setDoc(doc(db, 'holidays', date), {
+      date,
+      label,
+      createdAt: new Date(),
+      createdBy: currentUser?.uid || null,
+    });
+    await loadHolidaysCache();  // 캐시 즉시 갱신
+    alert('공휴일 등록 완료!');
+    await renderSettings();
+  } catch (err) {
+    console.error(err);
+    alert('등록 실패: ' + err.message);
+  }
+}
+
+// 휴일 삭제
+async function handleDeleteHoliday(holidayId) {
+  if (!confirm(`${holidayId} 공휴일을 삭제하시겠습니까?`)) return;
+
+  try {
+    await deleteDoc(doc(db, 'holidays', holidayId));
+    await loadHolidaysCache();  // 캐시 즉시 갱신
+    alert('공휴일 삭제 완료!');
+    await renderSettings();
+  } catch (err) {
+    console.error(err);
+    alert('삭제 실패: ' + err.message);
+  }
 }

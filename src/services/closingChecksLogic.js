@@ -36,7 +36,7 @@ export function judgeTomorrowProductionLoaded(nextDayProductions, completions, d
 
   return {
     blocked: true,
-    reason: '내일생산불러오기 처리 안 됨',
+    reason: `다음 영업일 생산 ${nextDayProductions.length}건이 있는데 내일생산불러오기를 진행하지 않았습니다`,
     count: nextDayProductions.length
   };
 }
@@ -64,7 +64,7 @@ export function judgeFrozenOrdersConfirmed(rows, dateStr) {
   return {
     blocked: unconfirmed.length > 0,
     reason: unconfirmed.length > 0
-      ? `오늘 동결건조 발주 ${unconfirmed.length}건 미확인`
+      ? `오늘 동결건조 발주 ${unconfirmed.length}건이 확인되지 않았습니다`
       : '',
     count: unconfirmed.length
   };
@@ -87,7 +87,7 @@ export function judgeSchedulesProcessed(schedules, dateStr) {
   return {
     blocked: unprocessed.length > 0,
     reason: unprocessed.length > 0
-      ? `오늘 입고 예정 ${unprocessed.length}건 미처리`
+      ? `오늘 입고 예정 ${unprocessed.length}건이 완료/취소 처리되지 않았습니다`
       : '',
     count: unprocessed.length
   };
@@ -131,7 +131,7 @@ export function judgeEggOutputForProduction(productions, eggLogs, dateStr) {
 
   return {
     blocked: true,
-    reason: `오늘 노른자 사용 생산 ${eggUsingProductions.length}건인데 계란 출고 미입력`,
+    reason: `오늘 노른자 사용 생산 ${eggUsingProductions.length}건인데 계란 출고가 입력되지 않았습니다`,
     count: eggUsingProductions.length
   };
 }

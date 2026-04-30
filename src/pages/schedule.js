@@ -298,7 +298,7 @@ function showCompleteModal(s) {
     <p style="font-size:12px;color:#888;margin-bottom:16px;">발주수량: ${s.orderedQty}${s.orderedUnit}</p>
     <div class="form-group">
       <label>실제 수량 *</label>
-      <input type="number" id="m_actual" value="${s.orderedQty}" />
+      <input type="number" id="m_actual" placeholder="실제 입고 수량 입력" />
     </div>
     <div class="form-group">
       <label>입고 담당자 *</label>

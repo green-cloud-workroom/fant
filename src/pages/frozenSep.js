@@ -3,11 +3,15 @@ import {
   collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
+import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
+
+let freezeDryRecipes = [];
 
 export async function renderFrozenSep() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>동결 분리작업 로딩 중...</p></div>`;
   await loadStaffCache();
+  freezeDryRecipes = await getActiveFreezeDryRecipes();
   const stocks = await loadFrozenSepStocks();
   renderFrozenSepLayout(stocks);
 }
@@ -107,7 +111,7 @@ function showIncomingModal(stocks) {
     <h3 class="modal-title">원물 입고</h3>
     <div class="form-group">
       <label>제품명 *</label>
-      <input type="text" id="m_name" placeholder="제품명 입력" />
+      <select id="m_name">${getRecipeOptionsHtml(freezeDryRecipes)}</select>
     </div>
     <div class="form-group">
       <label>분리작업 필요 여부</label>

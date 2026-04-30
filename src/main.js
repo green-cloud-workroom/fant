@@ -2,6 +2,7 @@ import './style.css';
 import { auth } from './firebase.js';
 import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import { loadUserInfo } from './app.js';
+import { loadHolidaysCache } from './utils/date.js';
 import { renderLayout } from './layout.js';
 import { setupMidnightLogout, clearMidnightLogout } from './midnightLogout.js';
 
@@ -9,6 +10,7 @@ import { setupMidnightLogout, clearMidnightLogout } from './midnightLogout.js';
 onAuthStateChanged(auth, async (user) => {
   if (user) {
     await loadUserInfo(user);
+    await loadHolidaysCache();
     renderLayout();
     setupMidnightLogout();
   } else {
