@@ -3,6 +3,9 @@ import {
   collection, getDocs, doc, setDoc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
+import { blockIfClosed } from '../utils/closingGuard.js';
+import { currentUserRole } from '../app.js';
+import { recordActivity } from '../services/activityLogs.js';
 
 let bagTypes = [];
 
@@ -216,6 +219,10 @@ function showBagModal(bag) {
   `);
 
   document.getElementById('btnSaveBag').addEventListener('click', async () => {
+    if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+      alert('봉투 등록/수정은 대표/사무실 계정만 가능합니다.');
+      return;
+    }
     const name = document.getElementById('m_bagName').value.trim();
     const category = document.getElementById('m_bagCategory').value;
     const piecesPerBox = parseInt(document.getElementById('m_piecesPerBox').value) || 0;
@@ -299,6 +306,7 @@ function showBagIncomingModal(bag) {
     const note = document.getElementById('m_note').value;
 
     if (!qty || !date) { alert('수량과 날짜는 필수입니다.'); return; }
+    if (await blockIfClosed(date)) return;
 
     const before = bag.currentQty || 0;
     const after = before + qty;
@@ -373,6 +381,8 @@ function showBagAdjustModal(bag) {
     const staff = document.getElementById('m_staff').value;
 
     if (!qty || !reason || !staff) { alert('조정량, 사유, 담당자는 필수입니다.'); return; }
+    const today = getToday();
+    if (await blockIfClosed(today)) return;
 
     const delta = type === 'plus' ? qty : -qty;
     const before = bag.currentQty || 0;
@@ -394,6 +404,23 @@ function showBagAdjustModal(bag) {
       after,
       staffName: staff,
       reason,
+    });
+    
+    const sign = delta >= 0 ? '+' : '';
+    await recordActivity({
+      action: 'bag',
+      subAction: 'adjust',
+      date: today,
+      staff,
+      message: `봉투 수동조정 — ${bag.name} ${sign}${delta}장 / 사유: ${reason} / 담당: ${staff}`,
+      details: {
+        bagTypeId: bag.id,
+        bagName: bag.name,
+        delta,
+        before,
+        after,
+        reason,
+      },
     });
 
     bagTypes = await loadBagTypes();

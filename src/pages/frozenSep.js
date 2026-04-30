@@ -4,6 +4,8 @@ import {
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
+import { blockIfClosed } from '../utils/closingGuard.js';
+import { recordActivity } from '../services/activityLogs.js';
 
 let freezeDryRecipes = [];
 
@@ -154,6 +156,7 @@ function showIncomingModal(stocks) {
     const note = document.getElementById('m_note').value;
 
     if (!name || !qty || !date) { alert('제품명, 수량, 날짜는 필수입니다.'); return; }
+    if (await blockIfClosed(date)) return;
 
     await addDoc(collection(db, 'frozenSeparation'), {
       date, productName: name,
@@ -221,6 +224,7 @@ function showSeparateModal(stocks) {
     const staff = document.getElementById('m_staff').value;
 
     if (!productName || !qty || !date) { alert('제품, 수량, 날짜는 필수입니다.'); return; }
+    if (await blockIfClosed(date)) return;
 
     const productStocks = notSepStocks
       .filter(s => s.productName === productName)
@@ -316,6 +320,7 @@ function showOutModal(stocks) {
     const staff = document.getElementById('m_staff').value;
 
     if (!productName || !stockType || !qty || !date) { alert('모든 필수 항목을 입력해주세요.'); return; }
+    if (await blockIfClosed(date)) return;
 
     const targetStocks = outStocks
       .filter(s => s.productName === productName && s.stockType === stockType)
@@ -409,6 +414,8 @@ function showAdjustModal(stocks) {
     const staff = document.getElementById('m_staff').value;
 
     if (!productName || !qty || !reason || !staff) { alert('모든 필수 항목을 입력해주세요.'); return; }
+    const today = getToday();
+    if (await blockIfClosed(today)) return;
 
     const delta = adjustType === 'plus' ? qty : -qty;
     const targetStocks = stocks
@@ -436,6 +443,22 @@ function showAdjustModal(stocks) {
       type: 'adjust', productName,
       fromStockType: stockType,
       qty: delta, staffName: staff, reason,
+    });
+    
+    const stockTypeLabel = stockType === 'notSeparated' ? '분리X' : stockType === 'separated' ? '분리O' : '소분X';
+    const sign = delta >= 0 ? '+' : '';
+    await recordActivity({
+      action: 'frozenSep',
+      subAction: 'adjust',
+      date: today,
+      staff,
+      message: `동결 분리작업 수동조정 — ${productName} (${stockTypeLabel}) ${sign}${delta}개 / 사유: ${reason} / 담당: ${staff}`,
+      details: {
+        productName,
+        stockType,
+        delta,
+        reason,
+      },
     });
 
     closeModal();

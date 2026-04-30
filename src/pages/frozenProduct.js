@@ -3,6 +3,9 @@ import {
   collection, getDocs, doc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
+import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
+import { blockIfClosed } from '../utils/closingGuard.js';
+import { currentUserRole } from '../app.js';
 
 let frozenProducts = [];
 let selectedProductId = null;
@@ -202,16 +205,15 @@ async function showProductModal(product) {
   // 봉투 목록 로드
   const bagSnap = await getDocs(query(collection(db, 'bagTypes'), orderBy('sortOrder')));
   const bags = bagSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(b => b.category === 'freezeDry');
+  const recipes = await getActiveFreezeDryRecipes();
 
   showModal(`
     <h3 class="modal-title">${isNew ? '동결제품 추가' : '동결제품 수정'}</h3>
     <div class="form-group">
       <label>제품명 *</label>
-      <input type="text" id="m_name" value="${product?.name || ''}" placeholder="제품명 입력" />
-    </div>
-    <div class="form-group">
-      <label>연결 레시피 (이름만)</label>
-      <input type="text" id="m_recipeRef" value="${product?.recipeTitleRef || ''}" placeholder="레시피명 입력" />
+      <select id="m_name">
+        ${getRecipeOptionsHtml(recipes, product?.name || '')}
+      </select>
     </div>
     <div class="form-group">
       <label>연결 봉투 *</label>
@@ -234,8 +236,12 @@ async function showProductModal(product) {
   `);
 
   document.getElementById('btnSaveProduct').addEventListener('click', async () => {
+    if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+      alert('동결제품 등록/수정은 대표/사무실 계정만 가능합니다.');
+      return;
+    }
     const name = document.getElementById('m_name').value.trim();
-    const recipeRef = document.getElementById('m_recipeRef').value.trim();
+    const recipeRef = name;
     const bagTypeId = document.getElementById('m_bagType').value;
     const requiresSeparation = document.getElementById('m_separation').value === 'true';
 
@@ -312,6 +318,7 @@ function showIncomingModal(product) {
     const note = document.getElementById('m_note').value;
 
     if (!qty || !date) { alert('수량과 날짜는 필수입니다.'); return; }
+    if (await blockIfClosed(date)) return;
 
     // 봉투 차감
     let deductedBagQty = 0;

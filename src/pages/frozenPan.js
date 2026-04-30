@@ -4,6 +4,7 @@ import {
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
+import { blockIfClosed } from '../utils/closingGuard.js';
 
 let freezeDryRecipes = [];
 
@@ -102,6 +103,7 @@ function renderFrozenPanLayout(rows, lots) {
       const rowId = btn.dataset.id;
       const row = rows.find(r => r.id === rowId);
       if (row) await confirmOrder(row, lots);
+      if (row && await blockIfClosed(row.date)) return;
     });
   });
 
@@ -109,6 +111,8 @@ function renderFrozenPanLayout(rows, lots) {
   document.querySelectorAll('.btn-order-delete').forEach(btn => {
     btn.addEventListener('click', async () => {
       if (!confirm('발주 행을 삭제하시겠습니까?')) return;
+      const targetRow = rows.find(r => r.id === btn.dataset.id);
+      if (targetRow && await blockIfClosed(targetRow.date)) return;
       await updateDoc(doc(db, 'frozenPanStock', btn.dataset.id), { status: 'cancelled' });
       const newRows = await loadFrozenPanRows();
       const newLots = await loadFrozenPanLots();
@@ -122,6 +126,7 @@ function renderFrozenPanLayout(rows, lots) {
       if (!confirm('발주 확인을 취소하시겠습니까? 차감된 동결판 재고가 복원됩니다.')) return;
       const rowId = btn.dataset.id;
       const row = rows.find(r => r.id === rowId);
+      if (row && await blockIfClosed(row.date)) return;
       if (row) await cancelOrder(row, lots);
     });
   });
@@ -227,6 +232,7 @@ function showWorkRowModal(rows, lots) {
     })).filter(i => i.productName);
 
     if (!date || items.length === 0) { alert('날짜와 제품을 입력해주세요.'); return; }
+    if (await blockIfClosed(date)) return;
 
     const rowRef = await addDoc(collection(db, 'frozenPanStock'), {
       date, type: 'work', status: 'done',
@@ -310,6 +316,7 @@ function showOrderRowModal(rows, lots) {
     })).filter(i => i.productName);
 
     if (!date || items.length === 0) { alert('날짜와 제품을 입력해주세요.'); return; }
+    if (await blockIfClosed(date)) return;
 
     await addDoc(collection(db, 'frozenPanStock'), {
       date, type: 'order', status: 'pending',

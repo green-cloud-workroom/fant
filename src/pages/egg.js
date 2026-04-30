@@ -3,6 +3,8 @@ import {
   collection, getDocs, doc, setDoc, addDoc, updateDoc, getDoc, query, orderBy
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
+import { blockIfClosed } from '../utils/closingGuard.js';
+import { recordActivity } from '../services/activityLogs.js';
 
 export async function renderEgg() {
   const content = document.getElementById('mainContent');
@@ -149,6 +151,7 @@ function showEggModal(type, eggStock) {
 
     if (!qty || !date) { alert('수량과 날짜는 필수입니다.'); return; }
     if (!isIn && qty > eggStock.currentQty) { alert('재고가 부족합니다.'); return; }
+    if (await blockIfClosed(date)) return;
 
     const delta = isIn ? qty : -qty;
     const before = eggStock.currentQty;
@@ -220,6 +223,8 @@ function showEggAdjustModal(eggStock) {
     const staff = document.getElementById('m_staff').value;
 
     if (!qty || !reason || !staff) { alert('조정량, 사유, 담당자는 필수입니다.'); return; }
+    const today = getToday();
+    if (await blockIfClosed(today)) return;
 
     const delta = type === 'plus' ? qty : -qty;
     const before = eggStock.currentQty;
@@ -240,6 +245,20 @@ function showEggAdjustModal(eggStock) {
       after,
       staffName: staff,
       reason,
+    });
+    const sign = delta >= 0 ? '+' : '';
+    await recordActivity({
+      action: 'egg',
+      subAction: 'adjust',
+      date: today,
+      staff,
+      message: `계란 수동조정 — ${sign}${delta}개 / 사유: ${reason} / 담당: ${staff}`,
+      details: {
+        delta,
+        before,
+        after,
+        reason,
+      },
     });
 
     closeModal();

@@ -3,6 +3,8 @@ import {
   collection, getDocs, doc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc, where
 } from 'firebase/firestore';
 import { getTodayKST as getToday, getHolidaysCache } from '../utils/date.js';
+import { blockIfClosed } from '../utils/closingGuard.js';
+import { currentUserRole } from '../app.js';
 
 let recipes = [];
 let productions = [];
@@ -150,7 +152,12 @@ function bindCardEvents() {
   document.querySelectorAll('.card-del').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
+      if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+        alert('생산 카드 삭제는 대표/사무실 계정만 가능합니다.');
+        return;
+      }
       if (!confirm('삭제하시겠습니까?')) return;
+      if (await blockIfClosed(selectedDate)) return;
       await updateDoc(doc(db, 'productions', btn.dataset.id), { status: 'deleted' });
       productions = await loadProductions(selectedDate);
       document.getElementById('productionCards').innerHTML = renderProductionCards();
@@ -258,11 +265,16 @@ const ingHtml = (recipe.ingredients || []).map(ing => {
   if (production) updateIngredients();
 
   document.getElementById('btnSaveProduction').addEventListener('click', async () => {
+    if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+      alert('생산 입력은 대표/사무실 계정만 가능합니다.');
+      return;
+    }
     const recipeId = recipeSelect.value;
     const qty = parseFloat(qtyInput.value);
     const staff = document.getElementById('pf_staff').value;
 
     if (!recipeId || !qty) { alert('레시피와 생산단위는 필수입니다.'); return; }
+    if (await blockIfClosed(selectedDate)) return;
 
     const recipe = recipes.find(r => r.id === recipeId);
     const unitName = recipe.ingredients?.find(i => i.isProductionUnit)?.unitName || '';

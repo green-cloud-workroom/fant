@@ -2,6 +2,9 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, setDoc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc
 } from 'firebase/firestore';
+import { blockIfClosed } from '../utils/closingGuard.js';
+import { currentUserRole } from '../app.js';
+import { recordActivity } from '../services/activityLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
 
 let meatTypes = [];
@@ -10,6 +13,7 @@ let currentTab = 'frozen';
 export async function renderMeat() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>원육 재고 로딩 중...</p></div>`;
+  await loadStaffCache();
   meatTypes = await loadMeatTypes();
   renderMeatLayout();
 }
@@ -113,7 +117,13 @@ function renderFrozenTab(stocks) {
   `;
 
   document.getElementById('btnAddFrozen').addEventListener('click', showAddFrozenModal);
-  document.getElementById('btnMeatTypes').addEventListener('click', showMeatTypesModal);
+  document.getElementById('btnMeatTypes').addEventListener('click', () => {
+    if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+      alert('원육 종류 관리는 대표/사무실 계정만 가능합니다.');
+      return;
+    }
+    showMeatTypesModal();
+  });
   document.querySelectorAll('.btn-adjust').forEach(btn => {
     btn.addEventListener('click', () => showAdjustModal(btn.dataset.id, btn.dataset.name, parseFloat(btn.dataset.remaining)));
   });
@@ -269,6 +279,10 @@ function showAddFrozenModal() {
   `);
 
   document.getElementById('btnSaveFrozen').addEventListener('click', async () => {
+    if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+      alert('원육 입고 등록은 대표/사무실 계정만 가능합니다.');
+      return;
+    }
     const meatTypeId = document.getElementById('m_meatType').value;
     const meatTypeEl = document.getElementById('m_meatType');
     const meatName = meatTypeEl.options[meatTypeEl.selectedIndex]?.text;
@@ -282,6 +296,7 @@ function showAddFrozenModal() {
       alert('원육 종류, 중량, 날짜는 필수입니다.');
       return;
     }
+    if (await blockIfClosed(date)) return;
 
     const qtyG = unit === 'kg' ? weight * 1000 : weight;
 
@@ -368,6 +383,7 @@ function showAddProcessedModal() {
       alert('원육 종류, 개당 중량, 개수, 날짜는 필수입니다.');
       return;
     }
+    if (await blockIfClosed(date)) return;
 
     const totalG = unitWeight * count;
     const batchId = Date.now().toString();
@@ -460,6 +476,8 @@ function showAddRepackedModal() {
       alert('원육 종류, 개당 중량, 개수, 날짜는 필수입니다.');
       return;
     }
+    if (await blockIfClosed(date)) return;
+    
 
     const totalG = unitWeight * count;
     const batchId = Date.now().toString();
@@ -535,6 +553,10 @@ function showAdjustModal(id, name, remaining) {
       alert('조정량, 사유, 담당자는 필수입니다.');
       return;
     }
+    const today = new Date().toISOString().split('T')[0];
+    if (await blockIfClosed(today)) return;
+    
+
 
     const delta = type === 'plus' ? qty : -qty;
     const newRemaining = remaining + delta;
@@ -545,6 +567,25 @@ function showAdjustModal(id, name, remaining) {
       updatedAt: new Date(),
     });
 
+    const stage = currentTab === 'frozen' ? '냉동창고' : currentTab === 'processed' ? '전처리' : '재포장';
+    const sign = delta >= 0 ? '+' : '';
+    await recordActivity({
+      action: 'meat',
+      subAction: 'adjust',
+      date: today,
+      staff,
+      message: `원육 수동조정 (${stage}) — ${name} ${sign}${delta}g / 사유: ${reason} / 담당: ${staff}`,
+      details: {
+        meatStockId: id,
+        meatName: name,
+        stage,
+        delta,
+        before: remaining,
+        after: newRemaining,
+        reason,
+      },
+    });
+    
     closeModal();
     renderTab(currentTab);
     alert('조정 완료!');

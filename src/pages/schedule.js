@@ -3,6 +3,8 @@ import {
   collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
+import { blockIfClosed } from '../utils/closingGuard.js';
+import { currentUserRole } from '../app.js';
 
 export async function renderSchedule() {
   const content = document.getElementById('mainContent');
@@ -114,6 +116,10 @@ function renderScheduleLayout(schedules) {
   });
 
   document.querySelectorAll('.btn-cancel-schedule').forEach(btn => {
+    if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+        alert('입고 예정 취소는 대표/사무실 계정만 가능합니다.');
+        return;
+      }
     btn.addEventListener('click', async () => {
       const id = btn.dataset.id;
       const reason = prompt('취소 사유를 입력해주세요:');
@@ -252,6 +258,10 @@ async function showAddScheduleModal() {
   };
 
   document.getElementById('btnSaveSchedule').addEventListener('click', async () => {
+    if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+      alert('입고 예정 등록은 대표/사무실 계정만 가능합니다.');
+      return;
+    }
     const date = document.getElementById('m_date').value;
     const type = document.getElementById('m_type').value;
     const qty = parseFloat(document.getElementById('m_qty').value);
@@ -323,6 +333,9 @@ function showCompleteModal(s) {
     const memo = document.getElementById('m_memo').value;
 
     if (!actual || !staff) { alert('실제 수량과 담당자는 필수입니다.'); return; }
+    const todayStr = getToday();
+    if (await blockIfClosed(todayStr)) return;
+    if (await blockIfClosed(today)) return;
 
     // 재고 자동 입고
     const today = getToday();
