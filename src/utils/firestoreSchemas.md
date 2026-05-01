@@ -129,3 +129,65 @@
 - `getNextBusinessDay(dateStr)` 호출 시 인자 생략하면 캐시 자동 사용
 
 **Firestore Rules**: read 인증 사용자, write admin/office (기존 유지).
+---
+
+## meatLogs/{auto-id}
+
+원육 재고 변동 통합 이력. 입고/전처리/재포장/자동출고/생산차감/수동조정 모두 기록.
+
+**문서 ID**: Firestore 자동 생성
+
+**필드**:
+
+```
+{
+  type: "frozenIncoming"      // 냉동창고 입고 (양수)
+      | "frozenOut"           // 냉동창고에서 출고 (전처리 등록 시, 음수)
+      | "processedIn"         // 전처리 신규 등록 (양수)
+      | "processedOut"        // 전처리에서 출고 (재포장 등록 시, 음수)
+      | "repackedIn"          // 재포장 신규 등록 (양수)
+      | "repackedOut"         // 재포장에서 출고 (현재 미사용, 향후 확장)
+      | "productionDeduct"    // 내일생산불러오기 차감 (음수)
+      | "productionRollback"  // 내일생산불러오기 취소 복원 (양수)
+      | "adjust",             // 수동조정 (+/-)
+
+  date: "2026-04-30",          // 작업일 KST YYYY-MM-DD
+  meatTypeId: "abc123",        // meatTypes 문서 ID
+  meatNameSnapshot: "닭가슴살", // 당시 이름 (이후 이름 변경돼도 이력 보존)
+  stage: "frozen" | "processed" | "repacked",
+  meatStockId: string | null,  // 변동된 meatStocks 문서 ID
+
+  delta: number,               // g 단위 변화량 (양수=증가, 음수=감소)
+  before: number | null,       // 변동 전 잔량 g
+  after: number | null,        // 변동 후 잔량 g
+
+  staff: "홍성희",              // 담당자 표시명
+  uid: "abc123...",            // Firebase Auth uid
+
+  reason: string | null,       // 사유 (수동조정/자동출고/생산차감)
+  batchId: string | null,      // 같은 트랜잭션 묶음 식별
+
+  timestamp: Timestamp         // 기록 시각
+}
+```
+
+**불변 규칙**:
+- 한 번 생성된 meatLogs 문서는 **수정/삭제 금지**
+- 삭제 절대 금지
+
+**type별 delta 부호 규칙**:
+- `frozenIncoming`, `processedIn`, `repackedIn`, `productionRollback`: 양수
+- `frozenOut`, `processedOut`, `repackedOut`, `productionDeduct`: 음수
+- `adjust`: 양수/음수 모두 가능
+
+**type 해석 원칙**: "어디서 빠졌는지" 기준.
+- `frozenOut` = 냉동창고에서 빠진 사건 (전처리 등록의 부산물)
+- `processedOut` = 전처리에서 빠진 사건 (재포장 등록의 부산물)
+- `repackedOut` = 재포장에서 빠진 사건 (현재 미사용)
+
+**batchId 사용 패턴**:
+- 같은 트랜잭션에서 발생한 로그들을 묶어서 추적
+- 전처리 등록: `frozenOut` N개 (냉동창고 차감, FIFO로 여러 배치 걸칠 수 있음) + `processedIn` 1개, 모두 같은 batchId
+- 재포장 등록: `processedOut` N개 + `repackedIn` 1개, 모두 같은 batchId
+- 내일생산불러오기: 차감된 모든 lot의 `productionDeduct` N개, 모두 같은 batchId (= productionCompletion 문서 ID)
+- 내일생산불러오기 취소: 복원된 모든 lot의 `productionRollback` N개, 모두 같은 batchId

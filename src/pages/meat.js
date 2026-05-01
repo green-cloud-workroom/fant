@@ -5,6 +5,7 @@ import {
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
+import { recordMeatLog } from '../services/meatLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
 
 let meatTypes = [];
@@ -104,7 +105,7 @@ function renderFrozenTab(stocks) {
                   <td>${s.meatNameSnapshot}</td>
                   <td>${s.incomingDate}</td>
                   <td>${(s.initialQtyG / 1000).toFixed(1)}kg</td>
-                  <td style="font-weight:600;color:${s.remaining < 1000 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(1)}kg</td>
+                  <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : s.remaining < 1000 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(1)}kg</td>
                   <td>${s.staffName || '-'}</td>
                   <td>${s.note || '-'}</td>
                   <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
@@ -163,7 +164,7 @@ function renderProcessedTab(stocks) {
                   <td>${s.unitWeightG ? s.unitWeightG + 'g' : '-'}</td>
                   <td>${s.unitCount || '-'}</td>
                   <td>${(s.initialQtyG / 1000).toFixed(1)}kg</td>
-                  <td style="font-weight:600">${(s.remaining / 1000).toFixed(1)}kg</td>
+                  <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(1)}kg</td>
                   <td>${s.staffName || '-'}</td>
                   <td>${s.note || '-'}</td>
                   <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
@@ -215,7 +216,7 @@ function renderRepackedTab(stocks) {
                   <td>${s.unitWeightG ? s.unitWeightG + 'g' : '-'}</td>
                   <td>${s.unitCount || '-'}</td>
                   <td>${(s.initialQtyG / 1000).toFixed(1)}kg</td>
-                  <td style="font-weight:600">${(s.remaining / 1000).toFixed(1)}kg</td>
+                  <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(1)}kg</td>
                   <td>${s.staffName || '-'}</td>
                   <td>${s.note || '-'}</td>
                   <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
@@ -296,11 +297,15 @@ function showAddFrozenModal() {
       alert('원육 종류, 중량, 날짜는 필수입니다.');
       return;
     }
+    if (!staff) {
+      alert('담당자를 선택해주세요.');
+      return;
+    }
     if (await blockIfClosed(date)) return;
 
     const qtyG = unit === 'kg' ? weight * 1000 : weight;
 
-    await addDoc(collection(db, 'meatStocks'), {
+    const stockRef = await addDoc(collection(db, 'meatStocks'), {
       meatTypeId,
       meatNameSnapshot: meatName,
       stage: 'frozen',
@@ -312,6 +317,20 @@ function showAddFrozenModal() {
       closed: false,
       createdAt: new Date(),
       updatedAt: new Date(),
+    });
+
+    await recordMeatLog({
+      type: 'frozenIncoming',
+      date,
+      meatTypeId,
+      meatNameSnapshot: meatName,
+      stage: 'frozen',
+      meatStockId: stockRef.id,
+      delta: qtyG,
+      before: 0,
+      after: qtyG,
+      staff,
+      reason: note || null,
     });
 
     closeModal();
@@ -383,13 +402,62 @@ function showAddProcessedModal() {
       alert('원육 종류, 개당 중량, 개수, 날짜는 필수입니다.');
       return;
     }
+    if (!staff) {
+      alert('담당자를 선택해주세요.');
+      return;
+    }
     if (await blockIfClosed(date)) return;
 
     const totalG = unitWeight * count;
+
+    // 냉동창고 잔량 확인 (FIFO 순서: incomingDate 오름차순)
+    const allFrozen = await loadMeatStocks('frozen');
+    const candidates = allFrozen
+      .filter(s => s.meatTypeId === meatTypeId && s.remaining > 0)
+      .sort((a, b) => (a.incomingDate || '').localeCompare(b.incomingDate || ''));
+
+    const totalAvailable = candidates.reduce((sum, s) => sum + s.remaining, 0);
+    if (totalAvailable < totalG) {
+      alert(`냉동창고 잔량이 부족합니다.\n${meatName}: 필요 ${(totalG/1000).toFixed(1)}kg / 현재 ${(totalAvailable/1000).toFixed(1)}kg`);
+      return;
+    }
+
     const batchId = Date.now().toString();
     const batchColor = getRandomColor();
 
-    await addDoc(collection(db, 'meatStocks'), {
+    // 냉동창고 FIFO 차감 + frozenOut 로그
+    let remainingToDeduct = totalG;
+    for (const lot of candidates) {
+      if (remainingToDeduct <= 0) break;
+      const deduct = Math.min(lot.remaining, remainingToDeduct);
+      const newRemaining = lot.remaining - deduct;
+
+      await updateDoc(doc(db, 'meatStocks', lot.id), {
+        remaining: newRemaining,
+        closed: newRemaining === 0,
+        updatedAt: new Date(),
+      });
+
+      await recordMeatLog({
+        type: 'frozenOut',
+        date,
+        meatTypeId,
+        meatNameSnapshot: meatName,
+        stage: 'frozen',
+        meatStockId: lot.id,
+        delta: -deduct,
+        before: lot.remaining,
+        after: newRemaining,
+        staff,
+        reason: '전처리 등록 자동차감',
+        batchId,
+      });
+
+      remainingToDeduct -= deduct;
+    }
+
+    // 전처리 신규 행 추가
+    const newStockRef = await addDoc(collection(db, 'meatStocks'), {
       meatTypeId,
       meatNameSnapshot: meatName,
       stage: 'processed',
@@ -406,6 +474,21 @@ function showAddProcessedModal() {
       closed: false,
       createdAt: new Date(),
       updatedAt: new Date(),
+    });
+
+    await recordMeatLog({
+      type: 'processedIn',
+      date,
+      meatTypeId,
+      meatNameSnapshot: meatName,
+      stage: 'processed',
+      meatStockId: newStockRef.id,
+      delta: totalG,
+      before: 0,
+      after: totalG,
+      staff,
+      reason: note || null,
+      batchId,
     });
 
     closeModal();
@@ -476,14 +559,70 @@ function showAddRepackedModal() {
       alert('원육 종류, 개당 중량, 개수, 날짜는 필수입니다.');
       return;
     }
+    if (!staff) {
+      alert('담당자를 선택해주세요.');
+      return;
+    }
     if (await blockIfClosed(date)) return;
-    
 
     const totalG = unitWeight * count;
+
+    // 같은 원육 활성 재포장 행 중복 차단 (spec 9절 탭3)
+    const allRepacked = await loadMeatStocks('repacked');
+    const existingActive = allRepacked.find(s => s.meatTypeId === meatTypeId && s.remaining > 0);
+    if (existingActive) {
+      alert(`같은 원육의 재포장 행이 이미 존재합니다.\n${meatName}: 기존 잔량 ${(existingActive.remaining/1000).toFixed(1)}kg\n기존 재포장을 모두 사용한 후 등록하세요.`);
+      return;
+    }
+
+    // 전처리 잔량 확인 (FIFO 순서: processedDate 오름차순)
+    const allProcessed = await loadMeatStocks('processed');
+    const candidates = allProcessed
+      .filter(s => s.meatTypeId === meatTypeId && s.remaining > 0)
+      .sort((a, b) => (a.processedDate || '').localeCompare(b.processedDate || ''));
+
+    const totalAvailable = candidates.reduce((sum, s) => sum + s.remaining, 0);
+    if (totalAvailable < totalG) {
+      alert(`전처리 잔량이 부족합니다.\n${meatName}: 필요 ${(totalG/1000).toFixed(1)}kg / 현재 ${(totalAvailable/1000).toFixed(1)}kg`);
+      return;
+    }
+
     const batchId = Date.now().toString();
     const batchColor = getRandomColor();
 
-    await addDoc(collection(db, 'meatStocks'), {
+    // 전처리 FIFO 차감 + processedOut 로그
+    let remainingToDeduct = totalG;
+    for (const lot of candidates) {
+      if (remainingToDeduct <= 0) break;
+      const deduct = Math.min(lot.remaining, remainingToDeduct);
+      const newRemaining = lot.remaining - deduct;
+
+      await updateDoc(doc(db, 'meatStocks', lot.id), {
+        remaining: newRemaining,
+        closed: newRemaining === 0,
+        updatedAt: new Date(),
+      });
+
+      await recordMeatLog({
+        type: 'processedOut',
+        date,
+        meatTypeId,
+        meatNameSnapshot: meatName,
+        stage: 'processed',
+        meatStockId: lot.id,
+        delta: -deduct,
+        before: lot.remaining,
+        after: newRemaining,
+        staff,
+        reason: '재포장 등록 자동차감',
+        batchId,
+      });
+
+      remainingToDeduct -= deduct;
+    }
+
+    // 재포장 신규 행 추가
+    const newStockRef = await addDoc(collection(db, 'meatStocks'), {
       meatTypeId,
       meatNameSnapshot: meatName,
       stage: 'repacked',
@@ -502,6 +641,21 @@ function showAddRepackedModal() {
       updatedAt: new Date(),
     });
 
+    await recordMeatLog({
+      type: 'repackedIn',
+      date,
+      meatTypeId,
+      meatNameSnapshot: meatName,
+      stage: 'repacked',
+      meatStockId: newStockRef.id,
+      delta: totalG,
+      before: 0,
+      after: totalG,
+      staff,
+      reason: note || null,
+      batchId,
+    });
+
     closeModal();
     renderTab('repacked');
     alert('재포장 등록 완료!');
@@ -512,19 +666,11 @@ function showAddRepackedModal() {
 function showAdjustModal(id, name, remaining) {
   showModal(`
     <h3 class="modal-title">수동 재고 조정 — ${name}</h3>
-    <p style="font-size:12px;color:#888;margin-bottom:16px;">현재 잔량: ${(remaining/1000).toFixed(1)}kg</p>
-    <div class="form-row">
-      <div class="form-group">
-        <label>조정 유형</label>
-        <select id="m_adjustType">
-          <option value="plus">+ 증가</option>
-          <option value="minus">- 감소</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>조정량 (g)</label>
-        <input type="number" id="m_adjustQty" placeholder="g" />
-      </div>
+    <p style="font-size:12px;color:#888;margin-bottom:16px;">기존 잔량: <strong>${(remaining/1000).toFixed(1)}kg</strong> (${remaining}g)</p>
+    <div class="form-group">
+      <label>실제 잔량 (g) *</label>
+      <input type="number" id="m_actualRemaining" placeholder="실제 잔량(g) 입력" min="0" step="1" />
+      <p style="font-size:11px;color:#aaa;margin-top:4px;">실제로 남아있는 양을 g 단위로 입력하세요. 0 이상만 가능.</p>
     </div>
     <div class="form-group">
       <label>사유 *</label>
@@ -544,48 +690,75 @@ function showAdjustModal(id, name, remaining) {
   `);
 
   document.getElementById('btnSaveAdjust').addEventListener('click', async () => {
-    const type = document.getElementById('m_adjustType').value;
-    const qty = parseFloat(document.getElementById('m_adjustQty').value);
+    const inputVal = document.getElementById('m_actualRemaining').value;
     const reason = document.getElementById('m_adjustReason').value.trim();
     const staff = document.getElementById('m_staff').value;
 
-    if (!qty || !reason || !staff) {
-      alert('조정량, 사유, 담당자는 필수입니다.');
+    if (inputVal === '' || isNaN(parseFloat(inputVal))) {
+      alert('실제 잔량을 입력해주세요.');
       return;
     }
-    const today = new Date().toISOString().split('T')[0];
-    if (await blockIfClosed(today)) return;
-    
+    const newRemaining = parseFloat(inputVal);
+    if (newRemaining < 0) {
+      alert('실제 잔량은 0 이상이어야 합니다.\n잔량이 음수가 될 수 없습니다.');
+      return;
+    }
+    if (!reason || !staff) {
+      alert('사유와 담당자는 필수입니다.');
+      return;
+    }
+    const delta = newRemaining - remaining;
+    if (delta === 0) {
+      alert('기존 잔량과 동일합니다. 변경할 값을 입력해주세요.');
+      return;
+    }
 
+    const adjustDate = getToday();
+    if (await blockIfClosed(adjustDate)) return;
 
-    const delta = type === 'plus' ? qty : -qty;
-    const newRemaining = remaining + delta;
+    // meatStocks 문서에서 meatTypeId 가져오기 (meatLogs 기록용)
+    const stockSnap = await getDoc(doc(db, 'meatStocks', id));
+    const stockData = stockSnap.exists() ? stockSnap.data() : {};
+    const meatTypeId = stockData.meatTypeId || null;
 
     await updateDoc(doc(db, 'meatStocks', id), {
       remaining: newRemaining,
-      closed: newRemaining <= 0,
+      closed: newRemaining === 0,
       updatedAt: new Date(),
     });
 
-    const stage = currentTab === 'frozen' ? '냉동창고' : currentTab === 'processed' ? '전처리' : '재포장';
-    const sign = delta >= 0 ? '+' : '';
+    const stageKor = currentTab === 'frozen' ? '냉동창고' : currentTab === 'processed' ? '전처리' : '재포장';
     await recordActivity({
       action: 'meat',
       subAction: 'adjust',
-      date: today,
+      date: adjustDate,
       staff,
-      message: `원육 수동조정 (${stage}) — ${name} ${sign}${delta}g / 사유: ${reason} / 담당: ${staff}`,
+      message: `원육 수동조정 (${stageKor}) — ${name} ${(remaining/1000).toFixed(1)}kg → ${(newRemaining/1000).toFixed(1)}kg / 사유: ${reason} / 담당: ${staff}`,
       details: {
         meatStockId: id,
         meatName: name,
-        stage,
+        stage: stageKor,
         delta,
         before: remaining,
         after: newRemaining,
         reason,
       },
     });
-    
+
+    await recordMeatLog({
+      type: 'adjust',
+      date: adjustDate,
+      meatTypeId,
+      meatNameSnapshot: name,
+      stage: currentTab,
+      meatStockId: id,
+      delta,
+      before: remaining,
+      after: newRemaining,
+      staff,
+      reason,
+    });
+
     closeModal();
     renderTab(currentTab);
     alert('조정 완료!');

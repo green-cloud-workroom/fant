@@ -4,6 +4,8 @@ import {
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
+import { recordMeatLog } from '../services/meatLogs.js';
+import { recordActivity } from '../services/activityLogs.js';
 import { currentUserRole } from '../app.js';
 
 export async function renderSchedule() {
@@ -333,17 +335,28 @@ function showCompleteModal(s) {
     const memo = document.getElementById('m_memo').value;
 
     if (!actual || !staff) { alert('실제 수량과 담당자는 필수입니다.'); return; }
-    const todayStr = getToday();
-    if (await blockIfClosed(todayStr)) return;
+    const today = getToday();
     if (await blockIfClosed(today)) return;
 
+    // 발주/실제 수량 차이 시 한 번 더 확인
+    if (actual !== s.orderedQty) {
+      const proceed = confirm(
+        `발주 수량과 실제 수량이 다릅니다.\n\n` +
+        `발주: ${s.orderedQty}${s.orderedUnit}\n` +
+        `실제: ${actual}${s.orderedUnit}\n\n` +
+        `이대로 완료 처리하시겠습니까?`
+      );
+      if (!proceed) return;
+    }
+
     // 재고 자동 입고
-    const today = getToday();
+
+    // 재고 자동 입고
     if (s.type === 'meat' && s.itemId) {
       const meatSnap = await getDoc(doc(db, 'meatTypes', s.itemId));
       if (meatSnap.exists()) {
         const qtyG = s.orderedUnit === 'kg' ? actual * 1000 : actual;
-        await addDoc(collection(db, 'meatStocks'), {
+        const newStockRef = await addDoc(collection(db, 'meatStocks'), {
           meatTypeId: s.itemId,
           meatNameSnapshot: s.itemNameSnapshot,
           stage: 'frozen',
@@ -355,6 +368,20 @@ function showCompleteModal(s) {
           closed: false,
           createdAt: new Date(),
           updatedAt: new Date(),
+        });
+
+        await recordMeatLog({
+          type: 'frozenIncoming',
+          date: today,
+          meatTypeId: s.itemId,
+          meatNameSnapshot: s.itemNameSnapshot,
+          stage: 'frozen',
+          meatStockId: newStockRef.id,
+          delta: qtyG,
+          before: 0,
+          after: qtyG,
+          staff,
+          reason: `입고예정 완료${s.orderMemo ? ` - ${s.orderMemo}` : ''}`,
         });
       }
     } else if (s.type === 'bag' && s.itemId) {
@@ -402,6 +429,29 @@ function showCompleteModal(s) {
       completeMemo: memo,
       completedAt: new Date(),
       updatedAt: new Date(),
+    });
+
+    // 사무 로그 — 발주/실제 수량 차이 비교
+    const hasDiff = actual !== s.orderedQty;
+    await recordActivity({
+      action: 'schedule',
+      subAction: 'complete',
+      date: today,
+      staff,
+      message: hasDiff
+        ? `${s.itemNameSnapshot} 입고 완료 ⚠️ 발주 ${s.orderedQty}${s.orderedUnit} → 실제 ${actual}${s.orderedUnit} / 담당: ${staff}`
+        : `${s.itemNameSnapshot} 입고 완료 차이 없음 / 담당: ${staff}`,
+      details: {
+        scheduleId: s.id,
+        type: s.type,
+        itemId: s.itemId || null,
+        itemName: s.itemNameSnapshot,
+        orderedQty: s.orderedQty,
+        actualQty: actual,
+        unit: s.orderedUnit,
+        hasDiff,
+        memo: memo || null,
+      },
     });
 
     closeModal();
