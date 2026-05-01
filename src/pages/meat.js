@@ -1,6 +1,6 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, setDoc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc
+  collection, getDocs, doc, setDoc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc, where
 } from 'firebase/firestore';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
@@ -23,6 +23,49 @@ async function loadMeatTypes() {
   const q = query(collection(db, 'meatTypes'), orderBy('sortOrder'));
   const snap = await getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+async function loadMeatLogs(stage) {
+  const q = query(
+    collection(db, 'meatLogs'),
+    where('stage', '==', stage),
+    orderBy('timestamp', 'desc')
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+function getMeatLogTypeLabel(type) {
+  const map = {
+    frozenIncoming: '입고',
+    frozenOut: '전처리로 출고',
+    processedIn: '전처리',
+    processedOut: '재포장으로 출고',
+    repackedIn: '재포장',
+    repackedOut: '출고',
+    productionDeduct: '생산차감',
+    productionRollback: '생산복원',
+    adjust: '수동조정',
+  };
+  return map[type] || type;
+}
+
+function formatMeatLogTimestamp(ts) {
+  if (!ts) return '-';
+  const date = ts.toDate ? ts.toDate() : new Date(ts);
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mi = String(date.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+function formatMeatLogQty(grams) {
+  if (typeof grams !== 'number') return '-';
+  const sign = grams > 0 ? '+' : '';
+  const kg = grams / 1000;
+  return `${sign}${kg.toFixed(2)}kg`;
 }
 
 async function loadMeatStocks(stage) {
@@ -65,50 +108,84 @@ async function renderTab(tab) {
   const tabContent = document.getElementById('tabContent');
   tabContent.innerHTML = `<div style="padding:24px;"><p>로딩 중...</p></div>`;
 
-  const stocks = await loadMeatStocks(tab);
+  const [stocks, logs] = await Promise.all([
+    loadMeatStocks(tab),
+    loadMeatLogs(tab),
+  ]);
 
   if (tab === 'frozen') {
-    renderFrozenTab(stocks);
+    renderFrozenTab(stocks, logs);
   } else if (tab === 'processed') {
-    renderProcessedTab(stocks);
+    renderProcessedTab(stocks, logs);
   } else {
-    renderRepackedTab(stocks);
+    renderRepackedTab(stocks, logs);
   }
 }
 
 // 냉동창고 탭
-function renderFrozenTab(stocks) {
+function renderFrozenTab(stocks, logs) {
   const tabContent = document.getElementById('tabContent');
   tabContent.innerHTML = `
-    <div class="tab-content-wrap">
-      <div class="tab-actions">
-        <button class="btn-primary" id="btnAddFrozen">+ 원육 입고 등록</button>
-        <button class="btn-secondary" id="btnMeatTypes">원육 종류 관리</button>
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <button class="btn-primary" id="btnAddFrozen">+ 원육 입고 등록</button>
+      <button class="btn-secondary" id="btnMeatTypes">원육 종류 관리</button>
+    </div>
+
+    <div class="form-section">
+      <div class="section-header">
+        <span class="section-title">잔량</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
               <th>원육명</th>
-              <th>입고일</th>
-              <th>입고량</th>
+              <th>작업일</th>
               <th>잔량</th>
-              <th>담당자</th>
-              <th>비고</th>
               <th>수동조정</th>
             </tr>
           </thead>
           <tbody>
-            ${stocks.length === 0 ? `<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">등록된 재고 없음</td></tr>` :
+            ${stocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">등록된 재고 없음</td></tr>` :
               stocks.map(s => `
                 <tr>
                   <td>${s.meatNameSnapshot}</td>
-                  <td>${s.incomingDate}</td>
-                  <td>${(s.initialQtyG / 1000).toFixed(1)}kg</td>
-                  <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : s.remaining < 1000 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(1)}kg</td>
-                  <td>${s.staffName || '-'}</td>
-                  <td>${s.note || '-'}</td>
+                  <td>${s.incomingDate || '-'}</td>
+                  <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(2)}kg</td>
                   <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
+                </tr>
+              `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <div class="section-header">
+        <span class="section-title">이력</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>날짜</th>
+              <th>원료명</th>
+              <th>구분</th>
+              <th>수량</th>
+              <th>담당자</th>
+              <th>사유</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${logs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
+              logs.map(l => `
+                <tr>
+                  <td>${formatMeatLogTimestamp(l.timestamp)}</td>
+                  <td>${l.meatNameSnapshot || '-'}</td>
+                  <td>${getMeatLogTypeLabel(l.type)}</td>
+                  <td style="color:${l.delta < 0 ? '#e53e3e' : '#2d7a3a'};font-weight:600;">${formatMeatLogQty(l.delta)}</td>
+                  <td>${l.staff || '-'}</td>
+                  <td>${l.reason || '-'}</td>
                 </tr>
               `).join('')}
           </tbody>
@@ -131,43 +208,68 @@ function renderFrozenTab(stocks) {
 }
 
 // 전처리 탭
-function renderProcessedTab(stocks) {
+function renderProcessedTab(stocks, logs) {
   const tabContent = document.getElementById('tabContent');
   tabContent.innerHTML = `
-    <div class="tab-content-wrap">
-      <div class="tab-actions">
-        <button class="btn-primary" id="btnAddProcessed">+ 전처리 등록</button>
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <button class="btn-primary" id="btnAddProcessed">+ 전처리 등록</button>
+    </div>
+
+    <div class="form-section">
+      <div class="section-header">
+        <span class="section-title">잔량</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
               <th>원육명</th>
-              <th>입고일</th>
-              <th>전처리일</th>
-              <th>개당중량</th>
-              <th>개수</th>
-              <th>총중량</th>
+              <th>작업일</th>
               <th>잔량</th>
-              <th>담당자</th>
-              <th>비고</th>
               <th>수동조정</th>
             </tr>
           </thead>
           <tbody>
-            ${stocks.length === 0 ? `<tr><td colspan="10" style="text-align:center;color:#aaa;padding:20px;">등록된 전처리 재고 없음</td></tr>` :
+            ${stocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">등록된 전처리 재고 없음</td></tr>` :
               stocks.map(s => `
                 <tr style="background:${s.batchColor || 'white'}11">
                   <td>${s.meatNameSnapshot}</td>
-                  <td>${s.incomingDate}</td>
                   <td>${s.processedDate || '-'}</td>
-                  <td>${s.unitWeightG ? s.unitWeightG + 'g' : '-'}</td>
-                  <td>${s.unitCount || '-'}</td>
-                  <td>${(s.initialQtyG / 1000).toFixed(1)}kg</td>
-                  <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(1)}kg</td>
-                  <td>${s.staffName || '-'}</td>
-                  <td>${s.note || '-'}</td>
+                  <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(2)}kg</td>
                   <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
+                </tr>
+              `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <div class="section-header">
+        <span class="section-title">이력</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>날짜</th>
+              <th>원료명</th>
+              <th>구분</th>
+              <th>수량</th>
+              <th>담당자</th>
+              <th>사유</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${logs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
+              logs.map(l => `
+                <tr>
+                  <td>${formatMeatLogTimestamp(l.timestamp)}</td>
+                  <td>${l.meatNameSnapshot || '-'}</td>
+                  <td>${getMeatLogTypeLabel(l.type)}</td>
+                  <td style="color:${l.delta < 0 ? '#e53e3e' : '#2d7a3a'};font-weight:600;">${formatMeatLogQty(l.delta)}</td>
+                  <td>${l.staff || '-'}</td>
+                  <td>${l.reason || '-'}</td>
                 </tr>
               `).join('')}
           </tbody>
@@ -183,43 +285,68 @@ function renderProcessedTab(stocks) {
 }
 
 // 재포장 탭
-function renderRepackedTab(stocks) {
+function renderRepackedTab(stocks, logs) {
   const tabContent = document.getElementById('tabContent');
   tabContent.innerHTML = `
-    <div class="tab-content-wrap">
-      <div class="tab-actions">
-        <button class="btn-primary" id="btnAddRepacked">+ 재포장 등록</button>
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <button class="btn-primary" id="btnAddRepacked">+ 재포장 등록</button>
+    </div>
+
+    <div class="form-section">
+      <div class="section-header">
+        <span class="section-title">잔량</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
               <th>원육명</th>
-              <th>전처리일</th>
-              <th>재포장일</th>
-              <th>개당중량</th>
-              <th>개수</th>
-              <th>총중량</th>
+              <th>작업일</th>
               <th>잔량</th>
-              <th>담당자</th>
-              <th>비고</th>
               <th>수동조정</th>
             </tr>
           </thead>
           <tbody>
-            ${stocks.length === 0 ? `<tr><td colspan="10" style="text-align:center;color:#aaa;padding:20px;">등록된 재포장 재고 없음</td></tr>` :
+            ${stocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">등록된 재포장 재고 없음</td></tr>` :
               stocks.map(s => `
                 <tr style="background:${s.batchColor || 'white'}11">
                   <td>${s.meatNameSnapshot}</td>
-                  <td>${s.processedDate || '-'}</td>
                   <td>${s.repackedDate || '-'}</td>
-                  <td>${s.unitWeightG ? s.unitWeightG + 'g' : '-'}</td>
-                  <td>${s.unitCount || '-'}</td>
-                  <td>${(s.initialQtyG / 1000).toFixed(1)}kg</td>
-                  <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(1)}kg</td>
-                  <td>${s.staffName || '-'}</td>
-                  <td>${s.note || '-'}</td>
+                  <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(2)}kg</td>
                   <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
+                </tr>
+              `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <div class="section-header">
+        <span class="section-title">이력</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>날짜</th>
+              <th>원료명</th>
+              <th>구분</th>
+              <th>수량</th>
+              <th>담당자</th>
+              <th>사유</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${logs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
+              logs.map(l => `
+                <tr>
+                  <td>${formatMeatLogTimestamp(l.timestamp)}</td>
+                  <td>${l.meatNameSnapshot || '-'}</td>
+                  <td>${getMeatLogTypeLabel(l.type)}</td>
+                  <td style="color:${l.delta < 0 ? '#e53e3e' : '#2d7a3a'};font-weight:600;">${formatMeatLogQty(l.delta)}</td>
+                  <td>${l.staff || '-'}</td>
+                  <td>${l.reason || '-'}</td>
                 </tr>
               `).join('')}
           </tbody>
