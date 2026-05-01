@@ -6,11 +6,20 @@ import {
 let recipes = [];
 let selectedRecipeId = null;
 
+let meatTypes = [];
+
+async function loadMeatTypes() {
+  const q = query(collection(db, 'meatTypes'), orderBy('sortOrder'));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
 export async function renderRecipe() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>레시피 로딩 중...</p></div>`;
 
   recipes = await loadRecipes();
+  meatTypes = await loadMeatTypes();
   renderRecipeLayout();
 }
 
@@ -198,6 +207,8 @@ function showRecipeDetail(recipe) {
                 <th>생산단위</th>
                 <th>단위명</th>
                 <th>자동차감</th>
+                <th>재고연동</th>
+                <th>원육 종류</th>
                 <th></th>
               </tr>
             </thead>
@@ -246,6 +257,12 @@ function renderIngredientRows(ingredients) {
 }
 
 function renderIngredientRow(ing, idx) {
+  // 기본값: 신규 행은 재고연동 ON, 기존 행은 저장된 값 유지
+  const isLinked = ing.linkedToInventory === undefined ? true : ing.linkedToInventory;
+  const meatOptions = meatTypes
+    .map(m => `<option value="${m.id}" ${ing.meatTypeId === m.id ? 'selected' : ''}>${m.name}</option>`)
+    .join('');
+
   return `
     <tr data-idx="${idx}">
       <td><input type="text" class="ing-name cell-input" value="${ing.name || ''}" placeholder="원료명" /></td>
@@ -256,6 +273,15 @@ function renderIngredientRow(ing, idx) {
       <td><input type="text" class="ing-unit-name cell-input" value="${ing.unitName || ''}" placeholder="예: 마리" /></td>
       <td style="text-align:center">
         <input type="checkbox" class="ing-auto-deduct" ${ing.autoDeductInventory !== false ? 'checked' : ''} />
+      </td>
+      <td style="text-align:center">
+        <input type="checkbox" class="ing-linked" ${isLinked ? 'checked' : ''} />
+      </td>
+      <td>
+        <select class="ing-meat-type" ${isLinked ? '' : 'style="display:none"'}>
+          <option value="">선택</option>
+          ${meatOptions}
+        </select>
       </td>
       <td><button class="btn-del-row">✕</button></td>
     </tr>
@@ -269,6 +295,20 @@ function bindIngredientEvents() {
       tr.remove();
     };
   });
+
+  // 재고연동 토글 → 드롭다운 표시/숨김
+  document.querySelectorAll('.ing-linked').forEach(cb => {
+    cb.onchange = (e) => {
+      const tr = e.target.closest('tr');
+      const select = tr.querySelector('.ing-meat-type');
+      if (e.target.checked) {
+        select.style.display = '';
+      } else {
+        select.style.display = 'none';
+        select.value = '';
+      }
+    };
+  });
 }
 
 function handleIngredientPaste(e) {
@@ -276,19 +316,40 @@ function handleIngredientPaste(e) {
   const text = e.clipboardData.getData('text');
   const rows = text.trim().split('\n');
   const tbody = document.getElementById('ingredientBody');
-  
+
   rows.forEach((row, i) => {
     const cols = row.split('\t');
     const name = cols[0]?.trim() || '';
     const weight = cols[1]?.trim() || '';
-    
+
+    // 원육명 매칭 → 재고연동 자동 ON + meatTypeId 세팅
+    const matchedMeat = meatTypes.find(m => m.name === name);
+    const linkedToInventory = !!matchedMeat;
+    const meatTypeId = matchedMeat?.id || null;
+
     const existingRows = tbody.querySelectorAll('tr');
     if (existingRows[i]) {
-      existingRows[i].querySelector('.ing-name').value = name;
-      existingRows[i].querySelector('.ing-weight').value = weight;
+      const tr = existingRows[i];
+      tr.querySelector('.ing-name').value = name;
+      tr.querySelector('.ing-weight').value = weight;
+      const linkedCb = tr.querySelector('.ing-linked');
+      const meatSelect = tr.querySelector('.ing-meat-type');
+      linkedCb.checked = linkedToInventory;
+      if (linkedToInventory) {
+        meatSelect.style.display = '';
+        meatSelect.value = meatTypeId;
+      } else {
+        meatSelect.style.display = 'none';
+        meatSelect.value = '';
+      }
     } else {
       const idx = tbody.querySelectorAll('tr').length;
-      tbody.insertAdjacentHTML('beforeend', renderIngredientRow({ name, baseWeightG: weight }, idx));
+      tbody.insertAdjacentHTML('beforeend', renderIngredientRow({
+        name,
+        baseWeightG: weight,
+        linkedToInventory,
+        meatTypeId,
+      }, idx));
       bindIngredientEvents();
     }
   });
@@ -296,17 +357,21 @@ function handleIngredientPaste(e) {
 
 function getIngredients() {
   const rows = document.querySelectorAll('#ingredientBody tr');
-  return Array.from(rows).map((row, idx) => ({
-    id: Date.now().toString() + idx,
-    name: row.querySelector('.ing-name').value.trim(),
-    baseWeightG: parseFloat(row.querySelector('.ing-weight').value) || 0,
-    isProductionUnit: row.querySelector('.ing-unit-radio').checked,
-    unitName: row.querySelector('.ing-unit-name').value.trim(),
-    autoDeductInventory: row.querySelector('.ing-auto-deduct').checked,
-    linkedToInventory: false,
-    meatTypeId: null,
-    sortOrder: idx,
-  })).filter(ing => ing.name);
+  return Array.from(rows).map((row, idx) => {
+    const linked = row.querySelector('.ing-linked').checked;
+    const meatTypeId = linked ? (row.querySelector('.ing-meat-type').value || null) : null;
+    return {
+      id: Date.now().toString() + idx,
+      name: row.querySelector('.ing-name').value.trim(),
+      baseWeightG: parseFloat(row.querySelector('.ing-weight').value) || 0,
+      isProductionUnit: row.querySelector('.ing-unit-radio').checked,
+      unitName: row.querySelector('.ing-unit-name').value.trim(),
+      autoDeductInventory: row.querySelector('.ing-auto-deduct').checked,
+      linkedToInventory: linked,
+      meatTypeId,
+      sortOrder: idx,
+    };
+  }).filter(ing => ing.name);
 }
 
 async function saveRecipe(id) {
