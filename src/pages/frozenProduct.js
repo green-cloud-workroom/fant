@@ -154,6 +154,7 @@ async function showProductDetail(product) {
                     <td>${l.staffName || '-'}</td>
                     <td>${l.note || '-'}</td>
                     <td>
+                      <button class="btn-edit-row" data-logid="${l.id}" style="margin-right:4px;">수정</button>
                       <button class="btn-del-row" data-logid="${l.id}" data-qty="${l.qty}" data-bagqty="${l.deductedBagQty || 0}" data-bagid="${product.bagTypeId || ''}">삭제</button>
                     </td>
                   </tr>
@@ -168,22 +169,87 @@ async function showProductDetail(product) {
   document.getElementById('btnAddIncoming').addEventListener('click', () => showIncomingModal(product));
   document.getElementById('btnEditProduct').addEventListener('click', () => showEditProductModal(product));
 
+  document.querySelectorAll('.btn-edit-row').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const logId = btn.dataset.logid;
+      const logSnap = await getDoc(doc(db, 'frozenLogs', logId));
+      if (!logSnap.exists()) {
+        alert('입고 로그를 찾을 수 없습니다.');
+        return;
+      }
+      const log = { id: logId, ...logSnap.data() };
+      showEditIncomingModal(product, log);
+    });
+  });
+
   document.querySelectorAll('.btn-del-row').forEach(btn => {
     btn.addEventListener('click', async () => {
       if (!confirm('삭제하시겠습니까? 차감된 봉투 재고가 복원됩니다.')) return;
       const logId = btn.dataset.logid;
-      const bagId = btn.dataset.bagid;
-      const bagQty = parseInt(btn.dataset.bagqty) || 0;
 
-      await updateDoc(doc(db, 'frozenLogs', logId), { status: 'deleted' });
+      const frozenLogSnap = await getDoc(doc(db, 'frozenLogs', logId));
+      if (!frozenLogSnap.exists()) {
+        alert('입고 로그를 찾을 수 없습니다.');
+        return;
+      }
+      const frozenLog = frozenLogSnap.data();
 
-      if (bagId && bagQty > 0) {
-        const bagSnap = await getDoc(doc(db, 'bagTypes', bagId));
+      if (await blockIfClosed(frozenLog.date)) return;
+
+      if (frozenLog.ledgerId) {
+        // ledger 기반 롤백
+        const ledgerSnap = await getDoc(doc(db, 'stockLedger', frozenLog.ledgerId));
+        if (ledgerSnap.exists() && ledgerSnap.data().status === 'active') {
+          const items = ledgerSnap.data().items || [];
+          for (const item of items) {
+            const docSnap = await getDoc(doc(db, item.collection, item.docId));
+            if (!docSnap.exists()) continue;
+            const currentVal = docSnap.data()[item.field] || 0;
+
+            if (currentVal !== item.after) {
+              if (!confirm(`동결제품 입고 이후 ${item.label} 재고가 변경된 이력이 있습니다.\n입고 당시 차감분만 복원됩니다.\n강제 복원하시겠습니까?`)) continue;
+            }
+
+            const restoredVal = currentVal - item.delta;
+            await updateDoc(doc(db, item.collection, item.docId), {
+              [item.field]: restoredVal,
+              updatedAt: new Date(),
+            });
+
+            // bagLogs 복원 로그
+            if (item.collection === 'bagTypes') {
+              await addDoc(collection(db, 'bagLogs'), {
+                date: getToday(),
+                timestamp: new Date(),
+                bagTypeId: item.docId,
+                bagNameSnapshot: docSnap.data().name || '',
+                type: 'autoDeductReverse',
+                qty: -item.delta,
+                before: currentVal,
+                after: restoredVal,
+                staffName: frozenLog.staffName || '',
+                note: `동결제품 입고 삭제 복원 - ${frozenLog.productNameSnapshot || ''}`,
+              });
+            }
+          }
+          await updateDoc(doc(db, 'stockLedger', frozenLog.ledgerId), {
+            status: 'rolledBack',
+            rolledBackAt: new Date(),
+          });
+        }
+      } else if (frozenLog.bagTypeId && (frozenLog.deductedBagQty || 0) > 0) {
+        // fallback: ledger 없는 기존 데이터 단순 복원
+        const bagSnap = await getDoc(doc(db, 'bagTypes', frozenLog.bagTypeId));
         if (bagSnap.exists()) {
           const current = bagSnap.data().currentQty || 0;
-          await updateDoc(doc(db, 'bagTypes', bagId), { currentQty: current + bagQty });
+          await updateDoc(doc(db, 'bagTypes', frozenLog.bagTypeId), {
+            currentQty: current + frozenLog.deductedBagQty,
+            updatedAt: new Date(),
+          });
         }
       }
+
+      await updateDoc(doc(db, 'frozenLogs', logId), { status: 'deleted' });
 
       await showProductDetail(product);
       alert('삭제 완료!');
@@ -270,6 +336,185 @@ async function showProductModal(product) {
     alert(isNew ? '추가 완료!' : '수정 완료!');
   });
 }
+function showEditIncomingModal(product, log) {
+  showModal(`
+    <h3 class="modal-title">입고 수정 — ${product.name}</h3>
+    <div class="form-row">
+      <div class="form-group">
+        <label>날짜 (수정 불가)</label>
+        <input type="date" id="m_date" value="${log.date || ''}" disabled />
+      </div>
+      <div class="form-group">
+        <label>유통기한</label>
+        <input type="date" id="m_expiry" value="${log.expiryDate || ''}" />
+      </div>
+    </div>
+    <div class="form-group">
+      <label>수량(개) *</label>
+      <input type="number" id="m_qty" value="${log.qty || 0}" />
+    </div>
+    <div class="form-group">
+      <label>담당자</label>
+      <select id="m_staff">
+        <option value="">선택</option>
+        ${getStaffOptions(['senior', 'lead', 'office']).replace(`value="${log.staffName}"`, `value="${log.staffName}" selected`)}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>비고</label>
+      <input type="text" id="m_note" value="${log.note || ''}" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">취소</button>
+      <button class="btn-primary" id="btnSaveEditIncoming">저장</button>
+    </div>
+  `);
+
+  document.getElementById('btnSaveEditIncoming').addEventListener('click', async () => {
+    const expiry = document.getElementById('m_expiry').value;
+    const newQty = parseInt(document.getElementById('m_qty').value);
+    const staff = document.getElementById('m_staff').value;
+    const note = document.getElementById('m_note').value;
+
+    if (!newQty || newQty <= 0) { alert('수량은 1개 이상이어야 합니다.'); return; }
+    if (await blockIfClosed(log.date)) return;
+
+    const oldQty = log.qty || 0;
+    const oldDeducted = log.deductedBagQty || 0;
+
+    // 1단계: 기존 ledger 롤백 (봉투 재고 복원)
+    if (log.ledgerId) {
+      const ledgerSnap = await getDoc(doc(db, 'stockLedger', log.ledgerId));
+      if (ledgerSnap.exists() && ledgerSnap.data().status === 'active') {
+        const items = ledgerSnap.data().items || [];
+        for (const item of items) {
+          const docSnap = await getDoc(doc(db, item.collection, item.docId));
+          if (!docSnap.exists()) continue;
+          const currentVal = docSnap.data()[item.field] || 0;
+
+          if (currentVal !== item.after) {
+            if (!confirm(`동결제품 입고 이후 ${item.label} 재고가 변경된 이력이 있습니다.\n입고 당시 차감분만 복원됩니다.\n강제 복원하시겠습니까?`)) {
+              return;
+            }
+          }
+
+          const restoredVal = currentVal - item.delta;
+          await updateDoc(doc(db, item.collection, item.docId), {
+            [item.field]: restoredVal,
+            updatedAt: new Date(),
+          });
+
+          if (item.collection === 'bagTypes') {
+            await addDoc(collection(db, 'bagLogs'), {
+              date: getToday(),
+              timestamp: new Date(),
+              bagTypeId: item.docId,
+              bagNameSnapshot: docSnap.data().name || '',
+              type: 'autoDeductReverse',
+              qty: -item.delta,
+              before: currentVal,
+              after: restoredVal,
+              staffName: staff,
+              note: `동결제품 입고 수정(롤백) - ${product.name}`,
+            });
+          }
+        }
+        await updateDoc(doc(db, 'stockLedger', log.ledgerId), {
+          status: 'rolledBack',
+          rolledBackAt: new Date(),
+        });
+      }
+    } else if (log.bagTypeId && oldDeducted > 0) {
+      // fallback: ledger 없는 기존 데이터
+      const bagSnap = await getDoc(doc(db, 'bagTypes', log.bagTypeId));
+      if (bagSnap.exists()) {
+        const current = bagSnap.data().currentQty || 0;
+        await updateDoc(doc(db, 'bagTypes', log.bagTypeId), {
+          currentQty: current + oldDeducted,
+          updatedAt: new Date(),
+        });
+      }
+    }
+
+    // 2단계: 새 수량으로 재차감 + 새 ledger 생성
+    let newDeducted = 0;
+    const ledgerItems = [];
+
+    if (product.bagTypeId) {
+      const bagSnap = await getDoc(doc(db, 'bagTypes', product.bagTypeId));
+      if (bagSnap.exists()) {
+        const bagData = bagSnap.data();
+        const currentBag = bagData.currentQty || 0;
+        if (currentBag < newQty) {
+          alert(`봉투 재고가 부족합니다.\n현재 봉투 재고: ${currentBag}장\n필요 수량: ${newQty}장\n\n수정이 중단되었습니다. 봉투 재고는 이전 상태로 이미 복원되었습니다.`);
+          closeModal();
+          await showProductDetail(product);
+          return;
+        }
+        const newBagQty = currentBag - newQty;
+        const stockUpdatedAt = new Date();
+        await updateDoc(doc(db, 'bagTypes', product.bagTypeId), {
+          currentQty: newBagQty,
+          updatedAt: stockUpdatedAt,
+        });
+        newDeducted = newQty;
+
+        const bagLogRef = await addDoc(collection(db, 'bagLogs'), {
+          date: log.date,
+          timestamp: new Date(),
+          bagTypeId: product.bagTypeId,
+          bagNameSnapshot: bagData.name,
+          type: 'autoDeduct',
+          qty: -newQty,
+          before: currentBag,
+          after: newBagQty,
+          staffName: staff,
+          note: `동결제품 입고 수정(재차감) - ${product.name}`,
+        });
+
+        ledgerItems.push({
+          collection: 'bagTypes',
+          docId: product.bagTypeId,
+          field: 'currentQty',
+          delta: -newQty,
+          before: currentBag,
+          after: newBagQty,
+          label: `${bagData.name} 봉투`,
+          stockUpdatedAtSnapshot: stockUpdatedAt,
+          bagLogId: bagLogRef.id,
+        });
+      }
+    }
+
+    // 3단계: frozenLogs 업데이트
+    let newLedgerId = null;
+    if (ledgerItems.length > 0) {
+      const ledgerRef = await addDoc(collection(db, 'stockLedger'), {
+        actionType: 'frozenProductIncoming',
+        actionId: log.id,
+        timestamp: new Date(),
+        date: log.date,
+        status: 'active',
+        items: ledgerItems,
+      });
+      newLedgerId = ledgerRef.id;
+    }
+
+    await updateDoc(doc(db, 'frozenLogs', log.id), {
+      qty: newQty,
+      expiryDate: expiry,
+      staffName: staff,
+      note,
+      deductedBagQty: newDeducted,
+      ledgerId: newLedgerId,
+      updatedAt: new Date(),
+    });
+
+    closeModal();
+    await showProductDetail(product);
+    alert('수정 완료!');
+  });
+}
 
 function showIncomingModal(product) {
   const today = getToday();
@@ -320,8 +565,10 @@ function showIncomingModal(product) {
     if (!qty || !date) { alert('수량과 날짜는 필수입니다.'); return; }
     if (await blockIfClosed(date)) return;
 
-    // 봉투 차감
+    // 봉투 차감 + ledger items 누적
     let deductedBagQty = 0;
+    const ledgerItems = [];
+
     if (product.bagTypeId) {
       const bagSnap = await getDoc(doc(db, 'bagTypes', product.bagTypeId));
       if (bagSnap.exists()) {
@@ -331,15 +578,44 @@ function showIncomingModal(product) {
           alert(`봉투 재고가 부족합니다.\n현재 봉투 재고: ${currentBag}장\n필요 수량: ${qty}장`);
           return;
         }
+        const newQty = currentBag - qty;
+        const stockUpdatedAt = new Date();
         await updateDoc(doc(db, 'bagTypes', product.bagTypeId), {
-          currentQty: currentBag - qty,
-          updatedAt: new Date(),
+          currentQty: newQty,
+          updatedAt: stockUpdatedAt,
         });
         deductedBagQty = qty;
+
+        // bagLogs autoDeduct 기록
+        const bagLogRef = await addDoc(collection(db, 'bagLogs'), {
+          date,
+          timestamp: new Date(),
+          bagTypeId: product.bagTypeId,
+          bagNameSnapshot: bagData.name,
+          type: 'autoDeduct',
+          qty: -qty,
+          before: currentBag,
+          after: newQty,
+          staffName: staff,
+          note: `동결제품 입고 자동차감 - ${product.name}`,
+        });
+
+        ledgerItems.push({
+          collection: 'bagTypes',
+          docId: product.bagTypeId,
+          field: 'currentQty',
+          delta: -qty,
+          before: currentBag,
+          after: newQty,
+          label: `${bagData.name} 봉투`,
+          stockUpdatedAtSnapshot: stockUpdatedAt,
+          bagLogId: bagLogRef.id,
+        });
       }
     }
 
-    await addDoc(collection(db, 'frozenLogs'), {
+    // frozenLogs 저장 (ledgerId는 아래에서 업데이트)
+    const frozenLogRef = await addDoc(collection(db, 'frozenLogs'), {
       date,
       timestamp: new Date(),
       productId: product.id,
@@ -351,7 +627,21 @@ function showIncomingModal(product) {
       staffName: staff,
       note,
       status: 'active',
+      ledgerId: null,
     });
+
+    // ledger 저장 (items 있을 때만)
+    if (ledgerItems.length > 0) {
+      const ledgerRef = await addDoc(collection(db, 'stockLedger'), {
+        actionType: 'frozenProductIncoming',
+        actionId: frozenLogRef.id,
+        timestamp: new Date(),
+        date,
+        status: 'active',
+        items: ledgerItems,
+      });
+      await updateDoc(doc(db, 'frozenLogs', frozenLogRef.id), { ledgerId: ledgerRef.id });
+    }
 
     closeModal();
     await showProductDetail(product);
