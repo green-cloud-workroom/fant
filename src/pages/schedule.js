@@ -118,11 +118,11 @@ function renderScheduleLayout(schedules) {
   });
 
   document.querySelectorAll('.btn-cancel-schedule').forEach(btn => {
-    if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+    btn.addEventListener('click', async () => {
+      if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
         alert('입고 예정 취소는 대표/사무실 계정만 가능합니다.');
         return;
       }
-    btn.addEventListener('click', async () => {
       const id = btn.dataset.id;
       const reason = prompt('취소 사유를 입력해주세요:');
       if (!reason) return;
