@@ -279,6 +279,7 @@ function showOrderRowModal(rows, lots) {
     stockByProduct[l.productName] += l.remaining;
   });
 
+
   // 재고 표시 옵션 HTML 생성기
   function getOptionsWithStock() {
     return freezeDryRecipes.map(r => {
@@ -422,6 +423,8 @@ async function confirmOrder(row, lots) {
     return;
   }
 
+  // FIFO 차감 + ledger items 누적
+  const ledgerItems = [];
   for (const item of items) {
     let remaining = item.orderPanQty;
     const productLots = lots
@@ -431,17 +434,62 @@ async function confirmOrder(row, lots) {
     for (const lot of productLots) {
       if (remaining <= 0) break;
       const deduct = Math.min(lot.remaining, remaining);
+      const before = lot.remaining;
+      const after = before - deduct;
+      const stockUpdatedAt = new Date();
+
       await updateDoc(doc(db, 'frozenPanLots', lot.id), {
-        remaining: lot.remaining - deduct,
-        closed: lot.remaining - deduct <= 0,
-        updatedAt: new Date(),
+        remaining: after,
+        closed: after <= 0,
+        updatedAt: stockUpdatedAt,
       });
+
+      ledgerItems.push({
+        collection: 'frozenPanLots',
+        docId: lot.id,
+        field: 'remaining',
+        delta: -deduct,
+        before,
+        after,
+        label: `${item.productName} (${lot.date || '-'})`,
+        stockUpdatedAtSnapshot: stockUpdatedAt,
+      });
+
       remaining -= deduct;
     }
   }
 
+  // ledger 저장
+  let ledgerId = null;
+  if (ledgerItems.length > 0) {
+    const ledgerRef = await addDoc(collection(db, 'stockLedger'), {
+      actionType: 'frozenPanOrder',
+      actionId: row.id,
+      timestamp: new Date(),
+      date: row.date || '',
+      status: 'active',
+      items: ledgerItems,
+    });
+    ledgerId = ledgerRef.id;
+  }
+
   await updateDoc(doc(db, 'frozenPanStock', row.id), {
-    status: 'confirmed', updatedAt: new Date(),
+    status: 'confirmed',
+    ledgerId,
+    confirmedAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  // activityLogs 기록
+  await addDoc(collection(db, 'activityLogs'), {
+    type: 'office',
+    subType: 'frozenPanOrderConfirm',
+    date: row.date || '',
+    timestamp: new Date(),
+    title: `동결판 발주 확인 — ${(row.date || '')}`,
+    description: items.map(it => `${it.productName} ${it.orderPanQty}판`).join(', '),
+    acknowledged: true,
+    actionId: row.id,
   });
 
   const newRows = await loadFrozenPanRows();
@@ -451,27 +499,75 @@ async function confirmOrder(row, lots) {
 }
 
 async function cancelOrder(row, lots) {
-  const items = row.items || [];
-  for (const item of items) {
-    const productLots = lots
-      .filter(l => l.productName === item.productName && l.sourceRowId)
-      .sort((a, b) => b.date.localeCompare(a.date));
+  const reason = prompt('발주 취소 사유를 입력해주세요:');
+  if (!reason) return;
 
-    let toRestore = item.orderPanQty;
-    for (const lot of productLots) {
-      if (toRestore <= 0) break;
-      const restore = Math.min(item.orderPanQty, toRestore);
-      await updateDoc(doc(db, 'frozenPanLots', lot.id), {
-        remaining: lot.remaining + restore,
-        closed: false,
-        updatedAt: new Date(),
+  // ledger 기반 정확 복원
+  if (row.ledgerId) {
+    const ledgerSnap = await getDoc(doc(db, 'stockLedger', row.ledgerId));
+    if (ledgerSnap.exists() && ledgerSnap.data().status === 'active') {
+      const ledgerItems = ledgerSnap.data().items || [];
+      for (const item of ledgerItems) {
+        const docSnap = await getDoc(doc(db, item.collection, item.docId));
+        if (!docSnap.exists()) continue;
+        const currentVal = docSnap.data()[item.field] || 0;
+
+        if (currentVal !== item.after) {
+          if (!confirm(`발주 확인 이후 ${item.label} 재고가 변경된 이력이 있습니다.\n발주 당시 차감분만 복원됩니다.\n강제 복원하시겠습니까?`)) continue;
+        }
+
+        const restoredVal = currentVal - item.delta;
+        await updateDoc(doc(db, item.collection, item.docId), {
+          [item.field]: restoredVal,
+          closed: restoredVal <= 0,
+          updatedAt: new Date(),
+        });
+      }
+      await updateDoc(doc(db, 'stockLedger', row.ledgerId), {
+        status: 'rolledBack',
+        rolledBackAt: new Date(),
       });
-      toRestore -= restore;
+    }
+  } else {
+    // fallback: ledger 없는 기존 데이터 — 옛 분배 로직 (lot capacity 무시) 그대로 사용
+    const items = row.items || [];
+    for (const item of items) {
+      const productLots = lots
+        .filter(l => l.productName === item.productName && l.sourceRowId)
+        .sort((a, b) => b.date.localeCompare(a.date));
+
+      let toRestore = item.orderPanQty;
+      for (const lot of productLots) {
+        if (toRestore <= 0) break;
+        const restore = Math.min(item.orderPanQty, toRestore);
+        await updateDoc(doc(db, 'frozenPanLots', lot.id), {
+          remaining: lot.remaining + restore,
+          closed: false,
+          updatedAt: new Date(),
+        });
+        toRestore -= restore;
+      }
     }
   }
 
   await updateDoc(doc(db, 'frozenPanStock', row.id), {
-    status: 'pending', updatedAt: new Date(),
+    status: 'pending',
+    cancelReason: reason,
+    cancelledAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  // activityLogs 기록
+  const items = row.items || [];
+  await addDoc(collection(db, 'activityLogs'), {
+    type: 'office',
+    subType: 'frozenPanOrderCancel',
+    date: row.date || '',
+    timestamp: new Date(),
+    title: `동결판 발주 취소 — ${(row.date || '')}`,
+    description: `${items.map(it => `${it.productName} ${it.orderPanQty}판`).join(', ')} / 사유: ${reason}`,
+    acknowledged: false,
+    actionId: row.id,
   });
 
   const newRows = await loadFrozenPanRows();
