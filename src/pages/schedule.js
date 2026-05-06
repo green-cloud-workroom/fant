@@ -124,16 +124,16 @@ function renderScheduleLayout(schedules) {
         return;
       }
       const id = btn.dataset.id;
-      const reason = prompt('취소 사유를 입력해주세요:');
-      if (!reason) return;
-      await updateDoc(doc(db, 'schedules', id), {
-        status: 'cancelled',
-        cancelReason: reason,
-        cancelledAt: new Date(),
-        updatedAt: new Date(),
-      });
-      const newSchedules = await loadSchedules();
-      renderScheduleLayout(newSchedules);
+      const s = schedules.find(sc => sc.id === id);
+      if (!s) {
+        alert('입고 예정을 찾을 수 없습니다.');
+        return;
+      }
+
+      // 마감 가드 — 예정일이 마감된 날짜면 취소 차단
+      if (await blockIfClosed(s.date)) return;
+
+      showCancelScheduleModal(s);
     });
   });
 }
@@ -303,6 +303,68 @@ async function showAddScheduleModal() {
     alert('입고 예정 등록 완료!');
   });
 }
+function showCancelScheduleModal(s) {
+  showModal(`
+    <h3 class="modal-title">입고예정 취소 — ${s.itemNameSnapshot}</h3>
+    <p style="font-size:12px;color:#888;margin-bottom:16px;">발주수량: ${s.orderedQty}${s.orderedUnit}</p>
+    <div class="form-group">
+      <label>취소 사유 *</label>
+      <input type="text" id="m_reason" placeholder="사유 입력" />
+    </div>
+    <div class="form-group">
+      <label>담당자 *</label>
+      <select id="m_staff">
+        <option value="">선택</option>
+        ${getStaffOptions(['office'])}
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">취소</button>
+      <button class="btn-primary" id="btnSaveCancelSchedule">확인</button>
+    </div>
+  `);
+
+  document.getElementById('btnSaveCancelSchedule').addEventListener('click', async () => {
+    const reason = document.getElementById('m_reason').value.trim();
+    const staff = document.getElementById('m_staff').value;
+
+    if (!reason) { alert('취소 사유는 필수입니다.'); return; }
+    if (!staff) { alert('담당자는 필수입니다.'); return; }
+
+    await updateDoc(doc(db, 'schedules', s.id), {
+      status: 'cancelled',
+      cancelReason: reason,
+      cancelStaffName: staff,
+      cancelledAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    // 사무 로그 발행
+    const today = getToday();
+    await recordActivity({
+      action: 'schedule',
+      subAction: 'cancel',
+      date: today,
+      staff,
+      message: `${s.itemNameSnapshot} 입고 예정 취소 / 사유: ${reason} / 담당: ${staff}`,
+      details: {
+        scheduleId: s.id,
+        type: s.type,
+        itemId: s.itemId || null,
+        itemName: s.itemNameSnapshot,
+        orderedQty: s.orderedQty,
+        unit: s.orderedUnit,
+        scheduledDate: s.date,
+        cancelReason: reason,
+      },
+    });
+
+    closeModal();
+    const newSchedules = await loadSchedules();
+    renderScheduleLayout(newSchedules);
+    alert('취소 완료!');
+  });
+}
 
 function showCompleteModal(s) {
   showModal(`
@@ -349,13 +411,14 @@ function showCompleteModal(s) {
       if (!proceed) return;
     }
 
-    // 재고 자동 입고
+    // 재고 자동 입고 + ledger items 누적
+    const ledgerItems = [];
 
-    // 재고 자동 입고
     if (s.type === 'meat' && s.itemId) {
       const meatSnap = await getDoc(doc(db, 'meatTypes', s.itemId));
       if (meatSnap.exists()) {
         const qtyG = s.orderedUnit === 'kg' ? actual * 1000 : actual;
+        const stockUpdatedAt = new Date();
         const newStockRef = await addDoc(collection(db, 'meatStocks'), {
           meatTypeId: s.itemId,
           meatNameSnapshot: s.itemNameSnapshot,
@@ -367,7 +430,7 @@ function showCompleteModal(s) {
           note: `입고예정 완료: ${s.orderMemo || ''}`,
           closed: false,
           createdAt: new Date(),
-          updatedAt: new Date(),
+          updatedAt: stockUpdatedAt,
         });
 
         await recordMeatLog({
@@ -383,6 +446,18 @@ function showCompleteModal(s) {
           staff,
           reason: `입고예정 완료${s.orderMemo ? ` - ${s.orderMemo}` : ''}`,
         });
+
+        ledgerItems.push({
+          collection: 'meatStocks',
+          docId: newStockRef.id,
+          field: 'remaining',
+          delta: qtyG,
+          before: 0,
+          after: qtyG,
+          label: `${s.itemNameSnapshot} 냉동창고`,
+          stockUpdatedAtSnapshot: stockUpdatedAt,
+          isNewDoc: true,
+        });
       }
     } else if (s.type === 'bag' && s.itemId) {
       const bagSnap = await getDoc(doc(db, 'bagTypes', s.itemId));
@@ -390,18 +465,34 @@ function showCompleteModal(s) {
         const bagData = bagSnap.data();
         const qtyPcs = s.orderedUnit === '박스' ? actual * (bagData.piecesPerBox || 1) : actual;
         const before = bagData.currentQty || 0;
+        const after = before + qtyPcs;
+        const stockUpdatedAt = new Date();
+
         await updateDoc(doc(db, 'bagTypes', s.itemId), {
-          currentQty: before + qtyPcs,
-          updatedAt: new Date(),
+          currentQty: after,
+          updatedAt: stockUpdatedAt,
         });
-        await addDoc(collection(db, 'bagLogs'), {
+
+        const bagLogRef = await addDoc(collection(db, 'bagLogs'), {
           date: today, timestamp: new Date(),
           bagTypeId: s.itemId,
           bagNameSnapshot: s.itemNameSnapshot,
           type: 'incoming', qty: qtyPcs,
-          before, after: before + qtyPcs,
+          before, after,
           staffName: staff,
           note: `입고예정 완료`,
+        });
+
+        ledgerItems.push({
+          collection: 'bagTypes',
+          docId: s.itemId,
+          field: 'currentQty',
+          delta: qtyPcs,
+          before,
+          after,
+          label: `${s.itemNameSnapshot} 봉투`,
+          stockUpdatedAtSnapshot: stockUpdatedAt,
+          bagLogId: bagLogRef.id,
         });
       }
     } else if (s.type === 'egg') {
@@ -409,17 +500,47 @@ function showCompleteModal(s) {
       const current = eggSnap.exists() ? eggSnap.data().currentQty : 0;
       const minQty = eggSnap.exists() ? eggSnap.data().minimumQty : 0;
       const qtyEgg = s.orderedUnit === '판' ? actual * 30 : actual;
+      const after = current + qtyEgg;
+      const stockUpdatedAt = new Date();
+
       await updateDoc(doc(db, 'eggStock', 'global'), {
-        currentQty: current + qtyEgg,
+        currentQty: after,
         minimumQty: minQty,
-        updatedAt: new Date(),
+        updatedAt: stockUpdatedAt,
       });
-      await addDoc(collection(db, 'eggLogs'), {
+
+      const eggLogRef = await addDoc(collection(db, 'eggLogs'), {
         date: today, timestamp: new Date(),
         type: 'in', qty: qtyEgg,
-        before: current, after: current + qtyEgg,
+        before: current, after,
         staffName: staff, note: '입고예정 완료',
       });
+
+      ledgerItems.push({
+        collection: 'eggStock',
+        docId: 'global',
+        field: 'currentQty',
+        delta: qtyEgg,
+        before: current,
+        after,
+        label: '계란',
+        stockUpdatedAtSnapshot: stockUpdatedAt,
+        eggLogId: eggLogRef.id,
+      });
+    }
+
+    // ledger 저장
+    let ledgerId = null;
+    if (ledgerItems.length > 0) {
+      const ledgerRef = await addDoc(collection(db, 'stockLedger'), {
+        actionType: 'scheduleComplete',
+        actionId: s.id,
+        timestamp: new Date(),
+        date: today,
+        status: 'active',
+        items: ledgerItems,
+      });
+      ledgerId = ledgerRef.id;
     }
 
     await updateDoc(doc(db, 'schedules', s.id), {
@@ -428,6 +549,7 @@ function showCompleteModal(s) {
       incomingStaffName: staff,
       completeMemo: memo,
       completedAt: new Date(),
+      ledgerId,
       updatedAt: new Date(),
     });
 

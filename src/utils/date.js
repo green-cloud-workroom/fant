@@ -62,7 +62,24 @@ export function getNextBusinessDay(dateStr, holidays = null) {
   }
   throw new Error('getNextBusinessDay: 365일 초과 — 입력값 확인');
 }
-
+/**
+ * KST 기준 N개월 후 날짜 (YYYY-MM-DD)
+ * 동결제품 유통기한(18개월 후) 등에 사용. toISOString()의 UTC 기준 버그 회피용.
+ *
+ * @param {number} months - 더할 개월 수 (음수도 가능)
+ * @param {Date} baseDate - 기준 시각 (기본값: 현재)
+ * @returns {string} YYYY-MM-DD
+ */
+export function addMonthsKST(months, baseDate = new Date()) {
+  // KST 기준의 연/월/일을 추출
+  const kst = new Date(baseDate.getTime() + KST_OFFSET_MS);
+  const y = kst.getUTCFullYear();
+  const m = kst.getUTCMonth();
+  const d = kst.getUTCDate();
+  // KST 기준 (y, m+months, d) 만들고 다시 KST YYYY-MM-DD로 포맷
+  const target = new Date(Date.UTC(y, m + months, d));
+  return formatKstDate(new Date(target.getTime() - KST_OFFSET_MS));
+}
 /**
  * 두 날짜의 일수 차이 (KST 기준)
  * @returns {number} dateAStr - dateBStr (양수면 A가 더 미래)

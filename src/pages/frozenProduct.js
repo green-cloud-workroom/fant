@@ -2,7 +2,7 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc
 } from 'firebase/firestore';
-import { getTodayKST as getToday } from '../utils/date.js';
+import { getTodayKST as getToday, addMonthsKST } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
@@ -518,9 +518,7 @@ function showEditIncomingModal(product, log) {
 
 function showIncomingModal(product) {
   const today = getToday();
-  const future = new Date();
-  future.setMonth(future.getMonth() + 18);
-  const futureStr = future.toISOString().split('T')[0];
+  const futureStr = addMonthsKST(18);
 
   showModal(`
     <h3 class="modal-title">입고 등록 — ${product.name}</h3>
