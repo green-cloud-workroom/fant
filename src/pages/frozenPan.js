@@ -62,11 +62,15 @@ function renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPan
   // 묶음 3 정책: 옛 type='work' 행은 화면에서 숨김 (DB는 묶음 10에서 일괄 wipe 예정)
   rows = rows.filter(r => r.type !== 'work');
 
-  // 동결판 제품별 lot 집계
+  // 동결판 제품별 lot 집계 (source 포함)
   const lotSummary = {};
   lots.forEach(l => {
     if (!lotSummary[l.productName]) lotSummary[l.productName] = [];
-    lotSummary[l.productName].push({ date: l.date, remaining: l.remaining });
+    lotSummary[l.productName].push({
+      date: l.date,
+      remaining: l.remaining,
+      source: l.source || null,  // 묶음 3H 추가
+    });
   });
 
   // 빵판 제품별 lot 집계
@@ -136,6 +140,20 @@ function renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPan
   } else {
     bindFrozenPanTabEvents(rows, lots);
   }
+}
+
+function getSourceBadge(source) {
+  if (!source) return '';
+
+  const config = {
+    tenderIn:    { label: '텐더', color: '#1f6fb2', bg: '#e8f3fc' },
+    preprocess:  { label: '전처리', color: '#2d7a3a', bg: '#e8f5ea' },
+    adjust:      { label: '조정', color: '#b97a1f', bg: '#fdf3e0' },
+  }[source];
+
+  if (!config) return '';
+
+  return `<span style="display:inline-block;font-size:10px;background:${config.bg};color:${config.color};padding:1px 6px;border-radius:3px;margin-left:4px;font-weight:500;vertical-align:middle;">${config.label}</span>`;
 }
 
 function renderBreadPanTab(breadLotSummary, breadPanLogs) {
@@ -257,7 +275,7 @@ function renderFrozenPanTab(rows, lotSummary, frozenPanLogs) {
               <span class="stat-label">${name}</span>
               <div>
                 ${lotList.sort((a,b) => a.date.localeCompare(b.date)).map(l => `
-                  <div style="font-size:12px;color:#555">${l.remaining}판 <span style="color:#aaa">(${l.date})</span></div>
+                  <div style="font-size:12px;color:#555">${l.remaining}판 <span style="color:#aaa">(${l.date})</span>${getSourceBadge(l.source)}</div>
                 `).join('')}
               </div>
             </div>
@@ -363,9 +381,7 @@ function bindBreadPanTabEvents(rows, lots) {
 
 function bindFrozenPanTabEvents(rows, lots) {
   const btnTender = document.getElementById('btnTenderIn');
-  if (btnTender) btnTender.addEventListener('click', () => {
-    alert('텐더동결 입고 기능은 3G에서 추가 예정입니다.');
-  });
+  if (btnTender) btnTender.addEventListener('click', () => showTenderInModal());
 
   const btnAdjust = document.getElementById('btnFrozenPanAdjust');
   if (btnAdjust) btnAdjust.addEventListener('click', () => {
@@ -406,6 +422,139 @@ function bindFrozenPanTabEvents(rows, lots) {
       if (row && await blockIfClosed(row.date)) return;
       if (row) await cancelOrder(row, lots);
     });
+  });
+}
+
+function showTenderInModal() {
+  // 동결텐더 = 분리 작업 불필요한 동결건조 레시피 (requiresSeparation === false)
+  const tenderRecipes = freezeDryRecipes.filter(r => r.requiresSeparation !== true);
+
+  if (tenderRecipes.length === 0) {
+    alert('동결텐더 레시피가 없습니다.\n\n레시피 관리 메뉴에서 동결건조 레시피의 "분리 작업 필요" 옵션을 끈 레시피를 추가해주세요.');
+    return;
+  }
+
+  showModal(`
+    <h3 class="modal-title">텐더동결 입고</h3>
+    <div class="form-row">
+      <div class="form-group">
+        <label>제품 *</label>
+        <select id="m_recipe">
+          <option value="">선택</option>
+          ${tenderRecipes.map(r => `<option value="${r.displayName}">${r.displayName}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>동결판 수 *</label>
+        <input type="number" id="m_qty" step="1" min="1" placeholder="예: 5" />
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>날짜</label>
+        <input type="date" id="m_date" value="${getToday()}" />
+      </div>
+      <div class="form-group">
+        <label>담당자 *</label>
+        <select id="m_staff">
+          <option value="">선택</option>
+          ${getStaffOptions(['senior', 'office'])}
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>비고</label>
+      <input type="text" id="m_note" placeholder="(선택)" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">취소</button>
+      <button class="btn-primary" id="btnSaveTenderIn">저장</button>
+    </div>
+  `);
+
+  document.getElementById('btnSaveTenderIn').addEventListener('click', async () => {
+    const productName = document.getElementById('m_recipe').value.trim();
+    const qty = parseInt(document.getElementById('m_qty').value) || 0;
+    const date = document.getElementById('m_date').value;
+    const staffName = document.getElementById('m_staff').value;
+    const note = document.getElementById('m_note').value.trim();
+
+    if (!productName) { alert('제품을 선택해주세요.'); return; }
+    if (qty <= 0) { alert('동결판 수는 0보다 커야 합니다.'); return; }
+    if (!date) { alert('날짜를 입력해주세요.'); return; }
+    if (!staffName) { alert('담당자를 선택해주세요.'); return; }
+
+    if (await blockIfClosed(date)) return;
+
+    const now = new Date();
+
+    try {
+      // 1. frozenPanLots 신규 lot
+      const lotRef = await addDoc(collection(db, 'frozenPanLots'), {
+        productName,
+        date,
+        staffName,
+        initialQty: qty,
+        remaining: qty,
+        closed: false,
+        source: 'tenderIn',
+        sourceRefId: null,  // tenderIn은 logId로 대체 (아래 setUpdate)
+        note: note || null,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // 2. frozenPanLogs 기록
+      const logRef = await addDoc(collection(db, 'frozenPanLogs'), {
+        type: 'tenderIn',
+        date,
+        productName,
+        qty,
+        before: 0,
+        after: qty,
+        lotId: lotRef.id,
+        staffName,
+        uid: null,
+        note: note || null,
+        reason: null,
+        batchId: null,
+        ledgerId: null,
+        timestamp: now,
+      });
+
+      // 3. lot의 sourceRefId를 logId로 갱신 (추적용)
+      await updateDoc(doc(db, 'frozenPanLots', lotRef.id), {
+        sourceRefId: logRef.id,
+      });
+
+      // 4. stockLedger 저장
+      await addDoc(collection(db, 'stockLedger'), {
+        actionType: 'frozenPanTenderIn',
+        actionId: logRef.id,
+        timestamp: now,
+        date,
+        status: 'active',
+        items: [{
+          collection: 'frozenPanLots',
+          docId: lotRef.id,
+          field: 'remaining',
+          delta: qty,
+          before: 0,
+          after: qty,
+          label: `${productName} 동결판 (텐더동결 입고)`,
+          stockUpdatedAtSnapshot: now,
+          isNewDoc: true,
+        }],
+      });
+
+      closeModal();
+      await refreshFrozenPanLayout();
+      alert('텐더동결 입고 완료!');
+
+    } catch (err) {
+      console.error('showTenderInModal 저장 에러:', err);
+      alert(`저장 중 오류가 발생했습니다.\n\n${err.message}`);
+    }
   });
 }
 
