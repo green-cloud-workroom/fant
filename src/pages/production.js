@@ -5,6 +5,7 @@ import {
 import { getTodayKST as getToday, getHolidaysCache } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
+import { showConfirmModal } from '../utils/modal.js';
 
 let recipes = [];
 let productions = [];
@@ -156,7 +157,7 @@ function bindCardEvents() {
         alert('생산 카드 삭제는 대표/사무실 계정만 가능합니다.');
         return;
       }
-      if (!confirm('삭제하시겠습니까?')) return;
+      const __c = await showConfirmModal({ title:'삭제 확인', message:'정말 삭제하시겠습니까?', confirmText:'삭제', danger:true }); if (!__c) return;
       if (await blockIfClosed(selectedDate)) return;
       await updateDoc(doc(db, 'productions', btn.dataset.id), { status: 'deleted' });
       productions = await loadProductions(selectedDate);
@@ -286,7 +287,7 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
     const shortages = checkShortages(recipe, qty);
     if (shortages.length > 0) {
       const msg = shortages.map(s => `⚠️ ${s}`).join('\n');
-      if (!confirm(`재고 부족 경고:\n${msg}\n\n그래도 저장하시겠습니까?`)) return;
+      const __c = await showConfirmModal({ title:'재고 부족 경고', message:`재고가 부족합니다:\n${msg}\n\n그래도 저장하시겠습니까?`, confirmText:'저장', danger:true }); if (!__c) return;
     }
 
     // 회차 계산
@@ -453,7 +454,7 @@ function showModal(html) {
   document.body.appendChild(overlay);
 
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeModal();
+    // 외부 클릭 닫힘 비활성화 (묶음 1F: 모달 사라짐 이슈 우회)
   });
 }
 

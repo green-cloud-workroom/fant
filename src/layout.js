@@ -417,11 +417,11 @@ async function handleLogoutClick() {
     const closed = await isDateClosed(today);
 
     if (!closed) {
-      const ok = confirm(
-        '오늘 아직 마감되지 않았습니다.\n' +
-        '로그아웃해도 자동으로 마감되지 않습니다.\n\n' +
-        '로그아웃 하시겠습니까?'
-      );
+      const ok = await showConfirmModal({
+        title: '로그아웃 확인',
+        message: '오늘 아직 마감되지 않았습니다.\n로그아웃해도 자동으로 마감되지 않습니다.\n\n로그아웃 하시겠습니까?',
+        confirmText: '로그아웃',
+      });
       if (!ok) return;
     }
 

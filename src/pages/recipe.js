@@ -2,6 +2,7 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy
 } from 'firebase/firestore';
+import { showConfirmModal } from '../utils/modal.js';
 
 let recipes = [];
 let selectedRecipeId = null;
@@ -435,7 +436,7 @@ async function saveRecipe(id) {
 }
 
 async function deleteRecipe(id) {
-  if (!confirm('레시피를 삭제하시겠습니까?\n(비활성화를 권장합니다)')) return;
+  const __c = await showConfirmModal({ title:'레시피 삭제', message:'레시피를 삭제하시겠습니까?\n(비활성화를 권장합니다)', confirmText:'삭제', danger:true }); if (!__c) return;
   await deleteDoc(doc(db, 'recipes', id));
   recipes = await loadRecipes();
   selectedRecipeId = null;

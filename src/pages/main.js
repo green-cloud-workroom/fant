@@ -8,6 +8,7 @@ import { setCurrentMenu, currentUserRole } from '../app.js';
 import { renderLayout } from '../layout.js';
 import { renderPage } from '../router.js';
 import { recordMeatLog } from '../services/meatLogs.js';
+import { showPromptModal, showConfirmModal } from '../utils/modal.js';
 
 let productions = [];
 let nextProductions = [];
@@ -608,8 +609,16 @@ async function handleCancelCompletion() {
     alert('내일생산불러오기 취소는 생산실 계정만 가능합니다.');
     return;
   }
-  if (!confirm('내일생산불러오기를 취소하시겠습니까?\n차감된 재고가 복원됩니다.')) return;
-  const reason = prompt('취소 사유를 입력해주세요:');
+  const __c = await showConfirmModal({ title:'내일생산불러오기 취소', message:'내일생산불러오기를 취소하시겠습니까?\n차감된 재고가 복원됩니다.', confirmText:'취소', danger:true }); if (!__c) return;
+  const reason = await showPromptModal({
+    title: '내일생산불러오기 취소',
+    message: '재고가 전부 롤백되고 마감 차단 항목이 다시 활성화됩니다.',
+    label: '취소 사유',
+    placeholder: '예: 생산 일정 변경',
+    required: true,
+    multiline: true,
+  });
+  if (reason === null) return;
   if (!reason) return;
 
   const today = getToday();
@@ -627,7 +636,13 @@ async function handleCancelCompletion() {
           const currentVal = docSnap.data()[item.field];
 
           if (currentVal !== item.after) {
-            if (!confirm(`내일생산불러오기 이후 ${item.label} 재고가 변경된 이력이 있습니다.\n내일생산불러오기 당시 차감분만 복원됩니다.\n강제 복원하시겠습니까?`)) continue;
+            const __c = await showConfirmModal({
+              title: '재고 변동 감지',
+              message: `내일생산불러오기 이후 ${item.label} 재고가 변경된 이력이 있습니다.\n내일생산불러오기 당시 차감분만 복원됩니다.\n\n강제 복원하시겠습니까?`,
+              confirmText: '강제 복원',
+              danger: true,
+            });
+            if (!__c) continue;
           }
 
           // 자동 재포장 신규 lot은 remaining=0 + closed=true 처리
@@ -713,7 +728,7 @@ function showModal(html) {
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `<div class="modal-box ${isWide ? 'modal-wide' : ''}">${html}</div>`;
   document.body.appendChild(overlay);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+  // 외부 클릭 닫힘 비활성화 (묶음 1F: 모달 사라짐 이슈 우회)
 }
 
 window.closeModal = function() {

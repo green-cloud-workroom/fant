@@ -1304,3 +1304,39 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   color: #888;
   white-space: nowrap;
 }
+/* ============================================
+   [묶음 1A] 모달 안 입력/선택 박스 스타일
+   .cell-input은 원래 테이블 셀용 (투명 테두리)이므로
+   모달 안에서는 강제로 박스 형태로 표시
+   ============================================ */
+
+.modal-box .cell-input {
+  background: white;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  padding: 6px 8px;
+  height: 32px;
+  font-size: 13px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.modal-box .cell-input:focus {
+  border-color: #4A7C59;
+  background: white;
+}
+
+.modal-box .cell-input[readonly] {
+  background: #f5f5f5;
+  color: #888;
+}
+
+/* 작업 행 카드 (모달 안) */
+.modal-box .work-item {
+  background: #fafafa;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 14px;
+}

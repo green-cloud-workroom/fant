@@ -6,6 +6,7 @@ import { getTodayKST as getToday, addMonthsKST } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
+import { showConfirmModal } from '../utils/modal.js';
 
 let frozenProducts = [];
 let selectedProductId = null;
@@ -184,7 +185,7 @@ async function showProductDetail(product) {
 
   document.querySelectorAll('.btn-del-row').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if (!confirm('삭제하시겠습니까? 차감된 봉투 재고가 복원됩니다.')) return;
+      const __c = await showConfirmModal({ title:'동결제품 입고 삭제', message:'삭제하시겠습니까?\n차감된 봉투 재고가 복원됩니다.', confirmText:'삭제', danger:true }); if (!__c) return;
       const logId = btn.dataset.logid;
 
       const frozenLogSnap = await getDoc(doc(db, 'frozenLogs', logId));
@@ -207,7 +208,13 @@ async function showProductDetail(product) {
             const currentVal = docSnap.data()[item.field] || 0;
 
             if (currentVal !== item.after) {
-              if (!confirm(`동결제품 입고 이후 ${item.label} 재고가 변경된 이력이 있습니다.\n입고 당시 차감분만 복원됩니다.\n강제 복원하시겠습니까?`)) continue;
+              const __c = await showConfirmModal({
+                title: '재고 변동 감지',
+                message: `동결제품 입고 이후 ${item.label} 재고가 변경된 이력이 있습니다.\n입고 당시 차감분만 복원됩니다.\n\n강제 복원하시겠습니까?`,
+                confirmText: '강제 복원',
+                danger: true,
+              });
+              if (!__c) continue;
             }
 
             const restoredVal = currentVal - item.delta;
@@ -393,7 +400,13 @@ function showEditIncomingModal(product, log) {
           const currentVal = docSnap.data()[item.field] || 0;
 
           if (currentVal !== item.after) {
-            if (!confirm(`동결제품 입고 이후 ${item.label} 재고가 변경된 이력이 있습니다.\n입고 당시 차감분만 복원됩니다.\n강제 복원하시겠습니까?`)) {
+            const __c = await showConfirmModal({
+              title: '재고 변동 감지',
+              message: `동결제품 입고 이후 ${item.label} 재고가 변경된 이력이 있습니다.\n입고 당시 차감분만 복원됩니다.\n\n강제 복원하시겠습니까?`,
+              confirmText: '강제 복원',
+              danger: true,
+            });
+            if (!__c) {
               return;
             }
           }
@@ -680,7 +693,7 @@ function showModal(html) {
   document.body.appendChild(overlay);
 
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeModal();
+    // 외부 클릭 닫힘 비활성화 (묶음 1F: 모달 사라짐 이슈 우회)
   });
 }
 

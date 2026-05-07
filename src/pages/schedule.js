@@ -7,6 +7,7 @@ import { blockIfClosed } from '../utils/closingGuard.js';
 import { recordMeatLog } from '../services/meatLogs.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { currentUserRole } from '../app.js';
+import { showConfirmModal } from '../utils/modal.js';
 
 export async function renderSchedule() {
   const content = document.getElementById('mainContent');
@@ -402,12 +403,11 @@ function showCompleteModal(s) {
 
     // 발주/실제 수량 차이 시 한 번 더 확인
     if (actual !== s.orderedQty) {
-      const proceed = confirm(
-        `발주 수량과 실제 수량이 다릅니다.\n\n` +
-        `발주: ${s.orderedQty}${s.orderedUnit}\n` +
-        `실제: ${actual}${s.orderedUnit}\n\n` +
-        `이대로 완료 처리하시겠습니까?`
-      );
+      const proceed = await showConfirmModal({
+        title: '수량 차이 확인',
+        message: `발주 수량과 실제 수량이 다릅니다.\n\n발주: ${s.orderedQty}${s.orderedUnit}\n실제: ${actual}${s.orderedUnit}\n\n이대로 완료 처리하시겠습니까?`,
+        confirmText: '완료 처리',
+      });
       if (!proceed) return;
     }
 
@@ -616,7 +616,7 @@ function showModal(html) {
   document.body.appendChild(overlay);
 
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeModal();
+    // 외부 클릭 닫힘 비활성화 (묶음 1F: 모달 사라짐 이슈 우회)
   });
 }
 

@@ -7,6 +7,7 @@ import { currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { recordMeatLog } from '../services/meatLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
+import { showConfirmModal } from '../utils/modal.js';
 
 let meatTypes = [];
 let currentTab = 'frozen';
@@ -943,7 +944,7 @@ function showMeatTypesModal() {
 
   document.querySelectorAll('.btn-del-row').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if (!confirm('삭제하시겠습니까?')) return;
+      const __c = await showConfirmModal({ title:'삭제 확인', message:'정말 삭제하시겠습니까?', confirmText:'삭제', danger:true }); if (!__c) return;
       await deleteDoc(doc(db, 'meatTypes', btn.dataset.id));
       meatTypes = await loadMeatTypes();
       closeModal();
@@ -1013,7 +1014,7 @@ function showModal(html) {
   document.body.appendChild(overlay);
 
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeModal();
+    // 외부 클릭 닫힘 비활성화 (묶음 1F: 모달 사라짐 이슈 우회)
   });
 
   loadStaffCache();

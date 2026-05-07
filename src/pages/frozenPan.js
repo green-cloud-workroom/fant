@@ -6,6 +6,8 @@ import { getTodayKST as getToday } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { round2, breadToSilicon, breadToFrozenPan } from '../utils/number.js';
+import { showPromptModal, showConfirmModal } from '../utils/modal.js';
+
 
 let freezeDryRecipes = [];
 let activeTab = 'breadPan';  // 'breadPan' | 'frozenPan' — 묶음 3D 추가
@@ -405,7 +407,7 @@ function bindFrozenPanTabEvents(rows, lots) {
   // 발주 삭제 버튼
   document.querySelectorAll('.btn-order-delete').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if (!confirm('발주 행을 삭제하시겠습니까?')) return;
+      const __c = await showConfirmModal({ title:'발주 행 삭제', message:'발주 행을 삭제하시겠습니까?', confirmText:'삭제', danger:true }); if (!__c) return;
       const targetRow = rows.find(r => r.id === btn.dataset.id);
       if (targetRow && await blockIfClosed(targetRow.date)) return;
       await updateDoc(doc(db, 'frozenPanStock', btn.dataset.id), { status: 'cancelled' });
@@ -416,7 +418,7 @@ function bindFrozenPanTabEvents(rows, lots) {
   // 발주 취소 버튼
   document.querySelectorAll('.btn-order-cancel').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if (!confirm('발주 확인을 취소하시겠습니까? 차감된 동결판 재고가 복원됩니다.')) return;
+      const __c = await showConfirmModal({ title:'발주 확인 취소', message:'발주 확인을 취소하시겠습니까?\n차감된 동결판 재고가 복원됩니다.', confirmText:'취소', danger:true }); if (!__c) return;
       const rowId = btn.dataset.id;
       const row = rows.find(r => r.id === rowId);
       if (row && await blockIfClosed(row.date)) return;
@@ -747,7 +749,13 @@ async function showBreadPanAdjustModal() {
 
     // 음수 차감 시 경고 (마이너스 허용은 하지만 확인은 받음)
     if (after < 0) {
-      if (!confirm(`조정 후 잔량이 ${after}개로 음수가 됩니다. 그대로 진행하시겠습니까?`)) return;
+      const __c = await showConfirmModal({
+        title: '음수 잔량 경고',
+        message: `조정 후 잔량이 ${after}개로 음수가 됩니다.\n그대로 진행하시겠습니까?`,
+        confirmText: '진행',
+        danger: true,
+      });
+      if (!__c) return;
     }
 
     const now = new Date();
@@ -1096,27 +1104,27 @@ function renderWorkItemRow(breadPanRecipes, productSummary) {
     .join('');
 
   return `
-    <div class="work-item" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;padding:10px;background:#fafafa;border:1px solid #e8e8e8;border-radius:6px;">
+    <div class="work-item">
       <div style="display:flex;gap:8px;align-items:center;">
-        <select class="wi-name cell-input" style="flex:1;min-width:0;background:white;border:1px solid #d0d0d0;border-radius:4px;padding:6px 8px;font-size:14px;">
+        <select class="wi-name cell-input" style="flex:1;min-width:0;">
           <option value="">제품 선택</option>
           ${recipeOptions}
         </select>
         <button class="btn-del-row wi-del" type="button">×</button>
       </div>
-      <div class="wi-stock-info" style="font-size:11px;color:#888;padding-left:2px;">제품을 선택하세요</div>
+      <div class="wi-stock-info" style="font-size:11px;color:#888;padding-left:2px;margin:6px 0;">제품을 선택하세요</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 60px;gap:8px;align-items:end;">
         <div>
           <label style="font-size:11px;color:#555;display:block;margin-bottom:2px;">출고 빵판 수 *</label>
-          <input type="number" class="wi-bread cell-input" step="0.01" min="0.01" placeholder="빵판" style="width:100%;box-sizing:border-box;background:white;border:1px solid #d0d0d0;border-radius:4px;padding:6px 8px;" />
+          <input type="number" class="wi-bread cell-input" step="0.01" min="0.01" placeholder="빵판" />
         </div>
         <div>
           <label style="font-size:11px;color:#555;display:block;margin-bottom:2px;">이론 동결판 (×4/9)</label>
-          <input type="number" class="wi-expected cell-input" readonly placeholder="-" style="width:100%;box-sizing:border-box;background:white;border:1px solid #d0d0d0;border-radius:4px;padding:6px 8px;color:#888;" />
+          <input type="number" class="wi-expected cell-input" readonly placeholder="-" />
         </div>
         <div>
           <label style="font-size:11px;color:#555;display:block;margin-bottom:2px;">실제 산출 동결판 *</label>
-          <input type="number" class="wi-actual cell-input" step="1" min="0" placeholder="실측" style="width:100%;box-sizing:border-box;background:white;border:1px solid #d0d0d0;border-radius:4px;padding:6px 8px;" />
+          <input type="number" class="wi-actual cell-input" step="1" min="0" placeholder="실측" />
         </div>
         <div>
           <label style="font-size:11px;color:#555;display:block;margin-bottom:2px;">차이</label>
@@ -1451,8 +1459,15 @@ async function confirmOrder(row, lots) {
 }
 
 async function cancelOrder(row, lots) {
-  const reason = prompt('발주 취소 사유를 입력해주세요:');
-  if (!reason) return;
+  const reason = await showPromptModal({
+    title: '발주 취소',
+    message: '취소 후에는 차감된 동결판 재고가 복원됩니다.',
+    label: '취소 사유',
+    placeholder: '예: 재고 부족, 일정 변경',
+    required: true,
+    multiline: true,
+  });
+  if (reason === null) return;
 
   // ledger 기반 정확 복원
   if (row.ledgerId) {
@@ -1465,7 +1480,12 @@ async function cancelOrder(row, lots) {
         const currentVal = docSnap.data()[item.field] || 0;
 
         if (currentVal !== item.after) {
-          if (!confirm(`발주 확인 이후 ${item.label} 재고가 변경된 이력이 있습니다.\n발주 당시 차감분만 복원됩니다.\n강제 복원하시겠습니까?`)) continue;
+          const ok = await showConfirmModal({
+        title: '로그아웃 확인',
+        message: '오늘 아직 마감되지 않았습니다.\n로그아웃해도 자동으로 마감되지 않습니다.\n\n로그아웃 하시겠습니까?',
+        confirmText: '로그아웃',
+      });
+      if (!ok) return;
         }
 
         const restoredVal = currentVal - item.delta;
@@ -1558,9 +1578,8 @@ function showModal(html) {
   overlay.innerHTML = `<div class="modal-box">${html}</div>`;
   document.body.appendChild(overlay);
 
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeModal();
-  });
+  // 외부 클릭 닫힘 비활성화 (묶음 1F: 모달 사라짐 이슈 우회)
+  // 명시적인 취소/저장 버튼으로만 닫힘
 }
 
 window.closeModal = function() {

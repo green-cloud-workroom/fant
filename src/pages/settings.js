@@ -1,3 +1,4 @@
+import { showPromptModal, showConfirmModal } from '../utils/modal.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc
@@ -80,7 +81,13 @@ function bindStaffEvents(staffGroups) {
   document.querySelectorAll('.btn-add-staff').forEach(btn => {
     btn.addEventListener('click', async () => {
       const group = btn.dataset.group;
-      const name = prompt('담당자 이름을 입력해주세요:');
+      const name = await showPromptModal({
+        title: '담당자 추가',
+        label: '담당자 이름',
+        placeholder: '예: 홍길동',
+        required: true,
+      });
+      if (name === null) return;
       if (!name || !name.trim()) return;
 
       staffGroups[group].push({ id: Date.now().toString(), name: name.trim(), active: true, sortOrder: staffGroups[group].length });
@@ -94,7 +101,7 @@ function bindStaffEvents(staffGroups) {
     btn.addEventListener('click', async () => {
       const group = btn.dataset.group;
       const index = parseInt(btn.dataset.index);
-      if (!confirm('담당자를 삭제하시겠습니까?')) return;
+      const __c = await showConfirmModal({ title:'담당자 삭제', message:'담당자를 삭제하시겠습니까?', confirmText:'삭제', danger:true }); if (!__c) return;
 
       staffGroups[group].splice(index, 1);
       await saveStaffGroup(group, staffGroups[group]);
@@ -216,7 +223,7 @@ async function handleAddHoliday() {
 
 // 휴일 삭제
 async function handleDeleteHoliday(holidayId) {
-  if (!confirm(`${holidayId} 공휴일을 삭제하시겠습니까?`)) return;
+  const __c = await showConfirmModal({ title:'공휴일 삭제', message:`${holidayId} 공휴일을 삭제하시겠습니까?`, confirmText:'삭제', danger:true }); if (!__c) return;
 
   try {
     await deleteDoc(doc(db, 'holidays', holidayId));
