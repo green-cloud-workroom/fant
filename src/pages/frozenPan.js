@@ -5,7 +5,7 @@ import {
 import { getTodayKST as getToday } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
-import { round2, breadToSilicon } from '../utils/number.js';
+import { round2, breadToSilicon, breadToFrozenPan } from '../utils/number.js';
 
 let freezeDryRecipes = [];
 let activeTab = 'breadPan';  // 'breadPan' | 'frozenPan' — 묶음 3D 추가
@@ -605,96 +605,220 @@ function renderPanRow(r) {
   `;
 }
 
-function showWorkRowModal(rows, lots) {
+async function showWorkRowModal(rows, lots) {
+  // 빵판 lot 다시 로드 (최신 잔량 반영)
+  const allBreadLots = await loadBreadPanLots();
+
+  // 동결생식 레시피만 (분리 작업 필요한 것만)
+  const breadPanRecipes = freezeDryRecipes.filter(r => r.requiresSeparation === true);
+
+  if (breadPanRecipes.length === 0) {
+    alert('동결생식 레시피가 없습니다.\n\n레시피 관리 메뉴에서 동결건조 레시피의 "분리 작업 필요" 옵션을 켜주세요.');
+    return;
+  }
+
+  // 제품별 잔량 합계 + 가장 오래된 lot의 잔량 (default 채울 용)
+  const productSummary = {};
+  breadPanRecipes.forEach(r => {
+    const productLots = allBreadLots
+      .filter(l => l.productName === r.displayName && l.remaining > 0.005)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const total = round2(productLots.reduce((sum, l) => sum + l.remaining, 0));
+    const oldestRemaining = productLots.length > 0 ? productLots[0].remaining : 0;
+    productSummary[r.displayName] = { total, oldestRemaining };
+  });
+
   showModal(`
-    <h3 class="modal-title">작업 행 추가</h3>
+    <h3 class="modal-title">작업 행 추가 (빵판 → 동결판 전처리)</h3>
     <div class="form-row">
       <div class="form-group">
-        <label>날짜</label>
+        <label>날짜 *</label>
         <input type="date" id="m_date" value="${getToday()}" />
       </div>
       <div class="form-group">
-        <label>담당자</label>
+        <label>담당자 *</label>
         <select id="m_staff">
           <option value="">선택</option>
           ${getStaffOptions(['senior', 'office'])}
         </select>
       </div>
     </div>
+
+    <div style="font-size:12px;color:#666;background:#f9f9f9;padding:10px;border-radius:6px;margin-bottom:12px;">
+      <strong>환산</strong>: 빵판 1개 → 동결판 4/9개 (≈0.44)<br>
+      <strong>FIFO 적용</strong>: 같은 제품에 여러 lot이 있으면 오래된 lot부터 차감됩니다.<br>
+      <strong>실측</strong>: 이론값과 실제 산출 동결판 수가 다르면 차이가 별도 기록됩니다.
+    </div>
+
     <div id="workItems">
-      <div class="work-item" style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
-        <select class="wi-name cell-input" style="flex:1">${getRecipeOptionsHtml(freezeDryRecipes)}</select>
-        <input type="number" class="wi-bread cell-input" placeholder="빵판수" style="width:80px" />
-        <input type="number" class="wi-freeze cell-input" placeholder="동결판수" style="width:80px" />
-        <button class="btn-del-row wi-del">✕</button>
-      </div>
+      ${renderWorkItemRow(breadPanRecipes, productSummary)}
     </div>
     <button class="btn-secondary" id="btnAddWorkItem" style="margin-bottom:16px;">+ 제품 추가</button>
+
+    <div class="form-group">
+      <label>비고</label>
+      <input type="text" id="m_note" placeholder="(선택)" />
+    </div>
+
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn-primary" id="btnSaveWorkRow">저장</button>
     </div>
   `);
 
-  bindWorkItemEvents();
+  bindWorkItemEvents(productSummary);
+  refreshAvailableProducts();
 
   document.getElementById('btnAddWorkItem').addEventListener('click', () => {
-    document.getElementById('workItems').insertAdjacentHTML('beforeend', `
-      <div class="work-item" style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
-        <select class="wi-name cell-input" style="flex:1">${getRecipeOptionsHtml(freezeDryRecipes)}</select>
-        <input type="number" class="wi-bread cell-input" placeholder="빵판수" style="width:80px" />
-        <input type="number" class="wi-freeze cell-input" placeholder="동결판수" style="width:80px" />
-        <button class="btn-del-row wi-del">✕</button>
-      </div>
-    `);
-    bindWorkItemEvents();
+    document.getElementById('workItems').insertAdjacentHTML(
+      'beforeend',
+      renderWorkItemRow(breadPanRecipes, productSummary)
+    );
+    bindWorkItemEvents(productSummary);
+    refreshAvailableProducts();
   });
 
   document.getElementById('btnSaveWorkRow').addEventListener('click', async () => {
-    const date = document.getElementById('m_date').value;
-    const staff = document.getElementById('m_staff').value;
-    const items = Array.from(document.querySelectorAll('.work-item')).map(row => ({
-      productName: row.querySelector('.wi-name').value.trim(),
-      breadPanQty: parseInt(row.querySelector('.wi-bread').value) || 0,
-      freezePanQty: parseInt(row.querySelector('.wi-freeze').value) || 0,
-    })).filter(i => i.productName);
-
-    if (!date || items.length === 0) { alert('날짜와 제품을 입력해주세요.'); return; }
-    if (await blockIfClosed(date)) return;
-
-    const rowRef = await addDoc(collection(db, 'frozenPanStock'), {
-      date, type: 'work', status: 'done',
-      staffName: staff, items,
-      createdAt: new Date(), updatedAt: new Date(),
-    });
-
-    // lot 생성
-    for (const item of items) {
-      if (item.freezePanQty > 0) {
-        await addDoc(collection(db, 'frozenPanLots'), {
-          productName: item.productName,
-          date,
-          initialQty: item.freezePanQty,
-          remaining: item.freezePanQty,
-          sourceRowId: rowRef.id,
-          closed: false,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        });
-      }
-    }
-
-    closeModal();
-    await refreshFrozenPanLayout();
-    alert('작업 행 추가 완료!');
+    alert('저장 핸들러는 3F-2에서 구현됩니다.\n현재는 UI만 동작합니다.');
   });
 }
 
-function bindWorkItemEvents() {
+function renderWorkItemRow(breadPanRecipes, productSummary) {
+  const recipeOptions = breadPanRecipes
+    .map(r => `<option value="${r.displayName}">${r.displayName}</option>`)
+    .join('');
+
+  return `
+    <div class="work-item" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;padding:10px;background:#fafafa;border:1px solid #e8e8e8;border-radius:6px;">
+      <div style="display:flex;gap:8px;align-items:center;">
+        <select class="wi-name cell-input" style="flex:1;min-width:0;background:white;border:1px solid #d0d0d0;border-radius:4px;padding:6px 8px;font-size:14px;">
+          <option value="">제품 선택</option>
+          ${recipeOptions}
+        </select>
+        <button class="btn-del-row wi-del" type="button">×</button>
+      </div>
+      <div class="wi-stock-info" style="font-size:11px;color:#888;padding-left:2px;">제품을 선택하세요</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 60px;gap:8px;align-items:end;">
+        <div>
+          <label style="font-size:11px;color:#555;display:block;margin-bottom:2px;">출고 빵판 수 *</label>
+          <input type="number" class="wi-bread cell-input" step="0.01" min="0.01" placeholder="빵판" style="width:100%;box-sizing:border-box;background:white;border:1px solid #d0d0d0;border-radius:4px;padding:6px 8px;" />
+        </div>
+        <div>
+          <label style="font-size:11px;color:#555;display:block;margin-bottom:2px;">이론 동결판 (×4/9)</label>
+          <input type="number" class="wi-expected cell-input" readonly placeholder="-" style="width:100%;box-sizing:border-box;background:white;border:1px solid #d0d0d0;border-radius:4px;padding:6px 8px;color:#888;" />
+        </div>
+        <div>
+          <label style="font-size:11px;color:#555;display:block;margin-bottom:2px;">실제 산출 동결판 *</label>
+          <input type="number" class="wi-actual cell-input" step="1" min="0" placeholder="실측" style="width:100%;box-sizing:border-box;background:white;border:1px solid #d0d0d0;border-radius:4px;padding:6px 8px;" />
+        </div>
+        <div>
+          <label style="font-size:11px;color:#555;display:block;margin-bottom:2px;">차이</label>
+          <span class="wi-diff" style="display:inline-block;line-height:32px;font-size:13px;color:#888;">-</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function bindWorkItemEvents(productSummary) {
   document.querySelectorAll('.wi-del').forEach(btn => {
-    btn.onclick = () => btn.closest('.work-item').remove();
+    btn.onclick = () => {
+      btn.closest('.work-item').remove();
+      refreshAvailableProducts();
+    };
+  });
+
+  document.querySelectorAll('.work-item').forEach(item => {
+    const nameEl = item.querySelector('.wi-name');
+    const breadEl = item.querySelector('.wi-bread');
+    const expectedEl = item.querySelector('.wi-expected');
+    const actualEl = item.querySelector('.wi-actual');
+    const diffEl = item.querySelector('.wi-diff');
+    const stockInfoEl = item.querySelector('.wi-stock-info');
+
+    // 제품 선택 시 잔량 표시 + default 빵판 수 채우기
+    nameEl.onchange = () => {
+      const productName = nameEl.value;
+      const summary = productSummary[productName];
+
+      if (!summary || summary.total <= 0) {
+        stockInfoEl.textContent = productName ? '⚠️ 빵판 lot 없음' : '제품을 선택하세요';
+        stockInfoEl.style.color = productName ? '#e53e3e' : '#888';
+        breadEl.value = '';
+        breadEl.max = '';
+      } else {
+        stockInfoEl.textContent = `현재 잔량 ${summary.total}개 (가장 오래된 lot ${summary.oldestRemaining}개)`;
+        stockInfoEl.style.color = '#2d7a3a';
+        // default: 가장 오래된 lot의 잔량 (B안 — 99% batch 전체 사용)
+        breadEl.value = summary.oldestRemaining;
+        breadEl.max = summary.total;
+        recalcRow(item);
+      }
+
+      // 다른 카드에서 같은 제품 선택 못하도록 옵션 갱신
+      refreshAvailableProducts();
+    };
+
+    // 빵판 수 변경 시 이론값 자동 계산
+    breadEl.oninput = () => {
+      recalcRow(item);
+    };
+
+    // 실측값 변경 시 차이 계산
+    actualEl.oninput = () => {
+      recalcRow(item);
+    };
   });
 }
+
+function refreshAvailableProducts() {
+  // 현재 선택된 제품 목록
+  const selectedProducts = new Set();
+  document.querySelectorAll('.work-item .wi-name').forEach(sel => {
+    if (sel.value) selectedProducts.add(sel.value);
+  });
+
+  // 각 select의 옵션 disabled 처리
+  document.querySelectorAll('.work-item .wi-name').forEach(sel => {
+    const currentValue = sel.value;
+    Array.from(sel.options).forEach(opt => {
+      if (!opt.value) return; // 빈 placeholder 옵션은 항상 활성
+      // 본인이 선택한 옵션은 활성, 다른 카드가 이미 선택한 옵션은 비활성
+      opt.disabled = opt.value !== currentValue && selectedProducts.has(opt.value);
+    });
+  });
+}
+
+function recalcRow(item) {
+  const breadEl = item.querySelector('.wi-bread');
+  const expectedEl = item.querySelector('.wi-expected');
+  const actualEl = item.querySelector('.wi-actual');
+  const diffEl = item.querySelector('.wi-diff');
+
+  const breadQty = round2(parseFloat(breadEl.value) || 0);
+  const expected = breadToFrozenPan(breadQty);
+  expectedEl.value = expected;
+
+  const actual = parseInt(actualEl.value);
+  if (isNaN(actual) || actualEl.value === '') {
+    diffEl.textContent = '-';
+    diffEl.style.color = '#888';
+    return;
+  }
+
+  const diff = round2(actual - expected);
+  const sign = diff > 0 ? '+' : '';
+  diffEl.textContent = `${sign}${diff}`;
+
+  if (diff === 0) {
+    diffEl.style.color = '#2d7a3a';
+  } else if (Math.abs(diff) <= 0.5) {
+    diffEl.style.color = '#888';
+  } else {
+    diffEl.style.color = '#e67e22';
+  }
+}
+
 
 function showOrderRowModal(rows, lots) {
   // 제품별 현재 재고 계산 (자체 lot 합계)
