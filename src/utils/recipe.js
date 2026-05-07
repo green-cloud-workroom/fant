@@ -26,6 +26,7 @@ export async function getActiveFreezeDryRecipes() {
       id: d.id,
       displayName: `${prefix}${data.name}`,
       sortOrder: data.sortOrder ?? 999,
+      requiresSeparation: data.requiresSeparation === true,  // ★묶음 3 추가 — 동결생식 여부 (빵판 추적 대상)
     };
   });
   list.sort((a, b) => a.sortOrder - b.sortOrder);
