@@ -41,16 +41,26 @@ async function loadBreadPanLogs() {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
+async function loadFrozenPanLogs() {
+  const q = query(collection(db, 'frozenPanLogs'), orderBy('timestamp', 'desc'));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
 async function refreshFrozenPanLayout() {
   const rows = await loadFrozenPanRows();
   const lots = await loadFrozenPanLots();
   const breadPanLots = await loadBreadPanLots();
   const breadPanLogs = await loadBreadPanLogs();
-  renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs);
+  const frozenPanLogs = await loadFrozenPanLogs();
+  renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPanLogs);
 }
 
-function renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs) {
+function renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPanLogs) {
   const content = document.getElementById('mainContent');
+
+  // 묶음 3 정책: 옛 type='work' 행은 화면에서 숨김 (DB는 묶음 10에서 일괄 wipe 예정)
+  rows = rows.filter(r => r.type !== 'work');
 
   // 동결판 제품별 lot 집계
   const lotSummary = {};
@@ -108,7 +118,7 @@ function renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs) {
       </div>
 
       <!-- 탭 콘텐츠 -->
-      ${activeTab === 'breadPan' ? renderBreadPanTab(breadLotSummary, breadPanLogs) : renderFrozenPanTab(rows, lotSummary)}
+      ${activeTab === 'breadPan' ? renderBreadPanTab(breadLotSummary, breadPanLogs) : renderFrozenPanTab(rows, lotSummary, frozenPanLogs)}
     </div>
   `;
 
@@ -116,7 +126,7 @@ function renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs) {
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       activeTab = btn.dataset.tab;
-      renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs);
+      renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPanLogs);
     });
   });
 
@@ -209,11 +219,16 @@ function renderBreadPanLogRow(log) {
     noteText = log.reason;
   }
 
+  // 제품명 옆에 차감/조정 대상 lot 입고일 표시 (입고 자기 자신은 제외)
+  const lotDateLabel = (log.lotDate && log.type !== 'incoming')
+    ? `<span style="font-size:11px;color:#999;margin-left:4px;">(입고 ${log.lotDate})</span>`
+    : '';
+
   return `
     <tr>
       <td>${log.date || '-'}</td>
       <td><span class="tag ${typeColor}" style="${log.type === 'preprocess' ? 'background:#f0f0f0;color:#666' : ''}">${typeLabel}</span></td>
-      <td>${log.productName || '-'}</td>
+      <td>${log.productName || '-'}${lotDateLabel}</td>
       <td style="color:${qtyColor};font-weight:500;">${qtySign}${log.qty || 0}개</td>
       <td>${log.staffName || '-'}</td>
       <td style="font-size:12px;color:#666;">${noteText}</td>
@@ -221,7 +236,7 @@ function renderBreadPanLogRow(log) {
   `;
 }
 
-function renderFrozenPanTab(rows, lotSummary) {
+function renderFrozenPanTab(rows, lotSummary, frozenPanLogs) {
   const lotEntries = Object.entries(lotSummary);
   return `
     <div class="page-header" style="margin-bottom:12px;">
@@ -251,8 +266,9 @@ function renderFrozenPanTab(rows, lotSummary) {
       `}
     </div>
 
-    <!-- 작업/발주 테이블 -->
-    <div class="table-wrap" style="background:white;border-radius:8px;border:1px solid #e8e8e8;overflow:hidden;">
+    <!-- 발주 테이블 -->
+    <div style="font-size:14px;color:#555;font-weight:600;margin-bottom:8px;">발주 내역</div>
+    <div class="table-wrap" style="background:white;border-radius:8px;border:1px solid #e8e8e8;overflow:hidden;margin-bottom:16px;">
       <table class="data-table">
         <thead>
           <tr>
@@ -265,11 +281,72 @@ function renderFrozenPanTab(rows, lotSummary) {
           </tr>
         </thead>
         <tbody>
-          ${rows.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">등록된 내역 없음</td></tr>` :
+          ${rows.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">발주 내역 없음</td></tr>` :
             rows.map(r => renderPanRow(r)).join('')}
         </tbody>
       </table>
     </div>
+
+    <!-- 동결판 이력 -->
+    <div style="font-size:14px;color:#555;font-weight:600;margin-bottom:8px;">동결판 이력</div>
+    <div class="table-wrap" style="background:white;border-radius:8px;border:1px solid #e8e8e8;overflow:hidden;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>날짜</th>
+            <th>구분</th>
+            <th>제품</th>
+            <th>수량</th>
+            <th>담당자</th>
+            <th>비고</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${frozenPanLogs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
+            frozenPanLogs.map(l => renderFrozenPanLogRow(l)).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderFrozenPanLogRow(log) {
+  const typeLabel = {
+    tenderIn: '텐더동결 입고',
+    preprocess: '전처리 입고',
+    orderDeduct: '발주 차감',
+    orderRollback: '발주 복원',
+    adjust: '수동조정',
+  }[log.type] || log.type;
+
+  const typeColor = {
+    tenderIn: 'tag-raw',           // 파란색
+    preprocess: 'tag-raw',         // 파란색
+    orderDeduct: '',               // 회색 (차감)
+    orderRollback: 'tag-cat',      // 노란색 (복원)
+    adjust: 'tag-cat',             // 노란색
+  }[log.type] || '';
+
+  const qtyColor = log.qty > 0 ? '#2d7a3a' : '#e53e3e';
+  const qtySign = log.qty > 0 ? '+' : '';
+
+  // 비고
+  let noteText = '-';
+  if (log.note) {
+    noteText = log.note;
+  } else if (log.reason) {
+    noteText = log.reason;
+  }
+
+  return `
+    <tr>
+      <td>${log.date || '-'}</td>
+      <td><span class="tag ${typeColor}" style="${log.type === 'orderDeduct' ? 'background:#f0f0f0;color:#666' : ''}">${typeLabel}</span></td>
+      <td>${log.productName || '-'}</td>
+      <td style="color:${qtyColor};font-weight:500;">${qtySign}${log.qty || 0}판</td>
+      <td>${log.staffName || '-'}</td>
+      <td style="font-size:12px;color:#666;">${noteText}</td>
+    </tr>
   `;
 }
 
@@ -416,6 +493,7 @@ function showBreadPanIncomingModal() {
       before: 0,
       after: qty,
       lotId: lotRef.id,
+      lotDate: date,  // ★ 신규 — 입고는 자기 자신이 lot 시작일
       expectedFrozenQty: null,
       actualFrozenQty: null,
       diff: null,
@@ -542,6 +620,7 @@ async function showBreadPanAdjustModal() {
       before,
       after,
       lotId,
+      lotDate: lot.date,  // ★ 신규 — 조정 대상 lot의 입고일
       expectedFrozenQty: null,
       actualFrozenQty: null,
       diff: null,
@@ -563,42 +642,35 @@ async function showBreadPanAdjustModal() {
 function renderPanRow(r) {
   if (r.status === 'cancelled') return '';
 
-  const isOrder = r.type === 'order';
+  // 묶음 3 정책: 발주 행만 표시 (옛 work 행은 renderFrozenPanLayout에서 필터링됨)
   const isConfirmed = r.status === 'confirmed';
 
-  let contentHtml = '';
-  if (isOrder) {
-    const total = (r.items || []).reduce((sum, i) => sum + (i.orderPanQty || 0), 0);
-    const color = total === 45 ? '#2d7a3a' : total > 45 ? '#e53e3e' : '#e67e22';
-    contentHtml = `
-      ${(r.items || []).map(i => `<span style="font-size:11px;margin-right:8px">${i.productName}: ${i.orderPanQty}판</span>`).join('')}
-      <span style="font-weight:600;color:${color}">총 ${total}판</span>
-    `;
-  } else {
-    contentHtml = (r.items || []).map(i =>
-      `<span style="font-size:11px;margin-right:8px">${i.productName}: 빵판${i.breadPanQty} / 동결판${i.freezePanQty}</span>`
-    ).join('');
-  }
+  const total = (r.items || []).reduce((sum, i) => sum + (i.orderPanQty || 0), 0);
+  const color = total === 45 ? '#2d7a3a' : total > 45 ? '#e53e3e' : '#e67e22';
+  const contentHtml = `
+    ${(r.items || []).map(i => `<span style="font-size:11px;margin-right:8px">${i.productName}: ${i.orderPanQty}판</span>`).join('')}
+    <span style="font-weight:600;color:${color}">총 ${total}판</span>
+  `;
 
   let actionHtml = '';
-  if (isOrder && !isConfirmed) {
+  if (!isConfirmed) {
     actionHtml = `
       <button class="btn-primary btn-order-confirm" data-id="${r.id}" style="font-size:11px;padding:3px 10px;">발주 확인</button>
       <button class="btn-del-row btn-order-delete" data-id="${r.id}">삭제</button>
     `;
-  } else if (isOrder && isConfirmed) {
+  } else {
     actionHtml = `<button class="btn-secondary btn-order-cancel" data-id="${r.id}" style="font-size:11px;padding:3px 10px;">발주 취소</button>`;
   }
 
   return `
-    <tr style="background:${isOrder ? '#fffdf0' : 'white'}">
+    <tr style="background:#fffdf0">
       <td>${r.date}</td>
-      <td><span class="tag ${isOrder ? 'tag-cat' : 'tag-raw'}">${isOrder ? '발주' : '작업'}</span></td>
+      <td><span class="tag tag-cat">발주</span></td>
       <td>${r.staffName || '-'}</td>
       <td>${contentHtml}</td>
       <td>
         ${isConfirmed ? '<span style="color:#2d7a3a;font-size:12px">✅ 확인완료</span>' :
-          isOrder ? '<span style="color:#e67e22;font-size:12px">⏳ 대기중</span>' : '-'}
+          '<span style="color:#e67e22;font-size:12px">⏳ 대기중</span>'}
       </td>
       <td style="white-space:nowrap">${actionHtml}</td>
     </tr>
@@ -679,8 +751,194 @@ async function showWorkRowModal(rows, lots) {
   });
 
   document.getElementById('btnSaveWorkRow').addEventListener('click', async () => {
-    alert('저장 핸들러는 3F-2에서 구현됩니다.\n현재는 UI만 동작합니다.');
+    await handleWorkRowSave();
   });
+}
+
+async function handleWorkRowSave() {
+  const date = document.getElementById('m_date').value;
+  const staffName = document.getElementById('m_staff').value;
+  const note = document.getElementById('m_note').value.trim();
+
+  // 입력 수집
+  const items = Array.from(document.querySelectorAll('.work-item')).map(row => ({
+    productName: row.querySelector('.wi-name').value.trim(),
+    breadPanQty: round2(parseFloat(row.querySelector('.wi-bread').value) || 0),
+    actualFrozenQty: parseInt(row.querySelector('.wi-actual').value) || 0,
+  })).filter(i => i.productName);
+
+  // 1. 기본 검증
+  if (!date) { alert('날짜를 입력해주세요.'); return; }
+  if (!staffName) { alert('담당자를 선택해주세요.'); return; }
+  if (items.length === 0) { alert('제품을 1개 이상 입력해주세요.'); return; }
+
+  for (const item of items) {
+    if (item.breadPanQty <= 0) {
+      alert(`${item.productName}: 출고 빵판 수가 입력되지 않았습니다.`);
+      return;
+    }
+    if (item.actualFrozenQty <= 0) {
+      alert(`${item.productName}: 실제 산출 동결판 수가 입력되지 않았습니다.`);
+      return;
+    }
+  }
+
+  // 2. 마감 가드
+  if (await blockIfClosed(date)) return;
+
+  // 3. 빵판 lot 재로드 (저장 직전 최신 잔량 확인)
+  const allBreadLots = await loadBreadPanLots();
+
+  // 4. 재고 부족 검증
+  const shortages = [];
+  for (const item of items) {
+    const productLots = allBreadLots.filter(l => l.productName === item.productName);
+    const totalAvail = round2(productLots.reduce((sum, l) => sum + l.remaining, 0));
+    if (item.breadPanQty > totalAvail) {
+      shortages.push(`${item.productName}: 잔량 ${totalAvail}개 / 요청 ${item.breadPanQty}개`);
+    }
+  }
+  if (shortages.length > 0) {
+    alert(`빵판 재고가 부족합니다.\n\n${shortages.join('\n')}`);
+    return;
+  }
+
+  // 5. batchId 생성 (이 트랜잭션 전체를 묶는 ID)
+  const batchId = `preprocess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const now = new Date();
+  const ledgerItems = [];
+
+  try {
+    // 6. 각 item 처리
+    for (const item of items) {
+      const expectedFrozenQty = breadToFrozenPan(item.breadPanQty);
+      const diff = round2(item.actualFrozenQty - expectedFrozenQty);
+
+      // 6-1. 빵판 lot FIFO 차감
+      let toDeduct = item.breadPanQty;
+      const productLots = allBreadLots
+        .filter(l => l.productName === item.productName && l.remaining > 0.005)
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      for (const lot of productLots) {
+        if (toDeduct <= 0.005) break;
+
+        const deduct = round2(Math.min(lot.remaining, toDeduct));
+        const before = lot.remaining;
+        const after = round2(before - deduct);
+        const stockUpdatedAt = new Date();
+
+        // breadPanLots 갱신
+        await updateDoc(doc(db, 'breadPanLots', lot.id), {
+          remaining: after,
+          closed: after <= 0.005,
+          updatedAt: stockUpdatedAt,
+        });
+
+        // breadPanLogs 기록 (preprocess) — 한 lot당 1건
+        // 첫 lot에만 expected/actual/diff 정보 (이론값은 item 전체 단위 기록)
+        const isFirstLot = (lot.id === productLots[0].id);
+        await addDoc(collection(db, 'breadPanLogs'), {
+          type: 'preprocess',
+          date,
+          productName: item.productName,
+          qty: -deduct,
+          before,
+          after,
+          lotId: lot.id,
+          lotDate: lot.date,  // ★ 신규 — 차감 대상 lot의 입고일 (어느 날 입고된 빵판이 빠졌는지)
+          expectedFrozenQty: isFirstLot ? expectedFrozenQty : null,
+          actualFrozenQty: isFirstLot ? item.actualFrozenQty : null,
+          diff: isFirstLot ? diff : null,
+          staffName,
+          uid: null,
+          note: note || null,
+          reason: null,
+          batchId,
+          ledgerId: null,  // 아래 ledger 저장 후 일괄 갱신은 안 함 (단순화)
+          timestamp: now,
+        });
+
+        // ledger items 누적
+        ledgerItems.push({
+          collection: 'breadPanLots',
+          docId: lot.id,
+          field: 'remaining',
+          delta: -deduct,
+          before,
+          after,
+          label: `${item.productName} 빵판 (${lot.date})`,
+          stockUpdatedAtSnapshot: stockUpdatedAt,
+        });
+
+        toDeduct = round2(toDeduct - deduct);
+      }
+
+      // 6-2. 동결판 lot 신규 생성 (실측값으로)
+      const newFrozenLotRef = await addDoc(collection(db, 'frozenPanLots'), {
+        productName: item.productName,
+        date,
+        staffName,
+        initialQty: item.actualFrozenQty,
+        remaining: item.actualFrozenQty,
+        closed: false,
+        source: 'preprocess',
+        sourceRefId: batchId,
+        note: note || null,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // frozenPanLogs 기록 (preprocess 입고)
+      await addDoc(collection(db, 'frozenPanLogs'), {
+        type: 'preprocess',
+        date,
+        productName: item.productName,
+        qty: item.actualFrozenQty,
+        before: 0,
+        after: item.actualFrozenQty,
+        lotId: newFrozenLotRef.id,
+        staffName,
+        uid: null,
+        note: note || null,
+        reason: null,
+        batchId,
+        ledgerId: null,
+        timestamp: now,
+      });
+
+      // ledger items 누적 (frozenPanLots 신규 생성)
+      ledgerItems.push({
+        collection: 'frozenPanLots',
+        docId: newFrozenLotRef.id,
+        field: 'remaining',
+        delta: item.actualFrozenQty,
+        before: 0,
+        after: item.actualFrozenQty,
+        label: `${item.productName} 동결판 (신규 생성)`,
+        stockUpdatedAtSnapshot: now,
+        isNewDoc: true,
+      });
+    }
+
+    // 7. stockLedger 1건 저장
+    const ledgerRef = await addDoc(collection(db, 'stockLedger'), {
+      actionType: 'breadToFrozenPreprocess',
+      actionId: batchId,
+      timestamp: now,
+      date,
+      status: 'active',
+      items: ledgerItems,
+    });
+
+    closeModal();
+    await refreshFrozenPanLayout();
+    alert('전처리 작업 저장 완료!');
+
+  } catch (err) {
+    console.error('handleWorkRowSave 에러:', err);
+    alert(`저장 중 오류가 발생했습니다.\n\n${err.message}\n\n일부 데이터가 저장되었을 수 있으니 화면을 새로고침해서 확인해주세요.`);
+  }
 }
 
 function renderWorkItemRow(breadPanRecipes, productSummary) {
