@@ -550,14 +550,26 @@ function showAdjustModal(stocks) {
       .filter(s => s.productName === productName && s.stockType === stockType)
       .sort((a, b) => a.date.localeCompare(b.date));
 
+    // [음수 차단] 기존 lot이 있으면 그 lot의 잔량 + delta가 음수면 차단.
+    // 신규 생성 분기는 마이너스로 신규 생성 자체를 차단해야 함.
     if (targetStocks.length > 0) {
       const s = targetStocks[0];
+      const after = s.remaining + delta;
+      if (after < 0) {
+        alert(`조정 후 잔량이 ${after}개가 됩니다.\n수동조정으로 음수 재고를 만들 수 없습니다.\n현재 ${s.remaining}개에서 최대 ${s.remaining}개까지만 감소 가능합니다.`);
+        return;
+      }
       await updateDoc(doc(db, 'frozenSeparation', s.id), {
-        remaining: s.remaining + delta,
-        closed: s.remaining + delta <= 0,
+        remaining: after,
+        closed: after <= 0,
         updatedAt: new Date(),
       });
     } else {
+      // 기존 lot 없는데 마이너스 조정 → 음수로 신규 생성 시도 → 차단
+      if (delta < 0) {
+        alert(`해당 제품/구분의 재고가 없습니다.\n수동조정으로 음수 재고를 만들 수 없습니다.`);
+        return;
+      }
       await addDoc(collection(db, 'frozenSeparation'), {
         date: getToday(), productName, stockType,
         initialQty: delta, remaining: delta,

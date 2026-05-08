@@ -406,6 +406,12 @@ function showBagAdjustModal(bag) {
     const before = bag.currentQty || 0;
     const after = before + delta;
 
+    // [음수 차단] 수동조정 결과가 음수면 차단. 마이너스 재고는 비현실적 + 후속 차감 검사 망가뜨림.
+    if (after < 0) {
+      alert(`조정 후 잔량이 ${after}장이 됩니다.\n수동조정으로 음수 재고를 만들 수 없습니다.\n현재 ${before}장에서 최대 ${before}장까지만 감소 가능합니다.`);
+      return;
+    }
+
     await updateDoc(doc(db, 'bagTypes', bag.id), {
       currentQty: after,
       updatedAt: new Date(),

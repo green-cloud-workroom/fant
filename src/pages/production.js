@@ -6,6 +6,7 @@ import { getTodayKST as getToday, getHolidaysCache } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
+import { recordActivity } from '../services/activityLogs.js';
 
 let recipes = [];
 let productions = [];
@@ -392,6 +393,24 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
     if (isNew) {
       data.createdAt = new Date();
       await addDoc(collection(db, 'productions'), data);
+
+      // [묶음 6C-2] 생산 추가 발행 — 운영자 결정 ③ B (추가만 발행, 수정/삭제는 묶음 9 검토)
+      // 메인 화면 생산 로그 패널에 누가 언제 등록했는지 추적
+      await recordActivity({
+        action: 'production',
+        subAction: 'create',
+        date: selectedDate,
+        staff,
+        message: `생산 추가 — ${displayName} ${qty}${unitName} / 담당: ${staff}`,
+        details: {
+          recipeId,
+          recipeName: displayName,
+          category: recipe.category,
+          target: recipe.target,
+          productionUnitQty: qty,
+          productionUnitName: unitName,
+        },
+      });
     } else {
       await updateDoc(doc(db, 'productions', production.id), data);
     }

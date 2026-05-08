@@ -767,15 +767,10 @@ async function showBreadPanAdjustModal() {
     const before = lot.remaining || 0;
     const after = round2(before + delta);
 
-    // 음수 차감 시 경고 (마이너스 허용은 하지만 확인은 받음)
+    // [음수 차단] 정책 변경 — 모든 수동조정에서 음수 잔량 불허
     if (after < 0) {
-      const __c = await showConfirmModal({
-        title: '음수 잔량 경고',
-        message: `조정 후 잔량이 ${after}개로 음수가 됩니다.\n그대로 진행하시겠습니까?`,
-        confirmText: '진행',
-        danger: true,
-      });
-      if (!__c) return;
+      alert(`조정 후 잔량이 ${after}개가 됩니다.\n수동조정으로 음수 재고를 만들 수 없습니다.\n현재 ${before}개에서 최대 ${before}개까지만 감소 가능합니다.`);
+      return;
     }
 
     const now = new Date();

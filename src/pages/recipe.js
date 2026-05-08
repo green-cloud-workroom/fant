@@ -8,11 +8,20 @@ let recipes = [];
 let selectedRecipeId = null;
 
 let meatTypes = [];
+// [봉투 연동] raw 카테고리에서 선택 가능한 봉투 목록
+let bagTypes = [];
 
 async function loadMeatTypes() {
   const q = query(collection(db, 'meatTypes'), orderBy('sortOrder'));
   const snap = await getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+// [봉투 연동] 봉투 목록 로드 (drag-drop 순번 유지하려고 sortOrder 정렬, active만)
+async function loadBagTypes() {
+  const q = query(collection(db, 'bagTypes'), orderBy('sortOrder'));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(b => b.active !== false);
 }
 
 export async function renderRecipe() {
@@ -21,6 +30,7 @@ export async function renderRecipe() {
 
   recipes = await loadRecipes();
   meatTypes = await loadMeatTypes();
+  bagTypes = await loadBagTypes();  // [봉투 연동] raw 카테고리 봉투 선택용
   renderRecipeLayout();
 }
 
@@ -158,11 +168,21 @@ function showRecipeDetail(recipe) {
             <input type="color" id="recipeColor" value="${recipe?.color || '#4A7C59'}" style="height:36px;width:60px;padding:2px;" />
           </div>
         </div>
-        <div class="form-row">
-          <div class="form-group" id="rawFields" style="${recipe?.category !== 'raw' && recipe?.category ? 'display:none' : ''}">
+        <!-- [봉투 연동] raw 카테고리 폼: 팩당 중량 + 봉투 선택 -->
+        <div class="form-row" id="rawFields" style="${recipe?.category !== 'raw' && recipe?.category ? 'display:none' : ''}">
+          <div class="form-group">
             <label>팩당 중량 (g)</label>
             <input type="number" id="packWeightG" value="${recipe?.packWeightG || ''}" placeholder="예: 75" />
           </div>
+          <div class="form-group">
+            <label>사용 봉투 *</label>
+            <select id="recipeBagType">
+              <option value="">선택</option>
+              ${bagTypes.map(b => `<option value="${b.id}" ${recipe?.bagTypeId === b.id ? 'selected' : ''}>${b.name}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
           <div class="form-group">
             <label>비고</label>
             <input type="text" id="recipeNote" value="${recipe?.note || ''}" placeholder="비고" />
@@ -402,7 +422,13 @@ async function saveRecipe(id) {
 
   if (category === 'raw') {
     data.packWeightG = parseFloat(document.getElementById('packWeightG').value) || null;
-    data.bagTypeId = null;
+    // [봉투 연동] 사용 봉투 필수 — 빈값이면 저장 차단
+    const selectedBagId = document.getElementById('recipeBagType')?.value || '';
+    if (!selectedBagId) {
+      alert('생식 레시피는 사용 봉투를 선택해야 합니다.');
+      return;
+    }
+    data.bagTypeId = selectedBagId;
   }
 
   if (category === 'freezeDry') {

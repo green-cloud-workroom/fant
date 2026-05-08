@@ -1,14 +1,15 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy, setDoc, where, deleteDoc, serverTimestamp
+  collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy, setDoc, where, deleteDoc, serverTimestamp, limit, startAfter
 } from 'firebase/firestore';
-import { getTodayKST as getToday, getNextBusinessDay, loadHolidaysCache, getHolidaysCache } from '../utils/date.js';
+import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDay, loadHolidaysCache, getHolidaysCache } from '../utils/date.js';
 import { getAllBlockingItems } from '../services/closingChecks.js';
 import { setCurrentMenu, currentUserRole } from '../app.js';
 import { renderLayout } from '../layout.js';
 import { renderPage } from '../router.js';
 import { recordMeatLog } from '../services/meatLogs.js';
 import { showPromptModal, showConfirmModal } from '../utils/modal.js';
+import { acknowledgeLog, recordActivity } from '../services/activityLogs.js';
 
 let productions = [];
 let nextProductions = [];
@@ -23,6 +24,9 @@ let calendarSchedules = [];
 let calendarProductions = [];
 let calendarEvents = [];
 let calendarWeekOffset = 0;  // 0=오늘 포함 주, +1=한 주 앞으로, -1=뒤로
+
+// [묶음 6C-1] 로그 패널 데이터 — 당일 전체 + 어제 이전 미확인(확인 필수)만
+let combinedLogs = [];
 
 export async function renderMain() {
   const content = document.getElementById('mainContent');
@@ -60,6 +64,14 @@ async function loadAllData() {
 
   // [묶음 6B-1] 캘린더 14일치 데이터 (현재 weekOffset 기준)
   await loadCalendarData(calendarWeekOffset);
+
+  // [묶음 6C-3] 자동 발행 — 이벤트 당일/입고예정 도래/최소재고 미달
+  // dedup으로 같은 사유 중복 발행 방지. date=today로 매일 새로 발행 (= 매일 반복).
+  // ★ loadCombinedLogs 이전에 호출해야 신규 발행도 화면에 즉시 표시됨.
+  await triggerAutoLogs(today);
+
+  // [묶음 6C-1] 로그 패널 데이터 (당일 전체 + 어제~10일 전 미확인 확인필수)
+  await loadCombinedLogs();
 }
 
 
@@ -104,7 +116,7 @@ function renderMainLayout() {
         </div>
       </div>
 
-      <!-- [묶음 6A] 우상단 = 2번(원육) + 3번(로그 임시) 가로 분할 -->
+      <!-- [묶음 6A] 우상단 = 2번(원육) + 3번(로그) 가로 분할 -->
       <div class="main-panel-right-top">
         <div class="main-panel-2">
           <div class="main-panel-header">
@@ -115,13 +127,11 @@ function renderMainLayout() {
           </div>
         </div>
 
+        <!-- [묶음 6C-1] 3번 화면 = 차단 영역 + 생산 로그 + 사무 로그 -->
         <div class="main-panel-3">
-          <div class="main-panel-header">
-            <span class="main-panel-title">🔔 알림 <span style="font-size:10px;color:#999;font-weight:400;">(묶음 6C에서 로그 패널로 교체 예정)</span></span>
-          </div>
-          <div style="padding:12px;">
-            ${renderQuickInfo(isCompleted)}
-          </div>
+          ${renderBlockerArea()}
+          ${renderLogSection('production')}
+          ${renderLogSection('office')}
         </div>
       </div>
 
@@ -141,7 +151,7 @@ function renderMainLayout() {
   document.getElementById('btnTomorrowLoad')?.addEventListener('click', handleTomorrowLoad);
   document.getElementById('btnCancelCompletion')?.addEventListener('click', handleCancelCompletion);
 
-  // 알림 카드 점프 버튼들
+  // 차단 영역의 점프 버튼 (기존 알림 카드와 동일 동작)
   document.querySelectorAll('.alert-card-jump').forEach(btn => {
     btn.addEventListener('click', () => {
       const menuId = btn.dataset.jump;
@@ -153,6 +163,9 @@ function renderMainLayout() {
 
   // [묶음 6B-1] 캘린더 좌우 이동 + 날짜 클릭 바인딩
   bindCalendarEvents();
+
+  // [묶음 6C-1] 로그 패널 [확인] / [모두 확인] 바인딩
+  bindLogActions();
 }
 
 // ============================================================
@@ -608,6 +621,736 @@ function refreshCalendarUI() {
   bindCalendarEvents();
 }
 
+// ============================================================
+// [묶음 6C-1A] 로그 패널 — 차단 영역 + 사무 로그 + 확인 동작
+// ============================================================
+
+// 사무 로그 카테고리 — 현재 발행 중인 8개 action
+const OFFICE_LOG_ACTIONS = ['bag', 'egg', 'meat', 'frozenProduct', 'frozenSep', 'schedule', 'frozenPan', 'closing'];
+
+// 생산 로그 카테고리 — production은 6C-2 신규, 나머지는 6C-3 자동 발행 예정
+const PRODUCTION_LOG_ACTIONS = ['production', 'repackaging', 'pretreat', 'event', 'scheduleDue', 'autoRepack', 'minStock', 'frozenStockLow'];
+
+// [묶음 6C-2] action:subAction 단위 카테고리 오버라이드
+// action만으로 결정 안 되는 경우. meat은 사무(입출고)+생산(adjust) 혼재 → adjust만 생산으로.
+const LOG_CATEGORY_OVERRIDE = {
+  'meat:adjust': 'production',  // 원육 수동 조정 (3개 탭 모두) — 운영자 결정 ① A
+};
+
+// 확인 필수 (acknowledged 필수, 상단 고정 + [모두 확인]에서 제외)
+const REQUIRES_ACK_KEYS = new Set([
+  'scheduleDue:trigger',     // 입고 예정일 도래 (자동 — 6C-3)
+  'autoRepack:trigger',      // 생산 자동 재포장 (자동 — 6C-3)
+  'minStock:alert',          // 최소재고 미달 (자동 — 6C-3)
+  'frozenStockLow:alert',    // 냉동창고 잔량 부족 (자동 — 6C-3)
+  'schedule:completeDiff',   // [묶음 6C-2] 입고 완료 차이 있음
+]);
+
+// 로그 → '사무'/'생산'/'무시' 분류 — action:subAction 오버라이드 우선
+function classifyLog(log) {
+  const key = `${log.action}:${log.subAction}`;
+  if (LOG_CATEGORY_OVERRIDE[key]) return LOG_CATEGORY_OVERRIDE[key];
+  if (PRODUCTION_LOG_ACTIONS.includes(log.action)) return 'production';
+  if (OFFICE_LOG_ACTIONS.includes(log.action)) return 'office';
+  return 'ignore';
+}
+
+function logRequiresAck(log) {
+  return REQUIRES_ACK_KEYS.has(`${log.action}:${log.subAction}`);
+}
+
+// N일 전 KST 날짜 문자열
+function getDateNDaysAgoKST(n) {
+  const now = new Date();
+  const past = new Date(now.getTime() - n * 24 * 60 * 60 * 1000);
+  const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+  const kst = new Date(past.getTime() + KST_OFFSET_MS);
+  return kst.toISOString().split('T')[0];
+}
+
+// 당일 전체 + 어제~10일 전 미확인(확인 필수)만 합쳐 시간순 정렬
+async function loadCombinedLogs() {
+  const today = getToday();
+  const tenDaysAgo = getDateNDaysAgoKST(10);
+
+  // 당일 전체
+  let todayLogs = [];
+  try {
+    const todaySnap = await getDocs(query(
+      collection(db, 'activityLogs'),
+      where('date', '==', today),
+    ));
+    todayLogs = todaySnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch (err) {
+    console.error('[6C-1] 당일 로그 로드 실패:', err);
+  }
+
+  // 어제 이전 ~ 10일 전 (date 범위)
+  let olderLogs = [];
+  try {
+    const olderSnap = await getDocs(query(
+      collection(db, 'activityLogs'),
+      where('date', '>=', tenDaysAgo),
+      where('date', '<', today),
+    ));
+    olderLogs = olderSnap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(log => log.acknowledged !== true && logRequiresAck(log));
+  } catch (err) {
+    console.error('[6C-1] 과거 로그 로드 실패:', err);
+  }
+
+  // timestamp 기준 내림차순 (서버 timestamp가 null인 신규 로그는 맨 위)
+  combinedLogs = [...todayLogs, ...olderLogs].sort((a, b) => {
+    const ta = a.timestamp?.toMillis ? a.timestamp.toMillis() : 0;
+    const tb = b.timestamp?.toMillis ? b.timestamp.toMillis() : 0;
+    return tb - ta;
+  });
+}
+
+// 차단 영역 (패널 최상단 고정) — 기존 renderQuickInfo 흡수
+function renderBlockerArea() {
+  const cards = [];
+
+  // 차단 항목 (빨강)
+  blockingData.items.forEach(it => {
+    cards.push(`
+      <div class="alert-card alert-card-blocker">
+        <span class="alert-card-label">⛔ ${it.reason || it.label}</span>
+        <button class="alert-card-jump" data-jump="${it.jumpMenu}">처리하러 가기 →</button>
+      </div>
+    `);
+  });
+
+  // 계란 부족 경고 (노랑) — 묶음 6C-3에서 minStock:alert 자동 발행으로 마이그레이션 예정
+  if (eggStock.minimumQty > 0 && eggStock.currentQty < eggStock.minimumQty) {
+    cards.push(`
+      <div class="alert-card alert-card-warning">
+        <span class="alert-card-label">⚠️ 계란 부족 (현재: ${eggStock.currentQty}개 / 최소: ${eggStock.minimumQty}개)</span>
+        <button class="alert-card-jump" data-jump="egg">처리하러 가기 →</button>
+      </div>
+    `);
+  }
+
+  if (cards.length === 0) return '';
+
+  return `
+    <div class="log-blocker-area">
+      ${cards.join('')}
+    </div>
+  `;
+}
+
+// 로그 섹션 1개 (생산 또는 사무) — 패널 헤더 + 행 목록
+function renderLogSection(category) {
+  const title = category === 'production' ? '🏭 생산 로그' : '🗒️ 사무 로그';
+  const sectionLogs = combinedLogs
+    .filter(log => classifyLog(log) === category);
+
+  // 확인 필수 + 미확인 → 위로 / 나머지 → 시간순
+  sectionLogs.sort((a, b) => {
+    const aPin = (logRequiresAck(a) && a.acknowledged !== true) ? 1 : 0;
+    const bPin = (logRequiresAck(b) && b.acknowledged !== true) ? 1 : 0;
+    if (aPin !== bPin) return bPin - aPin;
+    const ta = a.timestamp?.toMillis ? a.timestamp.toMillis() : 0;
+    const tb = b.timestamp?.toMillis ? b.timestamp.toMillis() : 0;
+    return tb - ta;
+  });
+
+  // 미확인 일반 로그가 있으면 [모두 확인] 활성화 — 확인 필수는 일괄에서 제외 (개별 처리 강제)
+  const hasUnackGeneral = sectionLogs.some(l => l.acknowledged !== true && !logRequiresAck(l));
+
+  const rowsHtml = sectionLogs.length === 0
+    ? `<div class="log-empty">${category === 'production' ? '6C-2/3에서 발행 추가 예정' : '오늘 사무 로그 없음'}</div>`
+    : sectionLogs.map(log => renderLogRow(log)).join('');
+
+  return `
+    <div class="log-section">
+      <div class="log-section-header">
+        <span class="log-section-title">${title}</span>
+        <div class="log-section-actions">
+          <button class="log-action-btn" data-log-act="ackAll" data-log-cat="${category}" ${hasUnackGeneral ? '' : 'disabled'}>모두 확인</button>
+          <button class="log-action-btn" data-log-act="all" data-log-cat="${category}">전체보기</button>
+          <button class="log-action-btn" data-log-act="history" data-log-cat="${category}">히스토리</button>
+        </div>
+      </div>
+      <div class="log-section-body">
+        ${rowsHtml}
+      </div>
+    </div>
+  `;
+}
+
+// 로그 행 1개
+function renderLogRow(log) {
+  const isUnack = (log.acknowledged !== true);
+  const isCritical = logRequiresAck(log);
+  const today = getToday();
+  const yesterday = getYesterdayKST();
+
+  let dateLabel;
+  if (log.date === today) {
+    dateLabel = formatLogTime(log.timestamp);
+  } else if (log.date === yesterday) {
+    dateLabel = '어제';
+  } else {
+    const parts = (log.date || '').split('-');
+    dateLabel = parts.length === 3 ? `${parseInt(parts[1])}/${parseInt(parts[2])}` : (log.date || '');
+  }
+
+  const cls = [
+    'log-row',
+    isUnack ? 'log-row-unack' : '',
+    isCritical ? 'log-row-critical' : '',
+  ].filter(Boolean).join(' ');
+
+  const ackBtn = isUnack
+    ? `<button class="log-ack-btn" data-log-act="ack" data-log-id="${log.id}">확인</button>`
+    : `<span class="log-ack-done" title="${log.acknowledgedBy || ''} 확인">✓</span>`;
+
+  const criticalBadge = isCritical && isUnack ? '<span class="log-critical-badge">⚠️</span>' : '';
+
+  return `
+    <div class="${cls}">
+      <span class="log-row-time">${dateLabel}</span>
+      <span class="log-row-msg">${criticalBadge}${escapeHtmlMain(log.message || '(메시지 없음)')}</span>
+      <span class="log-row-action">${ackBtn}</span>
+    </div>
+  `;
+}
+
+// 로그 timestamp → "HH:MM"
+function formatLogTime(ts) {
+  if (!ts || !ts.toMillis) return '—';
+  const d = new Date(ts.toMillis());
+  const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+  const kst = new Date(d.getTime() + KST_OFFSET_MS);
+  const h = String(kst.getUTCHours()).padStart(2, '0');
+  const m = String(kst.getUTCMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+// currentUserRole → 한국어 라벨
+function getStaffLabelFromRole() {
+  if (currentUserRole === 'admin') return '대표';
+  if (currentUserRole === 'office') return '사무실';
+  if (currentUserRole === 'production') return '생산실';
+  return '운영자';
+}
+
+// 로그 패널 [확인] / [모두 확인] / [전체보기] / [히스토리] 바인딩
+function bindLogActions() {
+  document.querySelectorAll('[data-log-act="ack"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const logId = btn.dataset.logId;
+      await ackOneLog(logId);
+    });
+  });
+  document.querySelectorAll('[data-log-act="ackAll"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const cat = btn.dataset.logCat;
+      await ackAllInSection(cat);
+    });
+  });
+  // [묶음 6C-1B] 전체보기 / 히스토리
+  document.querySelectorAll('[data-log-act="all"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cat = btn.dataset.logCat;
+      showAllLogsModal(cat);
+    });
+  });
+  document.querySelectorAll('[data-log-act="history"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cat = btn.dataset.logCat;
+      showHistoryLogsModal(cat);
+    });
+  });
+}
+
+// [확인] 단건
+async function ackOneLog(logId) {
+  try {
+    await acknowledgeLog(logId, getStaffLabelFromRole());
+    await loadCombinedLogs();
+    refreshLogPanels();
+  } catch (err) {
+    console.error('[6C-1] 확인 처리 실패:', err);
+    alert('확인 처리 중 오류가 발생했습니다.');
+  }
+}
+
+// [모두 확인] 섹션 — 확인 필수 제외, 일반 미확인만 일괄
+async function ackAllInSection(category) {
+  const targets = combinedLogs.filter(log =>
+    classifyLog(log) === category &&
+    log.acknowledged !== true &&
+    !logRequiresAck(log)
+  );
+  if (targets.length === 0) return;
+
+  const ok = await showConfirmModal({
+    title: '모두 확인',
+    message: `${category === 'production' ? '생산' : '사무'} 로그 ${targets.length}건을 모두 확인 처리하시겠습니까?\n(확인 필수 항목은 제외됩니다)`,
+    confirmText: '확인 처리',
+    cancelText: '취소',
+  });
+  if (!ok) return;
+
+  try {
+    const staffLabel = getStaffLabelFromRole();
+    await Promise.all(targets.map(log => acknowledgeLog(log.id, staffLabel)));
+    await loadCombinedLogs();
+    refreshLogPanels();
+  } catch (err) {
+    console.error('[6C-1] 모두 확인 실패:', err);
+    alert('일괄 확인 중 오류가 발생했습니다.');
+  }
+}
+
+// 로그 섹션 2개 + 차단 영역 다시 그림 (메인 전체 재로드 안 함)
+function refreshLogPanels() {
+  const panel = document.querySelector('.main-panel-3');
+  if (!panel) return;
+  panel.innerHTML = `
+    ${renderBlockerArea()}
+    ${renderLogSection('production')}
+    ${renderLogSection('office')}
+  `;
+  // 차단 영역 점프 버튼 + 로그 액션 다시 바인딩
+  document.querySelectorAll('.main-panel-3 .alert-card-jump').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const menuId = btn.dataset.jump;
+      setCurrentMenu(menuId);
+      renderLayout();
+      renderPage(menuId);
+    });
+  });
+  bindLogActions();
+}
+
+// ============================================================
+// [묶음 6C-1B] 전체보기 / 히스토리 모달
+// ============================================================
+
+// 모달 상태 (모듈 레벨)
+let modalLogs = [];           // 현재 모달에 표시된 로그
+let modalCategory = null;     // 'production' | 'office'
+let modalSearch = '';         // 검색어
+let modalMode = 'all';        // 'all' (10일치) | 'history' (전체)
+let historyLastDoc = null;    // 히스토리 페이지네이션 cursor
+let historyDoneFlag = false;  // 더 가져올 데이터 없음
+
+// [전체보기] — 10일치 로그
+async function showAllLogsModal(category) {
+  modalCategory = category;
+  modalMode = 'all';
+  modalSearch = '';
+  modalLogs = [];
+
+  await loadAllLogsForModal();
+  showModalShell();
+}
+
+// [히스토리] — 전체 기간 (limit 100 + 더 보기)
+async function showHistoryLogsModal(category) {
+  modalCategory = category;
+  modalMode = 'history';
+  modalSearch = '';
+  modalLogs = [];
+  historyLastDoc = null;
+  historyDoneFlag = false;
+
+  await loadHistoryPage();
+  showModalShell();
+}
+
+// 10일치 로그 로드 (전체보기용)
+async function loadAllLogsForModal() {
+  const today = getToday();
+  const tenDaysAgo = getDateNDaysAgoKST(10);
+  try {
+    const snap = await getDocs(query(
+      collection(db, 'activityLogs'),
+      where('date', '>=', tenDaysAgo),
+      where('date', '<=', today),
+    ));
+    modalLogs = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(log => classifyLog(log) === modalCategory)
+      .sort((a, b) => {
+        const ta = a.timestamp?.toMillis ? a.timestamp.toMillis() : 0;
+        const tb = b.timestamp?.toMillis ? b.timestamp.toMillis() : 0;
+        return tb - ta;
+      });
+  } catch (err) {
+    console.error('[6C-1B] 전체보기 로드 실패:', err);
+    alert('전체보기 로드 실패: 관리자에게 문의해주세요.');
+  }
+}
+
+// 히스토리 한 페이지(100건) 로드 — 누적
+async function loadHistoryPage() {
+  if (historyDoneFlag) return;
+
+  try {
+    const PAGE_SIZE = 100;
+    const constraints = [orderBy('timestamp', 'desc'), limit(PAGE_SIZE)];
+    if (historyLastDoc) constraints.push(startAfter(historyLastDoc));
+
+    const snap = await getDocs(query(collection(db, 'activityLogs'), ...constraints));
+    if (snap.docs.length < PAGE_SIZE) historyDoneFlag = true;
+    if (snap.docs.length > 0) {
+      historyLastDoc = snap.docs[snap.docs.length - 1];
+    }
+
+    const newLogs = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(log => classifyLog(log) === modalCategory);
+
+    modalLogs = [...modalLogs, ...newLogs];
+  } catch (err) {
+    console.error('[6C-1B] 히스토리 로드 실패:', err);
+    alert('히스토리 로드 실패: 관리자에게 문의해주세요.');
+  }
+}
+
+// 모달 골격 (전체보기/히스토리 공용)
+function showModalShell() {
+  const titlePrefix = modalMode === 'all' ? '전체보기 (10일)' : '히스토리 (전체)';
+  const catLabel = modalCategory === 'production' ? '생산 로그' : '사무 로그';
+
+  const switchBtn = modalMode === 'all'
+    ? `<button class="btn-secondary" id="btnLogModalSwitch" style="font-size:11px;">히스토리로 전환 →</button>`
+    : '';
+
+  showModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+      <h3 style="margin:0;font-size:15px;">${catLabel} — ${titlePrefix}</h3>
+      ${switchBtn}
+    </div>
+
+    <div style="margin-bottom:8px;">
+      <input type="text" id="logModalSearch" placeholder="메시지 검색 (담당자명, 품목명 등)"
+             style="width:100%;padding:6px 10px;border:1px solid #ddd;border-radius:4px;font-size:12px;box-sizing:border-box;"
+             value="${escapeHtmlMain(modalSearch)}">
+    </div>
+
+    <div id="logModalList" class="log-modal-list">
+      ${renderModalLogList()}
+    </div>
+
+    <div id="logModalFooter" style="display:flex;gap:8px;justify-content:space-between;margin-top:12px;">
+      <div>
+        ${modalMode === 'history' && !historyDoneFlag
+          ? `<button class="btn-secondary" id="btnLogMore" style="font-size:11px;">+ 더 보기 (100건)</button>`
+          : ''}
+      </div>
+      <button class="btn-secondary" onclick="closeModal()">닫기</button>
+    </div>
+  `);
+
+  // 검색 입력 — 디바운스 없이 즉시 (클라이언트 필터)
+  document.getElementById('logModalSearch')?.addEventListener('input', (ev) => {
+    modalSearch = ev.target.value;
+    refreshModalList();
+  });
+
+  // 더 보기
+  document.getElementById('btnLogMore')?.addEventListener('click', async () => {
+    await loadHistoryPage();
+    refreshModalList();
+    refreshModalFooter();
+  });
+
+  // 히스토리로 전환
+  document.getElementById('btnLogModalSwitch')?.addEventListener('click', async () => {
+    modalMode = 'history';
+    modalSearch = '';
+    modalLogs = [];
+    historyLastDoc = null;
+    historyDoneFlag = false;
+    await loadHistoryPage();
+    showModalShell();
+  });
+
+  // 모달 안의 [확인] 버튼
+  bindModalAckButtons();
+}
+
+// 모달 리스트 영역만 다시 그림 (검색/확인 처리 후)
+function refreshModalList() {
+  const list = document.getElementById('logModalList');
+  if (!list) return;
+  list.innerHTML = renderModalLogList();
+  bindModalAckButtons();
+}
+
+// 모달 푸터 다시 그림 (더 보기 버튼 상태 변경 시)
+function refreshModalFooter() {
+  const footer = document.getElementById('logModalFooter');
+  if (!footer) return;
+  footer.innerHTML = `
+    <div>
+      ${modalMode === 'history' && !historyDoneFlag
+        ? `<button class="btn-secondary" id="btnLogMore" style="font-size:11px;">+ 더 보기 (100건)</button>`
+        : ''}
+    </div>
+    <button class="btn-secondary" onclick="closeModal()">닫기</button>
+  `;
+  document.getElementById('btnLogMore')?.addEventListener('click', async () => {
+    await loadHistoryPage();
+    refreshModalList();
+    refreshModalFooter();
+  });
+}
+
+// 모달 리스트 HTML
+function renderModalLogList() {
+  const search = modalSearch.trim().toLowerCase();
+  const filtered = search
+    ? modalLogs.filter(log => (log.message || '').toLowerCase().includes(search))
+    : modalLogs;
+
+  if (filtered.length === 0) {
+    return `<div class="log-empty" style="padding:24px 8px;">${search ? '검색 결과 없음' : '표시할 로그 없음'}</div>`;
+  }
+
+  // 날짜별 그룹 헤더
+  let lastDate = null;
+  const blocks = [];
+  filtered.forEach(log => {
+    if (log.date !== lastDate) {
+      lastDate = log.date;
+      const today = getToday();
+      const yesterday = getYesterdayKST();
+      let dateLabel;
+      if (log.date === today) dateLabel = '오늘';
+      else if (log.date === yesterday) dateLabel = '어제';
+      else {
+        const parts = (log.date || '').split('-');
+        dateLabel = parts.length === 3 ? `${parseInt(parts[0])}.${parseInt(parts[1])}.${parseInt(parts[2])}` : (log.date || '');
+      }
+      blocks.push(`<div class="log-modal-date-header">${dateLabel}</div>`);
+    }
+    blocks.push(renderModalLogRow(log));
+  });
+
+  return blocks.join('');
+}
+
+// 모달 안 로그 행 1개 (메인 패널의 행과 비슷하지만 시간 항상 표시)
+function renderModalLogRow(log) {
+  const isUnack = (log.acknowledged !== true);
+  const isCritical = logRequiresAck(log);
+  const timeLabel = formatLogTime(log.timestamp);
+
+  const cls = [
+    'log-modal-row',
+    isUnack ? 'log-row-unack' : '',
+    isCritical ? 'log-row-critical' : '',
+  ].filter(Boolean).join(' ');
+
+  const ackBtn = isUnack
+    ? `<button class="log-ack-btn" data-modal-log-act="ack" data-log-id="${log.id}">확인</button>`
+    : `<span class="log-ack-done" title="${log.acknowledgedBy || ''} 확인">✓ ${escapeHtmlMain(log.acknowledgedBy || '')}</span>`;
+
+  const criticalBadge = isCritical && isUnack ? '<span class="log-critical-badge">⚠️</span>' : '';
+
+  return `
+    <div class="${cls}">
+      <span class="log-row-time">${timeLabel}</span>
+      <span class="log-row-msg">${criticalBadge}${escapeHtmlMain(log.message || '(메시지 없음)')}</span>
+      <span class="log-row-action">${ackBtn}</span>
+    </div>
+  `;
+}
+
+// 모달 안의 [확인] 버튼 바인딩
+function bindModalAckButtons() {
+  document.querySelectorAll('[data-modal-log-act="ack"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const logId = btn.dataset.logId;
+      try {
+        await acknowledgeLog(logId, getStaffLabelFromRole());
+        // 모달 데이터 안에서 해당 로그도 갱신
+        const target = modalLogs.find(l => l.id === logId);
+        if (target) {
+          target.acknowledged = true;
+          target.acknowledgedBy = getStaffLabelFromRole();
+        }
+        // 메인 패널도 갱신 (당일 로그라면 영향)
+        await loadCombinedLogs();
+        refreshLogPanels();
+        refreshModalList();
+      } catch (err) {
+        console.error('[6C-1B] 모달 확인 처리 실패:', err);
+        alert('확인 처리 중 오류가 발생했습니다.');
+      }
+    });
+  });
+}
+
+// ============================================================
+// [묶음 6C-3] 자동 발행 — 메인 진입 시 점검 후 신규 로그 발행
+// ============================================================
+
+// 자동 발행 dedup — 같은 (action, subAction, date, dedupKey) 이미 있으면 skip.
+// recordActivity 직접 호출하지 않고 addDoc 사용 — staff='시스템'은 currentUser 검증 우회 필요.
+async function ensureAutoLog({ action, subAction, date, message, details, dedupKey }) {
+  try {
+    const snap = await getDocs(query(
+      collection(db, 'activityLogs'),
+      where('date', '==', date),
+    ));
+    const exists = snap.docs.some(d => {
+      const data = d.data();
+      return data.action === action
+          && data.subAction === subAction
+          && data.details?.dedupKey === dedupKey;
+    });
+    if (exists) return;
+
+    await addDoc(collection(db, 'activityLogs'), {
+      action, subAction, date,
+      staff: '시스템',
+      uid: null,
+      timestamp: serverTimestamp(),
+      message,
+      details: { ...(details || {}), dedupKey, autoTriggered: true },
+      read: false,
+      acknowledged: false,
+      acknowledgedAt: null,
+      acknowledgedBy: null,
+      acknowledgedByUid: null,
+    });
+  } catch (err) {
+    console.error('[6C-3] 자동 발행 실패:', err);
+  }
+}
+
+// 1. 📅 이벤트 당일 — events 컬렉션에서 date=today인 이벤트 1건당 1로그 (운영자 결정 ④ A)
+async function triggerEventDueLogs(today) {
+  try {
+    const snap = await getDocs(query(
+      collection(db, 'events'),
+      where('date', '==', today),
+    ));
+    for (const evDoc of snap.docs) {
+      const ev = { id: evDoc.id, ...evDoc.data() };
+      await ensureAutoLog({
+        action: 'event',
+        subAction: 'dueToday',
+        date: today,
+        message: `📅 오늘 일정 — ${ev.title || '(제목 없음)'}`,
+        details: { eventId: ev.id, title: ev.title || '' },
+        dedupKey: `event:${ev.id}`,
+      });
+    }
+  } catch (err) {
+    // events 컬렉션 빈 채로 시작했을 때 정상
+    console.warn('[6C-3] 이벤트 자동 발행 skip:', err.message);
+  }
+}
+
+// 2. 📦 입고 예정일 도래 — schedules에서 date=today && status=scheduled (확인 필수)
+async function triggerScheduleDueLogs(today) {
+  try {
+    const snap = await getDocs(query(
+      collection(db, 'schedules'),
+      where('date', '==', today),
+    ));
+    for (const sDoc of snap.docs) {
+      const s = { id: sDoc.id, ...sDoc.data() };
+      if (s.status !== 'scheduled') continue;
+      const itemLabel = s.type === 'egg' ? '계란' : (s.itemNameSnapshot || '(품목)');
+      await ensureAutoLog({
+        action: 'scheduleDue',
+        subAction: 'trigger',
+        date: today,
+        message: `📦 입고 예정일 도래 — ${itemLabel} ${s.orderedQty}${s.orderedUnit}`,
+        details: {
+          scheduleId: s.id,
+          type: s.type,
+          itemName: s.itemNameSnapshot,
+          orderedQty: s.orderedQty,
+          orderedUnit: s.orderedUnit,
+        },
+        dedupKey: `scheduleDue:${s.id}`,
+      });
+    }
+  } catch (err) {
+    console.error('[6C-3] 입고 예정 자동 발행 실패:', err);
+  }
+}
+
+// 3. ⚠️ 최소재고 미달 — 계란 + 원육 + 봉투 (확인 필수, date=today로 dedup하니 매일 자동 반복)
+async function triggerMinStockLogs(today) {
+  try {
+    // 계란
+    if (eggStock.minimumQty > 0 && eggStock.currentQty < eggStock.minimumQty) {
+      await ensureAutoLog({
+        action: 'minStock',
+        subAction: 'alert',
+        date: today,
+        message: `⚠️ 계란 부족 — 현재 ${eggStock.currentQty}개 / 최소 ${eggStock.minimumQty}개`,
+        details: { kind: 'egg', current: eggStock.currentQty, minimum: eggStock.minimumQty },
+        dedupKey: `minStock:egg`,
+      });
+    }
+
+    // 원육 — meatTypes의 minimumQtyG 미달 (해당 type의 모든 stock remaining 합산)
+    const mtSnap = await getDocs(collection(db, 'meatTypes'));
+    const msSnap = await getDocs(collection(db, 'meatStocks'));
+    const meatStocksData = msSnap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(s => !s.closed);
+
+    for (const mtDoc of mtSnap.docs) {
+      const mt = { id: mtDoc.id, ...mtDoc.data() };
+      if (!mt.minimumQtyG) continue;
+      const total = meatStocksData
+        .filter(s => s.meatTypeId === mt.id)
+        .reduce((sum, s) => sum + (s.remaining || 0), 0);
+      if (total < mt.minimumQtyG) {
+        await ensureAutoLog({
+          action: 'minStock',
+          subAction: 'alert',
+          date: today,
+          message: `⚠️ ${mt.name || '원육'} 부족 — 현재 ${(total/1000).toFixed(1)}kg / 최소 ${(mt.minimumQtyG/1000).toFixed(1)}kg`,
+          details: { kind: 'meat', meatTypeId: mt.id, name: mt.name, current: total, minimum: mt.minimumQtyG },
+          dedupKey: `minStock:meat:${mt.id}`,
+        });
+      }
+    }
+
+    // 봉투
+    const bagSnap = await getDocs(collection(db, 'bagTypes'));
+    for (const bDoc of bagSnap.docs) {
+      const b = { id: bDoc.id, ...bDoc.data() };
+      if (b.minimumQty && (b.currentQty || 0) < b.minimumQty) {
+        await ensureAutoLog({
+          action: 'minStock',
+          subAction: 'alert',
+          date: today,
+          message: `⚠️ ${b.name || '봉투'} 부족 — 현재 ${b.currentQty || 0}장 / 최소 ${b.minimumQty}장`,
+          details: { kind: 'bag', bagTypeId: b.id, name: b.name, current: b.currentQty || 0, minimum: b.minimumQty },
+          dedupKey: `minStock:bag:${b.id}`,
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[6C-3] 최소재고 자동 발행 실패:', err);
+  }
+}
+
+// 자동 발행 통합 — loadAllData에서 호출
+// [묶음 9 예정] 냉동창고 잔량 부족 (closingChecks 신규 체크 함수 필요)
+// [묶음 9 예정] 생산 자동 재포장 (자동 재포장 모달 자체 미구현)
+async function triggerAutoLogs(today) {
+  await triggerEventDueLogs(today);
+  await triggerScheduleDueLogs(today);
+  await triggerMinStockLogs(today);
+}
 
 function renderProductionTableCard(p) {
   const ingredients = p.ingredientsSnapshot || [];
@@ -747,7 +1490,14 @@ async function handleTomorrowLoad() {
     return;
   }
   if (completionDoc?.status === 'completed') {
-    alert('오늘 내일생산불러오기는 이미 완료되었습니다.');
+    alert('내일생산불러오기는 하루 1회만 가능합니다.');
+    return;
+  }
+
+  // [묶음 6E-1] 차단 5조건 통합 사전 검사 — 차단 있으면 한 팝업에 다 나열
+  const blockers = await gatherTomorrowLoadBlockers(today);
+  if (blockers.length > 0) {
+    showTomorrowLoadBlockersModal(blockers);
     return;
   }
 
@@ -777,6 +1527,145 @@ async function handleTomorrowLoad() {
     if (!staff) { alert('담당자를 선택해주세요.'); return; }
     closeModal();
     await executeProductionLoad(today, staff);
+  });
+}
+
+// ============================================================
+// [묶음 6E-1] 내일생산불러오기 차단 5조건 통합 사전 검사
+// ============================================================
+//
+// 스펙 5절 차단 조건:
+//   1. 입고 예정 미완료 — blockingData에서 가져옴
+//   2. 원료 재고 부족 — meatNeeds vs (재포장+전처리+냉동창고) 합계
+//   3. 봉투 재고 부족 — bagNeeds vs bagTypes.currentQty
+//   4. 자동 재포장 확인 미완료 — [묶음 9 대기] 자동 재포장 모달 자체 미구현
+//   5. 계란 출고 미입력 — blockingData에서 가져옴
+//
+// 한 팝업에 모두 나열. 차단 0개일 때만 담당자 모달 진입.
+
+async function gatherTomorrowLoadBlockers(today) {
+  const blockers = [];
+
+  // 차단 1, 5 — blockingData 활용 (이미 loadAllData에서 로드됨)
+  // closingChecks.js의 items 중 jumpMenu === 'schedule' 또는 'egg'인 것
+  blockingData.items.forEach(it => {
+    if (it.jumpMenu === 'schedule') {
+      // 입고 예정 미완료
+      blockers.push({
+        kind: 'schedule',
+        text: `📦 ${it.reason || it.label}`,
+        jumpMenu: 'schedule',
+      });
+    } else if (it.jumpMenu === 'egg') {
+      // 계란 출고 미입력
+      blockers.push({
+        kind: 'egg',
+        text: `🥚 ${it.reason || it.label}`,
+        jumpMenu: 'egg',
+      });
+    }
+  });
+
+  // 차단 2, 3 — 다음 영업일 생산 기준 필요량 계산
+  const meatNeeds = {};
+  const bagNeeds = {};
+
+  for (const p of nextProductions) {
+    (p.ingredientsSnapshot || []).forEach(ing => {
+      if (ing.autoDeductInventory && ing.meatTypeId) {
+        meatNeeds[ing.meatTypeId] = (meatNeeds[ing.meatTypeId] || 0) + ing.requiredQtyG;
+      }
+    });
+    const recipe = recipes.find(r => r.id === p.recipeId);
+    if (recipe?.category === 'raw' && recipe.bagTypeId) {
+      const boxQty = p.rawBoxQty || 0;
+      const bagSnap = await getDoc(doc(db, 'bagTypes', recipe.bagTypeId));
+      if (bagSnap.exists()) {
+        const piecesPerBox = bagSnap.data().piecesPerBox || 1;
+        bagNeeds[recipe.bagTypeId] = (bagNeeds[recipe.bagTypeId] || 0) + (boxQty * piecesPerBox);
+      }
+    }
+  }
+
+  // 봉투 부족
+  for (const [bagTypeId, needed] of Object.entries(bagNeeds)) {
+    const bagSnap = await getDoc(doc(db, 'bagTypes', bagTypeId));
+    if (!bagSnap.exists()) continue;
+    const bagData = bagSnap.data();
+    const current = bagData.currentQty || 0;
+    if (current < needed) {
+      blockers.push({
+        kind: 'bag',
+        text: `🛍️ ${bagData.name || '봉투'} 재고 부족 — 필요 ${needed}장 / 현재 ${current}장`,
+        jumpMenu: 'bag',
+      });
+    }
+  }
+
+  // 원육 부족 (재포장 + 전처리 + 냉동창고 합계 기준)
+  for (const [meatTypeId, neededG] of Object.entries(meatNeeds)) {
+    const repackedSum = meatStocks
+      .filter(s => s.meatTypeId === meatTypeId && s.stage === 'repacked' && s.remaining > 0)
+      .reduce((sum, s) => sum + s.remaining, 0);
+    const processedSum = meatStocks
+      .filter(s => s.meatTypeId === meatTypeId && s.stage === 'processed' && s.remaining > 0)
+      .reduce((sum, s) => sum + s.remaining, 0);
+    const frozenSum = meatStocks
+      .filter(s => s.meatTypeId === meatTypeId && s.stage === 'frozen' && s.remaining > 0)
+      .reduce((sum, s) => sum + s.remaining, 0);
+    const totalAvailable = repackedSum + processedSum + frozenSum;
+
+    if (totalAvailable < neededG) {
+      const meatName = meatStocks.find(s => s.meatTypeId === meatTypeId)?.meatNameSnapshot || meatTypeId;
+      blockers.push({
+        kind: 'meat',
+        text: `🥩 ${meatName} 원료 재고 부족 — 필요 ${(neededG/1000).toFixed(1)}kg / 현재 ${(totalAvailable/1000).toFixed(1)}kg (재포장 ${(repackedSum/1000).toFixed(1)} + 전처리 ${(processedSum/1000).toFixed(1)} + 냉동창고 ${(frozenSum/1000).toFixed(1)})`,
+        jumpMenu: 'meat',
+      });
+    }
+  }
+
+  // 차단 4 (자동 재포장 확인 미완료) — 묶음 9에서 추가 예정
+  // TODO [묶음 9]: 자동 재포장 모달 구현 후 미확인 항목이 있으면 blockers.push
+
+  return blockers;
+}
+
+// 차단 항목 통합 팝업
+function showTomorrowLoadBlockersModal(blockers) {
+  const itemsHtml = blockers.map((b, idx) => {
+    const number = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'][idx] || `${idx + 1}.`;
+    return `
+      <div class="tload-blocker-row">
+        <span class="tload-blocker-num">${number}</span>
+        <span class="tload-blocker-text">${escapeHtmlMain(b.text)}</span>
+        <button class="tload-blocker-jump" data-jump="${b.jumpMenu}">처리하러 →</button>
+      </div>
+    `;
+  }).join('');
+
+  showModal(`
+    <h3 class="modal-title">내일생산불러오기를 진행할 수 없습니다</h3>
+    <p style="font-size:12px;color:#666;margin-bottom:12px;">
+      아래 항목을 확인해주세요.
+    </p>
+    <div class="tload-blocker-list">
+      ${itemsHtml}
+    </div>
+    <div class="modal-actions" style="margin-top:16px;">
+      <button class="btn-secondary" onclick="closeModal()">확인</button>
+    </div>
+  `);
+
+  // 점프 버튼
+  document.querySelectorAll('.tload-blocker-jump').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const menuId = btn.dataset.jump;
+      closeModal();
+      setCurrentMenu(menuId);
+      renderLayout();
+      renderPage(menuId);
+    });
   });
 }
 
@@ -952,6 +1841,26 @@ async function executeProductionLoad(today, staffName) {
                 batchId: productionBatchId,
               });
 
+              // [묶음 6E-2] 자동 재포장 발생 → 활동 로그 발행 (확인 필수)
+              // 기존 재포장 lot에 잔여분 합산. 운영자가 메인 화면 생산 로그에서 [확인] 클릭 필요.
+              await recordActivity({
+                action: 'autoRepack',
+                subAction: 'trigger',
+                date: today,
+                staff: '시스템',
+                message: `🔄 생산 자동 재포장 — ${s.meatNameSnapshot} ${(surplusG/1000).toFixed(2)}kg (전처리 ${s.unitWeightG}g 단위 차감 후 잔여, 기존 재포장 lot 합산)`,
+                details: {
+                  meatTypeId,
+                  meatName: s.meatNameSnapshot,
+                  surplusG,
+                  processedUnitWeightG: s.unitWeightG,
+                  processedStockId: s.id,
+                  repackedStockId: existingRepacked.id,
+                  mode: 'merged',
+                  batchId: productionBatchId,
+                },
+              });
+
               existingRepacked.remaining = newRepackedRemaining;
             } else {
               const newRepackedRef = await addDoc(collection(db, 'meatStocks'), {
@@ -996,6 +1905,26 @@ async function executeProductionLoad(today, staffName) {
                 staff: staffName,
                 reason: '생산 자동 재포장 (신규 lot)',
                 batchId: productionBatchId,
+              });
+
+              // [묶음 6E-2] 자동 재포장 발생 → 활동 로그 발행 (확인 필수)
+              // 기존 lot 없어 신규 재포장 lot 생성. 운영자가 [확인] 클릭 필요.
+              await recordActivity({
+                action: 'autoRepack',
+                subAction: 'trigger',
+                date: today,
+                staff: '시스템',
+                message: `🔄 생산 자동 재포장 — ${s.meatNameSnapshot} ${(surplusG/1000).toFixed(2)}kg (전처리 ${s.unitWeightG}g 단위 차감 후 잔여, 신규 재포장 lot)`,
+                details: {
+                  meatTypeId,
+                  meatName: s.meatNameSnapshot,
+                  surplusG,
+                  processedUnitWeightG: s.unitWeightG,
+                  processedStockId: s.id,
+                  repackedStockId: newRepackedRef.id,
+                  mode: 'newLot',
+                  batchId: productionBatchId,
+                },
               });
 
               meatStocks.push({

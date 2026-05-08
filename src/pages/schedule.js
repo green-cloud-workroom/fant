@@ -623,11 +623,12 @@ function showCompleteModal(s) {
       updatedAt: new Date(),
     });
 
-    // 사무 로그 — 발주/실제 수량 차이 비교
+    // [묶음 6C-2] 입고 완료 — 차이 있으면 'completeDiff' (확인 필수), 없으면 'complete' (일반)
+    // subAction 분기로 메인 로그 패널이 차이 있는 건만 ⚠️ 빨간 줄 + [확인] 버튼 표시
     const hasDiff = actual !== s.orderedQty;
     await recordActivity({
       action: 'schedule',
-      subAction: 'complete',
+      subAction: hasDiff ? 'completeDiff' : 'complete',
       date: today,
       staff,
       message: hasDiff
