@@ -841,6 +841,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   letter-spacing: 0.5px;
 }
 /* 메인 대시보드 */
+/* [묶음 6A] 메인 6구간 분할: 1번(좌 전체) / 2번(우상-좌, 원육) / 3번(우상-우, 로그) / 4번(우하, 캘린더) */
 .main-layout {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -849,6 +850,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   gap: 0;
 }
 
+/* [묶음 6A] 1번 화면 = 왼쪽 전체 (오늘 생산) — 기존 유지 */
 .main-panel-left {
   grid-row: 1 / 3;
   border-right: 1px solid #e0e0e0;
@@ -858,15 +860,41 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   background: white;
 }
 
+/* [묶음 6A] 우상단을 grid container로 변환 — 2번/3번 가로 분할 */
 .main-panel-right-top {
   border-bottom: 1px solid #e0e0e0;
-  overflow-y: auto;
   background: #fafafa;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  overflow: hidden;
+  min-height: 0;
 }
 
+/* [묶음 6A] 2번 화면 = 원육 창고 (우상단 좌측) */
+.main-panel-2 {
+  border-right: 1px solid #e0e0e0;
+  background: #fafafa;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* [묶음 6A] 3번 화면 = 로그 (우상단 우측). 6C에서 풀 구현, 현재 알림 임시 거주 */
+.main-panel-3 {
+  background: #fafafa;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* [묶음 6A] 4번 화면 = 2주 캘린더 자리 (우하단). 6B에서 구현 */
 .main-panel-right-bottom {
   overflow-y: auto;
   background: #fafafa;
+  display: flex;
+  flex-direction: column;
 }
 
 .main-panel-header {
@@ -1339,4 +1367,260 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   border-radius: 6px;
   padding: 12px;
   margin-bottom: 14px;
+}
+
+/* ============================================================ */
+/* [묶음 6B-1] 캘린더 (4번 패널) */
+/* ============================================================ */
+
+.main-calendar-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cal-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.cal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid #f0f0f0;
+  background: white;
+}
+
+.cal-nav-btn {
+  border: 1px solid #ddd;
+  background: white;
+  padding: 2px 10px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1;
+}
+.cal-nav-btn:hover { background: #f5f5f5; }
+
+.cal-range-label {
+  font-weight: 600;
+  color: #333;
+  min-width: 100px;
+  text-align: center;
+}
+
+.cal-today-btn {
+  border: 1px solid #ddd;
+  background: white;
+  padding: 2px 10px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 11px;
+  margin-left: auto;
+}
+.cal-today-btn:hover { background: #f5f5f5; }
+
+.cal-weekday-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  border-bottom: 1px solid #e0e0e0;
+  background: #fafafa;
+}
+
+.cal-weekday {
+  text-align: center;
+  font-size: 11px;
+  color: #555;
+  padding: 4px 0;
+  font-weight: 600;
+}
+
+.cal-weekday-weekend { color: #d6336c; }
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: 1fr;
+  flex: 1;
+  min-height: 0;
+}
+
+.cal-cell {
+  border-right: 1px solid #f0f0f0;
+  border-bottom: 1px solid #f0f0f0;
+  padding: 3px 4px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  background: white;
+  min-width: 0;
+}
+.cal-cell:hover { background: #f5faff; }
+.cal-cell:nth-child(7n) { border-right: none; }
+.cal-cell:nth-last-child(-n+7) { border-bottom: none; }
+
+/* 토/일 + 등록 공휴일 = 연분홍 */
+.cal-cell-holiday { background: #fff0f3; }
+.cal-cell-holiday:hover { background: #ffe4eb; }
+
+.cal-cell-date-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cal-cell-date {
+  font-size: 11px;
+  font-weight: 600;
+  color: #333;
+}
+
+.cal-cell-holiday .cal-cell-date { color: #d6336c; }
+
+/* 오늘 = 날짜 숫자에 동그란 파란 배경 */
+.cal-cell-today .cal-cell-date {
+  background: #4263eb;
+  color: white;
+  border-radius: 50%;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+}
+
+.cal-cell-tags {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+}
+
+/* [묶음 6B-1 보강] 줄바꿈 허용 + 최대 2줄. 좁은 셀에서 텍스트 잘리지 않게. */
+.cal-tag {
+  font-size: 9px;
+  padding: 1px 3px;
+  border-radius: 2px;
+  line-height: 1.3;
+  word-break: break-all;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cal-tag-event { background: #fff3bf; color: #5c4d00; }
+.cal-tag-schedule { background: #d3f9d8; color: #2b8a3e; }
+.cal-tag-production { background: #e7f5ff; color: #1971c2; }
+
+.cal-tag-more {
+  font-size: 9px;
+  color: #888;
+  padding: 0 3px;
+}
+
+/* 캘린더 날짜 클릭 시 요약 모달 */
+.cal-modal-section { margin-bottom: 12px; }
+
+.cal-modal-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #f0f0f0;
+  padding-bottom: 2px;
+}
+
+.cal-modal-list-item {
+  font-size: 12px;
+  padding: 4px 0;
+  border-bottom: 1px dashed #f5f5f5;
+}
+.cal-modal-list-item:last-child { border-bottom: none; }
+
+.cal-modal-list-sub {
+  font-size: 11px;
+  color: #777;
+  margin-top: 2px;
+}
+
+.cal-modal-empty {
+  font-size: 11px;
+  color: #aaa;
+  padding: 4px 0;
+}
+
+.cal-modal-holiday-pill {
+  display: inline-block;
+  background: #d6336c;
+  color: white;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+/* [묶음 6B-2] 이벤트 항목 행 + 수정/삭제 버튼 */
+.cal-event-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cal-event-title {
+  flex: 1;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.cal-event-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.cal-event-btn {
+  font-size: 10px;
+  padding: 2px 8px;
+  border: 1px solid #ddd;
+  background: white;
+  border-radius: 3px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.cal-event-btn:hover { background: #f5f5f5; }
+
+.cal-event-btn-danger {
+  color: #c92a2a;
+  border-color: #ffc9c9;
+}
+.cal-event-btn-danger:hover { background: #fff5f5; }
+
+/* [묶음 6B-2] 휴일 토글 체크박스 */
+.cal-holiday-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #555;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cal-holiday-toggle input[type="checkbox"] {
+  cursor: pointer;
+  margin: 0;
 }

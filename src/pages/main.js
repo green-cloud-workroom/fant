@@ -1,8 +1,8 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy, setDoc
+  collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy, setDoc, where, deleteDoc, serverTimestamp
 } from 'firebase/firestore';
-import { getTodayKST as getToday, getNextBusinessDay } from '../utils/date.js';
+import { getTodayKST as getToday, getNextBusinessDay, loadHolidaysCache, getHolidaysCache } from '../utils/date.js';
 import { getAllBlockingItems } from '../services/closingChecks.js';
 import { setCurrentMenu, currentUserRole } from '../app.js';
 import { renderLayout } from '../layout.js';
@@ -18,6 +18,12 @@ let eggStock = { currentQty: 0, minimumQty: 0 };
 let completionDoc = null;
 let blockingData = { totalBlocked: 0, items: [] };
 
+// [묶음 6B-1] 캘린더 데이터 — 14일치만 별도 보관 (productions/nextProductions는 오늘+다음영업일만)
+let calendarSchedules = [];
+let calendarProductions = [];
+let calendarEvents = [];
+let calendarWeekOffset = 0;  // 0=오늘 포함 주, +1=한 주 앞으로, -1=뒤로
+
 export async function renderMain() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>메인 로딩 중...</p></div>`;
@@ -27,6 +33,10 @@ export async function renderMain() {
 
 async function loadAllData() {
   const today = getToday();
+
+  // [묶음 6B-1] 휴일 캐시 먼저 로드해야 다음 영업일 계산이 휴일 반영
+  await loadHolidaysCache();
+
   const nextBizDay = getNextBusinessDay(today);
 
   const prodSnap = await getDocs(query(collection(db, 'productions'), orderBy('sortOrder')));
@@ -47,6 +57,9 @@ async function loadAllData() {
   completionDoc = compSnap.exists() ? { id: compSnap.id, ...compSnap.data() } : null;
 
   blockingData = await getAllBlockingItems(today);
+
+  // [묶음 6B-1] 캘린더 14일치 데이터 (현재 weekOffset 기준)
+  await loadCalendarData(calendarWeekOffset);
 }
 
 
@@ -91,21 +104,34 @@ function renderMainLayout() {
         </div>
       </div>
 
+      <!-- [묶음 6A] 우상단 = 2번(원육) + 3번(로그 임시) 가로 분할 -->
       <div class="main-panel-right-top">
-        <div class="main-panel-header">
-          <span class="main-panel-title">${meatNeedsTitle}</span>
+        <div class="main-panel-2">
+          <div class="main-panel-header">
+            <span class="main-panel-title">${meatNeedsTitle}</span>
+          </div>
+          <div style="padding:12px;font-size:12px;">
+            ${renderMeatNeeds(activeProductions, isCompleted)}
+          </div>
         </div>
-        <div style="padding:12px;font-size:12px;">
-          ${renderMeatNeeds(activeProductions, isCompleted)}
+
+        <div class="main-panel-3">
+          <div class="main-panel-header">
+            <span class="main-panel-title">🔔 알림 <span style="font-size:10px;color:#999;font-weight:400;">(묶음 6C에서 로그 패널로 교체 예정)</span></span>
+          </div>
+          <div style="padding:12px;">
+            ${renderQuickInfo(isCompleted)}
+          </div>
         </div>
       </div>
 
+      <!-- [묶음 6B-1] 우하단 = 4번 캘린더 -->
       <div class="main-panel-right-bottom">
         <div class="main-panel-header">
-          <span class="main-panel-title">🔔 알림</span>
+          <span class="main-panel-title">📆 2주 캘린더</span>
         </div>
-        <div style="padding:12px;">
-          ${renderQuickInfo(isCompleted)}
+        <div class="main-calendar-body">
+          ${renderCalendar()}
         </div>
       </div>
     </div>
@@ -124,7 +150,464 @@ function renderMainLayout() {
       renderPage(menuId);
     });
   });
+
+  // [묶음 6B-1] 캘린더 좌우 이동 + 날짜 클릭 바인딩
+  bindCalendarEvents();
 }
+
+// ============================================================
+// [묶음 6B-1] 캘린더 — 2주 표시 + 좌우 이동 + 날짜 클릭 모달
+// ============================================================
+
+// 캘린더 표시 14일 범위 계산. weekOffset 0=오늘 포함 주의 월요일부터, +1=한 주 뒤로...
+function getCalendarRange(weekOffset = 0) {
+  const today = new Date(getToday() + 'T00:00:00');
+  const dow = (today.getDay() + 6) % 7;  // 월=0, 화=1, ..., 일=6
+  const monday = new Date(today);
+  monday.setDate(monday.getDate() - dow + weekOffset * 7);
+
+  const dates = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(monday);
+    d.setDate(d.getDate() + i);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    dates.push(`${yyyy}-${mm}-${dd}`);
+  }
+  return { dates, startDate: dates[0], endDate: dates[13] };
+}
+
+// 14일치 schedules / productions / events 한 번에 로드
+async function loadCalendarData(weekOffset = 0) {
+  const { startDate, endDate } = getCalendarRange(weekOffset);
+
+  // schedules — status='scheduled'만 표시
+  const schedSnap = await getDocs(query(
+    collection(db, 'schedules'),
+    where('date', '>=', startDate),
+    where('date', '<=', endDate),
+  ));
+  calendarSchedules = schedSnap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(s => s.status === 'scheduled');
+
+  // productions — deleted 제외
+  const prodSnap = await getDocs(query(
+    collection(db, 'productions'),
+    where('date', '>=', startDate),
+    where('date', '<=', endDate),
+  ));
+  calendarProductions = prodSnap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(p => p.status !== 'deleted');
+
+  // events — 컬렉션 없을 수도 있어 안전 가드
+  try {
+    const evSnap = await getDocs(query(
+      collection(db, 'events'),
+      where('date', '>=', startDate),
+      where('date', '<=', endDate),
+    ));
+    calendarEvents = evSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch (err) {
+    console.warn('[캘린더] events 컬렉션 로드 실패 (정상 — 6B-2 전):', err.message);
+    calendarEvents = [];
+  }
+}
+
+// 캘린더 HTML 생성. main-calendar-body 안에 들어감.
+function renderCalendar() {
+  const { dates } = getCalendarRange(calendarWeekOffset);
+  const today = getToday();
+  const holidays = getHolidaysCache();
+
+  // 월요일 시작 요일 헤더
+  const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+
+  const headerLabel = formatCalendarRangeLabel(dates[0], dates[13]);
+
+  return `
+    <div class="cal-container">
+      <div class="cal-toolbar">
+        <button class="cal-nav-btn" id="btnCalPrev" title="이전 주">◀</button>
+        <span class="cal-range-label">${headerLabel}</span>
+        <button class="cal-nav-btn" id="btnCalNext" title="다음 주">▶</button>
+        ${calendarWeekOffset !== 0 ? '<button class="cal-today-btn" id="btnCalToday">오늘로</button>' : ''}
+      </div>
+      <div class="cal-weekday-row">
+        ${weekdays.map((w, i) => `<div class="cal-weekday ${i >= 5 ? 'cal-weekday-weekend' : ''}">${w}</div>`).join('')}
+      </div>
+      <div class="cal-grid">
+        ${dates.map(date => renderCalendarCell(date, today, holidays)).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// 캘린더 셀 1개 (= 1일)
+function renderCalendarCell(date, today, holidays) {
+  const d = new Date(date + 'T00:00:00');
+  const dow = (d.getDay() + 6) % 7;  // 월=0, ..., 일=6
+  const isWeekend = dow >= 5;
+  const isHoliday = isWeekend || holidays.includes(date);
+  const isToday = (date === today);
+
+  const events = calendarEvents.filter(e => e.date === date);
+  const schedules = calendarSchedules.filter(s => s.date === date);
+  const productions = calendarProductions.filter(p => p.date === date);
+
+  // 태그: 이벤트 → 입고예정 → 생산 (스펙 5절 4번 화면 순서)
+  // [묶음 6B-1 보강] truncate 제거 — CSS line-clamp가 셀 폭 맞춰 자동 줄바꿈/말줄임 처리
+  const tagBlocks = [];
+  events.forEach(e => {
+    const label = e.title || '';
+    tagBlocks.push(`<div class="cal-tag cal-tag-event" title="${escapeHtmlMain(label)}">📌 ${escapeHtmlMain(label)}</div>`);
+  });
+  schedules.forEach(s => {
+    const label = formatScheduleLabel(s);
+    tagBlocks.push(`<div class="cal-tag cal-tag-schedule" title="${escapeHtmlMain(label)}">📦 ${escapeHtmlMain(label)}</div>`);
+  });
+  const prodCap = 3;
+  productions.slice(0, prodCap).forEach(p => {
+    const qtyPart = p.productionUnitQty != null
+      ? ` ${formatQty(p.productionUnitQty)}${p.productionUnitName || ''}`
+      : '';
+    const label = `${p.recipeName || ''}${qtyPart}`;
+    tagBlocks.push(`<div class="cal-tag cal-tag-production" title="${escapeHtmlMain(label)}">🏭 ${escapeHtmlMain(label)}</div>`);
+  });
+  if (productions.length > prodCap) {
+    tagBlocks.push(`<div class="cal-tag-more">+${productions.length - prodCap}</div>`);
+  }
+
+  // 날짜 라벨 — 월 1일이면 "5/1" 식으로 월 같이
+  const parts = date.split('-');
+  const dayNum = parseInt(parts[2], 10);
+  const dateLabel = dayNum === 1 ? `${parseInt(parts[1], 10)}/${dayNum}` : String(dayNum);
+
+  const cls = [
+    'cal-cell',
+    isHoliday ? 'cal-cell-holiday' : '',
+    isToday ? 'cal-cell-today' : '',
+  ].filter(Boolean).join(' ');
+
+  return `
+    <div class="${cls}" data-date="${date}">
+      <div class="cal-cell-date-row">
+        <span class="cal-cell-date">${dateLabel}</span>
+      </div>
+      <div class="cal-cell-tags">${tagBlocks.join('')}</div>
+    </div>
+  `;
+}
+
+// 캘린더 좌우 이동 + 셀 클릭 바인딩
+function bindCalendarEvents() {
+  document.getElementById('btnCalPrev')?.addEventListener('click', () => {
+    calendarWeekOffset -= 1;
+    refreshCalendar();
+  });
+  document.getElementById('btnCalNext')?.addEventListener('click', () => {
+    calendarWeekOffset += 1;
+    refreshCalendar();
+  });
+  document.getElementById('btnCalToday')?.addEventListener('click', () => {
+    calendarWeekOffset = 0;
+    refreshCalendar();
+  });
+  document.querySelectorAll('.cal-cell').forEach(cell => {
+    cell.addEventListener('click', () => {
+      const date = cell.dataset.date;
+      if (date) showDateModal(date);
+    });
+  });
+}
+
+// 좌우 이동 시 캘린더만 다시 그림 (전체 메인 재로드 안 함 — 빠르게)
+async function refreshCalendar() {
+  await loadCalendarData(calendarWeekOffset);
+  const body = document.querySelector('.main-calendar-body');
+  if (!body) return;
+  body.innerHTML = renderCalendar();
+  bindCalendarEvents();
+}
+
+// 캘린더 헤더 라벨: "5/4 ~ 5/17"
+function formatCalendarRangeLabel(startDate, endDate) {
+  const s = startDate.split('-');
+  const e = endDate.split('-');
+  return `${parseInt(s[1])}/${parseInt(s[2])} ~ ${parseInt(e[1])}/${parseInt(e[2])}`;
+}
+
+// 입고예정 라벨 — schedules 데이터 구조에 맞춤
+function formatScheduleLabel(s) {
+  const itemName = s.itemNameSnapshot || '';
+  const qty = s.orderedQty != null ? s.orderedQty : '';
+  const unit = s.orderedUnit || '';
+  if (s.type === 'egg') return `계란 ${qty}${unit}`;
+  if (s.type === 'meat') return `${itemName || '원육'} ${qty}${unit}`;
+  if (s.type === 'bag') return `${itemName || '봉투'} ${qty}${unit}`;
+  return `${itemName} ${qty}${unit}`;
+}
+
+// 날짜 클릭 시 요약 모달
+function showDateModal(date) {
+  const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+  const d = new Date(date + 'T00:00:00');
+  const dateLabel = `${parseInt(date.split('-')[1])}월 ${parseInt(date.split('-')[2])}일 (${dayNames[d.getDay()]})`;
+
+  const holidays = getHolidaysCache();
+  const dow = d.getDay();
+  const isWeekend = (dow === 0 || dow === 6);
+  const isManualHoliday = holidays.includes(date);
+  const isHoliday = isWeekend || isManualHoliday;
+  const holidayPill = isHoliday ? '<span class="cal-modal-holiday-pill">휴일</span>' : '';
+
+  const events = calendarEvents.filter(e => e.date === date);
+  const schedules = calendarSchedules.filter(s => s.date === date);
+  const productions = calendarProductions.filter(p => p.date === date);
+
+  // [묶음 6B-2] 이벤트 항목마다 수정/삭제 버튼
+  const eventsHtml = events.length === 0
+    ? '<div class="cal-modal-empty">등록된 이벤트 없음</div>'
+    : events.map(e => `
+        <div class="cal-modal-list-item cal-event-item" data-event-id="${e.id}">
+          <div class="cal-event-row">
+            <span class="cal-event-title">📌 ${escapeHtmlMain(e.title || '')}</span>
+            <span class="cal-event-actions">
+              <button class="cal-event-btn" data-event-act="edit" data-event-id="${e.id}">수정</button>
+              <button class="cal-event-btn cal-event-btn-danger" data-event-act="delete" data-event-id="${e.id}">삭제</button>
+            </span>
+          </div>
+          ${e.content ? `<div class="cal-modal-list-sub">${escapeHtmlMain(e.content)}</div>` : ''}
+        </div>
+      `).join('');
+
+  const schedulesHtml = schedules.length === 0
+    ? '<div class="cal-modal-empty">예정 없음</div>'
+    : schedules.map(s => `<div class="cal-modal-list-item">📦 ${escapeHtmlMain(formatScheduleLabel(s))}</div>`).join('');
+
+  const productionsHtml = productions.length === 0
+    ? '<div class="cal-modal-empty">생산 없음</div>'
+    : productions.map(p => {
+        const badge = p.batchNo ? ` <span style="color:#888;">(${p.batchNo}차)</span>`
+                    : (p.round > 1 ? ` <span style="color:#888;">(${p.round}회차)</span>` : '');
+        return `<div class="cal-modal-list-item">🏭 ${escapeHtmlMain(p.recipeName || '')}${badge}</div>`;
+      }).join('');
+
+  // [묶음 6B-2] 휴일 토글 — 토/일은 자동이라 잠금 (체크박스 disabled). 평일만 토글 가능.
+  const holidayToggleHtml = isWeekend
+    ? `<label class="cal-holiday-toggle" style="opacity:0.5;cursor:not-allowed;">
+         <input type="checkbox" checked disabled> 휴일 (토/일은 자동)
+       </label>`
+    : `<label class="cal-holiday-toggle">
+         <input type="checkbox" id="chkManualHoliday" ${isManualHoliday ? 'checked' : ''}> 이 날을 휴일로 지정
+       </label>`;
+
+  showModal(`
+    <h3 style="margin:0 0 12px 0;font-size:16px;">${dateLabel} ${holidayPill}</h3>
+
+    <div class="cal-modal-section">
+      <div class="cal-modal-section-title">📌 이벤트</div>
+      ${eventsHtml}
+    </div>
+
+    <div class="cal-modal-section">
+      <div class="cal-modal-section-title">📦 입고 예정</div>
+      ${schedulesHtml}
+    </div>
+
+    <div class="cal-modal-section">
+      <div class="cal-modal-section-title">🏭 생산</div>
+      ${productionsHtml}
+    </div>
+
+    <div class="cal-modal-section" style="border-top:1px solid #eee;padding-top:8px;">
+      ${holidayToggleHtml}
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap;">
+      <button class="btn-secondary" id="btnAddEvent">+ 이벤트 추가</button>
+      <button class="btn-secondary" disabled title="묶음 6E에서 활성화" style="opacity:0.5;cursor:not-allowed;">이 날짜로 보기</button>
+      <button class="btn-secondary" onclick="closeModal()">닫기</button>
+    </div>
+  `);
+
+  // [묶음 6B-2] 이벤트 추가 / 수정 / 삭제 / 휴일 토글 바인딩
+  document.getElementById('btnAddEvent')?.addEventListener('click', () => {
+    showEventEditModal(date, null);
+  });
+  document.querySelectorAll('[data-event-act]').forEach(btn => {
+    btn.addEventListener('click', async (ev) => {
+      const act = btn.dataset.eventAct;
+      const id = btn.dataset.eventId;
+      if (act === 'edit') {
+        showEventEditModal(date, id);
+      } else if (act === 'delete') {
+        await deleteEvent(id, date);
+      }
+    });
+  });
+  document.getElementById('chkManualHoliday')?.addEventListener('change', async (ev) => {
+    await toggleManualHoliday(date, ev.target.checked);
+  });
+}
+
+// 캘린더용 안전 처리 헬퍼 — 다른 페이지의 동명 함수와 충돌 방지 위해 Main 접미
+function escapeHtmlMain(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;',
+  }[c]));
+}
+function truncateMain(s, n) {
+  if (!s) return '';
+  return s.length > n ? s.substring(0, n) + '…' : s;
+}
+
+// ============================================================
+// [묶음 6B-2] 이벤트 등록/수정/삭제 + 휴일 토글
+// ============================================================
+
+// 이벤트 등록(eventId=null) 또는 수정(eventId 지정) 모달
+function showEventEditModal(date, eventId) {
+  const isEdit = !!eventId;
+  const existing = isEdit ? calendarEvents.find(e => e.id === eventId) : null;
+  const title = existing?.title || '';
+  const content = existing?.content || '';
+
+  const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+  const d = new Date(date + 'T00:00:00');
+  const dateLabel = `${parseInt(date.split('-')[1])}월 ${parseInt(date.split('-')[2])}일 (${dayNames[d.getDay()]})`;
+
+  showModal(`
+    <h3 style="margin:0 0 12px 0;font-size:16px;">${isEdit ? '이벤트 수정' : '이벤트 등록'} — ${dateLabel}</h3>
+
+    <div style="margin-bottom:10px;">
+      <label style="display:block;font-size:12px;color:#555;margin-bottom:4px;">제목 (필수)</label>
+      <input type="text" id="evTitle" maxlength="50" value="${escapeHtmlMain(title)}"
+             style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;box-sizing:border-box;">
+    </div>
+
+    <div style="margin-bottom:12px;">
+      <label style="display:block;font-size:12px;color:#555;margin-bottom:4px;">내용 (선택)</label>
+      <textarea id="evContent" rows="3" maxlength="300"
+                style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;box-sizing:border-box;resize:vertical;">${escapeHtmlMain(content)}</textarea>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
+      ${isEdit ? `<button class="btn-secondary" id="btnEvDelete" style="color:#c92a2a;border-color:#ffc9c9;">삭제</button>` : ''}
+      <button class="btn-secondary" onclick="closeModal()">취소</button>
+      <button class="btn-primary" id="btnEvSave">${isEdit ? '저장' : '등록'}</button>
+    </div>
+  `);
+
+  // 제목 인풋에 자동 포커스
+  setTimeout(() => document.getElementById('evTitle')?.focus(), 50);
+
+  document.getElementById('btnEvSave')?.addEventListener('click', async () => {
+    const newTitle = document.getElementById('evTitle').value.trim();
+    const newContent = document.getElementById('evContent').value.trim();
+    if (!newTitle) {
+      alert('제목을 입력해주세요.');
+      return;
+    }
+    await saveEvent({ id: eventId, date, title: newTitle, content: newContent });
+  });
+
+  if (isEdit) {
+    document.getElementById('btnEvDelete')?.addEventListener('click', async () => {
+      const ok = await showConfirmModal({
+        title: '이벤트 삭제',
+        message: `"${title}" 이벤트를 삭제하시겠습니까?`,
+        confirmText: '삭제',
+        cancelText: '취소',
+      });
+      if (!ok) return;
+      await deleteEvent(eventId, date);
+    });
+  }
+}
+
+// 이벤트 저장 (신규/수정 공용)
+async function saveEvent({ id, date, title, content }) {
+  try {
+    if (id) {
+      await updateDoc(doc(db, 'events', id), {
+        title,
+        content: content || '',
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await addDoc(collection(db, 'events'), {
+        date,
+        title,
+        content: content || '',
+        createdAt: serverTimestamp(),
+      });
+    }
+    closeModal();
+    // 캘린더 데이터 다시 로드 + 화면 갱신 + 같은 날짜 모달 다시 열기
+    await loadCalendarData(calendarWeekOffset);
+    refreshCalendarUI();
+    showDateModal(date);
+  } catch (err) {
+    console.error('[6B-2] 이벤트 저장 실패:', err);
+    alert('저장 중 오류가 발생했습니다.');
+  }
+}
+
+// 이벤트 삭제
+async function deleteEvent(eventId, date) {
+  const target = calendarEvents.find(e => e.id === eventId);
+  if (!target) return;
+  const ok = await showConfirmModal({
+    title: '이벤트 삭제',
+    message: `"${target.title || '(제목 없음)'}" 이벤트를 삭제하시겠습니까?`,
+    confirmText: '삭제',
+    cancelText: '취소',
+  });
+  if (!ok) return;
+  try {
+    await deleteDoc(doc(db, 'events', eventId));
+    closeModal();
+    await loadCalendarData(calendarWeekOffset);
+    refreshCalendarUI();
+    showDateModal(date);
+  } catch (err) {
+    console.error('[6B-2] 이벤트 삭제 실패:', err);
+    alert('삭제 중 오류가 발생했습니다.');
+  }
+}
+
+// 수동 휴일 토글 — holidays 컬렉션 doc id = 'YYYY-MM-DD' 패턴 (utils/date.js 캐시와 동일)
+// 수동 휴일 토글 — holidays 컬렉션 doc id = 'YYYY-MM-DD' 패턴 (utils/date.js 캐시와 동일)
+async function toggleManualHoliday(date, makeHoliday) {
+  try {
+    if (makeHoliday) {
+      await setDoc(doc(db, 'holidays', date), {
+        date,
+        createdAt: serverTimestamp(),
+      });
+    } else {
+      await deleteDoc(doc(db, 'holidays', date));
+    }
+    // 캐시 다시 로드 → 캘린더 셀 색 즉시 반영
+    await loadHolidaysCache();
+    refreshCalendarUI();
+  } catch (err) {
+    console.error('[6B-2] 휴일 토글 실패:', err);
+    alert('휴일 설정 중 오류가 발생했습니다.');
+  }
+}
+
+// 캘린더 본문만 다시 그림 (모달 외부 갱신용. refreshCalendar와 달리 데이터 재로드 안 함)
+function refreshCalendarUI() {
+  const body = document.querySelector('.main-calendar-body');
+  if (!body) return;
+  body.innerHTML = renderCalendar();
+  bindCalendarEvents();
+}
+
 
 function renderProductionTableCard(p) {
   const ingredients = p.ingredientsSnapshot || [];
