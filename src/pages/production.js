@@ -1,6 +1,6 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc, where
+  collection, getDocs, doc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc, where, writeBatch
 } from 'firebase/firestore';
 import { getTodayKST as getToday, getHolidaysCache } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
@@ -33,6 +33,59 @@ async function loadProductions(date) {
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .filter(p => p.date === date && p.status !== 'deleted');
+}
+
+// [묶음 4A] 회차/차수 재계산 (B안: round + batchNo 둘 다 DB 저장)
+// - round: 같은 레시피의 sortOrder 순 등록 순번 (1부터)
+// - batchNo: 동일 레시피 + 동일 productionUnitQty 묶음의 순번 (2건 이상일 때만 부여, 아니면 null)
+function recalcRoundsAndBatches(list) {
+  const sorted = [...list].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  const byRecipe = {};
+  sorted.forEach(p => {
+    if (!byRecipe[p.recipeId]) byRecipe[p.recipeId] = [];
+    byRecipe[p.recipeId].push(p);
+  });
+
+  const updates = [];
+  for (const recipeId in byRecipe) {
+    const group = byRecipe[recipeId];
+    group.forEach((p, idx) => {
+      const newRound = idx + 1;
+      const sameQty = group.filter(g => g.productionUnitQty === p.productionUnitQty);
+      const newBatchNo = sameQty.length >= 2
+        ? sameQty.findIndex(g => g.id === p.id) + 1
+        : null;
+      const oldBatchNo = p.batchNo ?? null;
+      if (p.round !== newRound || oldBatchNo !== newBatchNo) {
+        updates.push({ id: p.id, round: newRound, batchNo: newBatchNo });
+      }
+    });
+  }
+  return updates;
+}
+
+async function applyRoundsAndBatches(date) {
+  productions = await loadProductions(date);
+  const updates = recalcRoundsAndBatches(productions);
+  if (updates.length > 0) {
+    const batch = writeBatch(db);
+    updates.forEach(u => {
+      batch.update(doc(db, 'productions', u.id), {
+        round: u.round,
+        batchNo: u.batchNo,
+      });
+    });
+    await batch.commit();
+    productions = await loadProductions(date);
+  }
+}
+
+// [묶음 4A] 회차/차수 표시 헬퍼
+// - batchNo 있으면 "1차" / 없고 round>1이면 "1회차" / round==1 + batchNo null이면 표시 없음
+function getRoundBadgeHtml(p) {
+  if (p.batchNo) return ` <span style="font-size:10px;color:#aaa">${p.batchNo}차</span>`;
+  if (p.round > 1) return ` <span style="font-size:10px;color:#aaa">${p.round}회차</span>`;
+  return '';
 }
 
 function renderProductionLayout() {
@@ -129,7 +182,7 @@ function renderProductionCards() {
     <div class="production-card ${selectedProductionId === p.id ? 'active' : ''}"
          data-id="${p.id}"
          style="border-left:4px solid ${p.color || '#4A7C59'}">
-      <div class="card-title">${p.recipeName} ${p.round > 1 ? `<span style="font-size:10px;color:#aaa">${p.round}회</span>` : ''}</div>
+      <div class="card-title">${p.recipeName}${getRoundBadgeHtml(p)}</div>
       <div class="card-info">${p.productionUnitQty} ${p.productionUnitName}</div>
       ${p.category === 'raw' ? `<div class="card-sub">${p.rawBoxQty || 0}박스</div>` : ''}
       ${p.category === 'freezeDry' ? `<div class="card-sub">${p.freezeDryBagQty || 0}봉 / ${p.breadPanQty || 0}빵판 / ${p.freezePanQty || 0}동결판</div>` : ''}
@@ -159,11 +212,13 @@ function bindCardEvents() {
       }
       const __c = await showConfirmModal({ title:'삭제 확인', message:'정말 삭제하시겠습니까?', confirmText:'삭제', danger:true }); if (!__c) return;
       if (await blockIfClosed(selectedDate)) return;
-      await updateDoc(doc(db, 'productions', btn.dataset.id), { status: 'deleted' });
-      productions = await loadProductions(selectedDate);
+      const deletedId = btn.dataset.id;
+      await updateDoc(doc(db, 'productions', deletedId), { status: 'deleted' });
+      // [묶음 4A] 삭제 후 회차/차수 재정렬
+      await applyRoundsAndBatches(selectedDate);
       document.getElementById('productionCards').innerHTML = renderProductionCards();
       bindCardEvents();
-      if (selectedProductionId === btn.dataset.id) {
+      if (selectedProductionId === deletedId) {
         selectedProductionId = null;
         document.getElementById('productionForm').innerHTML = `<div style="color:#aaa;font-size:12px;text-align:center;padding:20px;">카드를 선택하거나 아래에서 새 생산을 추가하세요</div>`;
       }
@@ -290,9 +345,11 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
       const __c = await showConfirmModal({ title:'재고 부족 경고', message:`재고가 부족합니다:\n${msg}\n\n그래도 저장하시겠습니까?`, confirmText:'저장', danger:true }); if (!__c) return;
     }
 
-    // 회차 계산
+    // [묶음 4A] 회차/차수는 임시값으로 저장 후 applyRoundsAndBatches에서 일괄 재계산
+    // 신규는 임시 round (sameRecipe.length+1), 수정은 기존값 유지
     const sameRecipe = productions.filter(p => p.recipeId === recipeId);
-    const round = isNew ? sameRecipe.length + 1 : production.round;
+    const round = isNew ? sameRecipe.length + 1 : (production.round || 1);
+    const batchNo = isNew ? null : (production.batchNo ?? null);
 
     const data = {
       date: selectedDate,
@@ -302,6 +359,7 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
       target: recipe.target,
       color: recipe.color || '#4A7C59',
       round,
+      batchNo,
       productionUnitQty: qty,
       productionUnitName: unitName,
       ingredientsSnapshot: (recipe.ingredients || []).map(ing => ({
@@ -338,7 +396,9 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
       await updateDoc(doc(db, 'productions', production.id), data);
     }
 
-    productions = await loadProductions(selectedDate);
+    // [묶음 4A] 저장 후 같은 날 productions의 round/batchNo 일괄 재계산
+    // 수량 수정으로 동일 수량 묶음이 새로 생기거나 깨지는 경우도 자동 반영
+    await applyRoundsAndBatches(selectedDate);
     document.getElementById('productionCards').innerHTML = renderProductionCards();
     bindCardEvents();
     alert(isNew ? '저장 완료!' : '수정 완료!');
@@ -360,32 +420,76 @@ function showCopySheetModal() {
   const days = ['일', '월', '화', '수', '목', '금', '토'];
   const dateStr = `${String(today.getFullYear()).slice(2)}/${today.getMonth()+1}/${today.getDate()} ${days[today.getDay()]}`;
 
-  const rawCat = productions.filter(p => p.category === 'raw' && p.target === 'cat');
-  const rawDog = productions.filter(p => p.category === 'raw' && p.target === 'dog');
-  const freeze = productions.filter(p => p.category === 'freezeDry');
+  // [묶음 4B] sortOrder 순으로 정렬하여 묶음 첫 등장 순서 보장
+  const sorted = [...productions].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+
+  const rawCat = sorted.filter(p => p.category === 'raw' && p.target === 'cat');
+  const rawDog = sorted.filter(p => p.category === 'raw' && p.target === 'dog');
+  const freezeCat = sorted.filter(p => p.category === 'freezeDry' && p.target === 'cat');
+  const freezeDog = sorted.filter(p => p.category === 'freezeDry' && p.target === 'dog');
+  const freezeCommon = sorted.filter(p => p.category === 'freezeDry' && p.target === 'common');
+
+  // [묶음 4B] 동일 (recipeId, productionUnitQty) 묶음 그룹핑
+  // 첫 등장 위치를 묶음 위치로 사용. count로 차수 추적.
+  function groupForSheet(list) {
+    const seen = new Map();
+    const ordered = [];
+    list.forEach(p => {
+      const key = `${p.recipeId}|${p.productionUnitQty}`;
+      if (seen.has(key)) {
+        seen.get(key).count += 1;
+      } else {
+        const obj = {
+          recipeName: p.recipeName,
+          productionUnitQty: p.productionUnitQty,
+          count: 1,
+        };
+        seen.set(key, obj);
+        ordered.push(obj);
+      }
+    });
+    return ordered;
+  }
+
+  // [묶음 4B] 묶음 단위 텍스트 포맷
+  // namePrefix: 출력에 붙일 prefix ("고양이 " / "강아지 " / "")
+  // count >= 2면 N번 반복 + " (1차, 2차, ...)" 접미사
+  function formatGroup(g, namePrefix) {
+    const cleaned = g.recipeName.replace(/^(고양이 |강아지 )/, '');
+    const single = `${namePrefix}${cleaned}${g.productionUnitQty}`;
+    if (g.count === 1) return single;
+    const repeated = Array(g.count).fill(single).join(', ');
+    const batches = Array.from({ length: g.count }, (_, i) => `${i + 1}차`).join(', ');
+    return `${repeated} (${batches})`;
+  }
 
   let sheet = `※ ${dateStr} 생산\n`;
 
   if (rawCat.length > 0) {
-    const items = rawCat.map(p => `${p.recipeName.replace('고양이 ', '')}${p.productionUnitQty}`).join(', ');
+    const items = groupForSheet(rawCat).map(g => formatGroup(g, '')).join(', ');
     sheet += `- 고양이 생식 : ${items}\n`;
   }
   if (rawDog.length > 0) {
-    const items = rawDog.map(p => `${p.recipeName.replace('강아지 ', '')}${p.productionUnitQty}`).join(', ');
+    const items = groupForSheet(rawDog).map(g => formatGroup(g, '')).join(', ');
     sheet += `- 강아지 생식 : ${items}\n`;
   }
-  if (freeze.length > 0) {
-    const catFreeze = freeze.filter(p => p.target === 'cat').map(p => `고양이 ${p.recipeName.replace('고양이 ', '')}${p.productionUnitQty}`);
-    const dogFreeze = freeze.filter(p => p.target === 'dog').map(p => `강아지 ${p.recipeName.replace('강아지 ', '')}${p.productionUnitQty}`);
-    const commonFreeze = freeze.filter(p => p.target === 'common').map(p => `${p.recipeName}${p.productionUnitQty}`);
-    const allFreeze = [...catFreeze, ...dogFreeze, ...commonFreeze].join(', ');
+  if (freezeCat.length > 0 || freezeDog.length > 0 || freezeCommon.length > 0) {
+    const catItems = groupForSheet(freezeCat).map(g => formatGroup(g, '고양이 '));
+    const dogItems = groupForSheet(freezeDog).map(g => formatGroup(g, '강아지 '));
+    const commonItems = groupForSheet(freezeCommon).map(g => formatGroup(g, ''));
+    const allFreeze = [...catItems, ...dogItems, ...commonItems].join(', ');
     sheet += `- 동결건조 : ${allFreeze}\n`;
   }
 
   showModal(`
     <h3 class="modal-title">생산지시서 복사</h3>
-    <textarea id="sheetText" style="width:100%;height:160px;font-size:13px;padding:12px;border:1px solid #e0e0e0;border-radius:6px;font-family:'Noto Sans KR',sans-serif;resize:none;">${sheet}</textarea>
-    <div style="font-size:11px;color:#aaa;margin:8px 0;">비고를 추가하려면 위 텍스트를 직접 수정하세요.</div>
+    <textarea id="sheetText" style="width:100%;height:140px;font-size:13px;padding:12px;border:1px solid #e0e0e0;border-radius:6px;font-family:'Noto Sans KR',sans-serif;resize:none;">${sheet}</textarea>
+    <!-- [묶음 4C] 비고 입력 UI: textarea와 분리. 복사 시 끝줄에 합성. 비어있으면 줄 생략 -->
+    <div class="form-group" style="margin-top:10px;">
+      <label style="font-size:12px;color:#555;display:block;margin-bottom:4px;">비고</label>
+      <input type="text" id="sheetNote" placeholder="입력 시 끝줄에 자동 추가됩니다 (비어 있으면 비고줄 생략)"
+        style="width:100%;font-size:13px;padding:8px 12px;border:1px solid #e0e0e0;border-radius:6px;font-family:'Noto Sans KR',sans-serif;" />
+    </div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">닫기</button>
       <button class="btn-primary" id="btnCopy">복사하기</button>
@@ -393,7 +497,12 @@ function showCopySheetModal() {
   `);
 
   document.getElementById('btnCopy').addEventListener('click', () => {
-    const text = document.getElementById('sheetText').value;
+    let text = document.getElementById('sheetText').value;
+    const note = document.getElementById('sheetNote').value.trim();
+    // [묶음 4C] 비고 합성: 본문 끝의 개행 정리 후 비고 줄 추가
+    if (note) {
+      text = text.replace(/\n+$/, '') + '\n' + note;
+    }
     navigator.clipboard.writeText(text).then(() => {
       alert('복사 완료!');
       closeModal();
@@ -408,7 +517,7 @@ function showBigViewModal() {
       ${productions.length === 0 ? '<p style="color:#aaa">생산 없음</p>' :
         productions.map(p => `
           <div style="border:1px solid #e8e8e8;border-radius:8px;padding:16px;min-width:160px;border-left:4px solid ${p.color || '#4A7C59'}">
-            <div style="font-size:13px;font-weight:600;margin-bottom:6px;">${p.recipeName}</div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:6px;">${p.recipeName}${getRoundBadgeHtml(p)}</div>
             <div style="font-size:12px;color:#555;">${p.productionUnitQty} ${p.productionUnitName}</div>
             ${p.category === 'raw' ? `<div style="font-size:11px;color:#888;">${p.rawBoxQty || 0}박스</div>` : ''}
             ${p.category === 'freezeDry' ? `<div style="font-size:11px;color:#888;">${p.freezeDryBagQty || 0}봉 / ${p.breadPanQty || 0}빵판</div>` : ''}

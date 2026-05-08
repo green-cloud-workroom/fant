@@ -150,6 +150,7 @@ function showEggModal(type, eggStock) {
     const note = document.getElementById('m_note').value;
 
     if (!qty || !date) { alert('수량과 날짜는 필수입니다.'); return; }
+    if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (!isIn && qty > eggStock.currentQty) { alert('재고가 부족합니다.'); return; }
     if (await blockIfClosed(date)) return;
 
@@ -174,6 +175,22 @@ function showEggModal(type, eggStock) {
       note,
     });
 
+    // [묶음 5A] 사무 로그 발행 — 계란 입고/출고 (운영자가 메인 화면에서 변동 추적 가능하게)
+    const sign = isIn ? '+' : '-';
+    await recordActivity({
+      action: 'egg',
+      subAction: isIn ? 'in' : 'out',
+      date,
+      staff,
+      message: `계란 ${isIn ? '입고' : '출고'} — ${sign}${qty}개 / 담당: ${staff}`,
+      details: {
+        delta,
+        before,
+        after,
+        note: note || null,
+      },
+    });
+
     closeModal();
     const newStock = await loadEggStock();
     const logs = await loadEggLogs();
@@ -181,6 +198,7 @@ function showEggModal(type, eggStock) {
     alert(`${isIn ? '입고' : '출고'} 완료!`);
   });
 }
+
 
 function showEggAdjustModal(eggStock) {
   showModal(`

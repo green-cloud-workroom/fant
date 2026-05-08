@@ -130,10 +130,15 @@ function renderProductionTableCard(p) {
   const ingredients = p.ingredientsSnapshot || [];
   const unitRowName = getProductionUnitRowName(p, ingredients);
 
+  // [묶음 4A] batchNo 우선 → 없으면 round → 둘 다 없거나 round==1이면 표시 없음
+  const roundBadge = p.batchNo
+    ? ` <span>${p.batchNo}차</span>`
+    : (p.round > 1 ? ` <span>${p.round}회차</span>` : '');
+
   return `
     <div class="main-production-card" style="--recipe-color:${p.color || '#ef7bd0'}">
       <div class="main-production-card-title">
-        ${p.recipeName}${p.round > 1 ? ` <span>${p.round}회</span>` : ''}
+        ${p.recipeName}${roundBadge}
       </div>
       <table class="main-ingredient-table">
         <thead>

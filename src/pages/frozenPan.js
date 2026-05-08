@@ -7,6 +7,7 @@ import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { round2, breadToSilicon, breadToFrozenPan } from '../utils/number.js';
 import { showPromptModal, showConfirmModal } from '../utils/modal.js';
+import { recordActivity } from '../services/activityLogs.js';
 
 
 let freezeDryRecipes = [];
@@ -400,7 +401,16 @@ function bindFrozenPanTabEvents(rows, lots) {
       const row = rows.find(r => r.id === rowId);
       if (!row) return;
       if (await blockIfClosed(row.date)) return;
-      await confirmOrder(row, lots);
+
+      // [묶음 5B] 발주 확인 담당자 입력 받기
+      const staff = await showStaffPickerModal({
+        title: '발주 확인 — 담당자 선택',
+        message: '발주 확인을 진행할 담당자를 선택해주세요.',
+        groups: ['senior', 'office'],
+      });
+      if (!staff) return;  // 취소 또는 미선택 시 중단
+
+      await confirmOrder(row, lots, staff);
     });
   });
 
@@ -418,11 +428,21 @@ function bindFrozenPanTabEvents(rows, lots) {
   // 발주 취소 버튼
   document.querySelectorAll('.btn-order-cancel').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const __c = await showConfirmModal({ title:'발주 확인 취소', message:'발주 확인을 취소하시겠습니까?\n차감된 동결판 재고가 복원됩니다.', confirmText:'취소', danger:true }); if (!__c) return;
+      const __c = await showConfirmModal({ title:'발주 확인 취소', message:'발주 확인을 취소하시겠습니까?\n차감된 동결판 재고가 복원됩니다.', confirmText:'확인', danger:true }); if (!__c) return;
       const rowId = btn.dataset.id;
       const row = rows.find(r => r.id === rowId);
-      if (row && await blockIfClosed(row.date)) return;
-      if (row) await cancelOrder(row, lots);
+      if (!row) return;
+      if (await blockIfClosed(row.date)) return;
+
+      // [묶음 5B] 발주 취소 담당자 입력 받기 (사유는 cancelOrder 내부에서 받음)
+      const staff = await showStaffPickerModal({
+        title: '발주 취소 — 담당자 선택',
+        message: '발주 취소를 진행할 담당자를 선택해주세요.',
+        groups: ['senior', 'office'],
+      });
+      if (!staff) return;
+
+      await cancelOrder(row, lots, staff);
     });
   });
 }
@@ -1368,7 +1388,7 @@ window.updateOrderTotal = function() {
   }
 };
 
-async function confirmOrder(row, lots) {
+async function confirmOrder(row, lots, staff) {
   const items = row.items || [];
 
   // 발주 확인 시점 재고 재검증 (등록 후 시간 경과로 재고 변동 가능)
@@ -1435,30 +1455,36 @@ async function confirmOrder(row, lots) {
     ledgerId = ledgerRef.id;
   }
 
+  // [묶음 5B] confirmStaff 필드 추가 — 누가 발주 확인했는지 frozenPanStock에 영구 저장
   await updateDoc(doc(db, 'frozenPanStock', row.id), {
     status: 'confirmed',
     ledgerId,
+    confirmStaff: staff,
     confirmedAt: new Date(),
     updatedAt: new Date(),
   });
 
-  // activityLogs 기록
-  await addDoc(collection(db, 'activityLogs'), {
-    type: 'office',
-    subType: 'frozenPanOrderConfirm',
-    date: row.date || '',
-    timestamp: new Date(),
-    title: `동결판 발주 확인 — ${(row.date || '')}`,
-    description: items.map(it => `${it.productName} ${it.orderPanQty}판`).join(', '),
-    acknowledged: true,
-    actionId: row.id,
+  // [묶음 5B] 사무 로그 발행 — 동결판 발주 확인 (표준 recordActivity 통일)
+  const itemsLabel = items.map(it => `${it.productName} ${it.orderPanQty}판`).join(', ');
+  await recordActivity({
+    action: 'frozenPan',
+    subAction: 'orderConfirm',
+    date: row.date || getToday(),
+    staff,
+    message: `동결판 발주 확인 — ${itemsLabel} / 담당: ${staff}`,
+    details: {
+      frozenPanStockId: row.id,
+      orderDate: row.date || null,
+      items,
+      ledgerId,
+    },
   });
 
   await refreshFrozenPanLayout();
   alert('발주 확인 완료!');
 }
 
-async function cancelOrder(row, lots) {
+async function cancelOrder(row, lots, staff) {
   const reason = await showPromptModal({
     title: '발주 취소',
     message: '취소 후에는 차감된 동결판 재고가 복원됩니다.',
@@ -1522,24 +1548,30 @@ async function cancelOrder(row, lots) {
     }
   }
 
+  // [묶음 5B] cancelStaff 필드 추가 — 누가 발주 취소했는지 frozenPanStock에 영구 저장
   await updateDoc(doc(db, 'frozenPanStock', row.id), {
     status: 'pending',
     cancelReason: reason,
+    cancelStaff: staff,
     cancelledAt: new Date(),
     updatedAt: new Date(),
   });
 
-  // activityLogs 기록
+  // [묶음 5B] 사무 로그 발행 — 동결판 발주 취소 (표준 recordActivity 통일)
   const items = row.items || [];
-  await addDoc(collection(db, 'activityLogs'), {
-    type: 'office',
-    subType: 'frozenPanOrderCancel',
-    date: row.date || '',
-    timestamp: new Date(),
-    title: `동결판 발주 취소 — ${(row.date || '')}`,
-    description: `${items.map(it => `${it.productName} ${it.orderPanQty}판`).join(', ')} / 사유: ${reason}`,
-    acknowledged: false,
-    actionId: row.id,
+  const itemsLabel = items.map(it => `${it.productName} ${it.orderPanQty}판`).join(', ');
+  await recordActivity({
+    action: 'frozenPan',
+    subAction: 'orderCancel',
+    date: row.date || getToday(),
+    staff,
+    message: `동결판 발주 취소 — ${itemsLabel} / 사유: ${reason} / 담당: ${staff}`,
+    details: {
+      frozenPanStockId: row.id,
+      orderDate: row.date || null,
+      items,
+      reason,
+    },
   });
 
   await refreshFrozenPanLayout();
@@ -1547,6 +1579,53 @@ async function cancelOrder(row, lots) {
 }
 
 // 유틸
+
+// [묶음 5B] 담당자만 선택받는 미니 모달 (발주 확인/취소용)
+// 프로젝트 표준 패턴: id="modalOverlay" + class="modal-box"
+async function showStaffPickerModal({ title, message, groups }) {
+  // staffCache 보장 (드롭다운이 비어있는 문제 방지)
+  await loadStaffCache();
+
+  return new Promise(resolve => {
+    // 기존 모달 있으면 제거
+    const existing = document.getElementById('modalOverlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'modalOverlay';
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal-box" style="max-width:400px;padding:24px;">
+        <h3 style="margin:0 0 12px 0;font-size:18px;font-weight:600;">${title}</h3>
+        <p style="font-size:13px;color:#666;margin:0 0 20px 0;">${message}</p>
+        <div style="margin-bottom:20px;">
+          <label style="display:block;font-size:13px;font-weight:500;color:#333;margin-bottom:8px;">담당자 *</label>
+          <select id="sp_staff" style="width:100%;padding:8px 10px;border:1px solid #e0e0e0;border-radius:6px;font-size:14px;">
+            <option value="">선택</option>
+            ${getStaffOptions(groups)}
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button class="btn-secondary" id="sp_cancel">취소</button>
+          <button class="btn-primary" id="sp_ok">확인</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const close = (val) => {
+      overlay.remove();
+      resolve(val);
+    };
+
+    document.getElementById('sp_cancel').addEventListener('click', () => close(null));
+    document.getElementById('sp_ok').addEventListener('click', () => {
+      const staff = document.getElementById('sp_staff').value;
+      if (!staff) { alert('담당자를 선택해주세요.'); return; }
+      close(staff);
+    });
+  });
+}
 
 let staffCache = {};
 async function loadStaffCache() {

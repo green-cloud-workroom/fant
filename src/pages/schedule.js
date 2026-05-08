@@ -20,7 +20,16 @@ export async function renderSchedule() {
 async function loadSchedules() {
   const q = query(collection(db, 'schedules'), orderBy('date', 'asc'));
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  // [묶음 5E] 같은 날짜 안에서 최근 등록이 위로 (createdAt desc, 클라이언트 정렬)
+  list.sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    const ac = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+    const bc = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+    return bc - ac;
+  });
+  return list;
 }
 
 async function loadMeatTypes() {
@@ -214,13 +223,9 @@ async function showAddScheduleModal() {
       </div>
       <div class="form-group">
         <label>단위</label>
+        <!-- [묶음 5D] 구분 선택에 따라 옵션 자동 제한 (updateScheduleItem에서 갱신) -->
         <select id="m_unit">
-          <option value="kg">kg</option>
-          <option value="g">g</option>
-          <option value="장">장</option>
-          <option value="박스">박스</option>
-          <option value="개">개</option>
-          <option value="판">판</option>
+          <option value="">구분을 먼저 선택</option>
         </select>
       </div>
     </div>
@@ -245,6 +250,25 @@ async function showAddScheduleModal() {
     const type = document.getElementById('m_type').value;
     const wrap = document.getElementById('itemSelectWrap');
     const select = document.getElementById('m_item');
+    const unitSelect = document.getElementById('m_unit');
+
+    // [묶음 5D] 구분에 따라 단위 옵션 자동 제한
+    // 원육 = g/kg (디폴트 kg), 봉투 = 장/박스 (디폴트 박스), 계란 = 개/판 (디폴트 개)
+    const unitMap = {
+      meat: { options: [['kg', 'kg'], ['g', 'g']], default: 'kg' },
+      bag:  { options: [['박스', '박스'], ['장', '장']], default: '박스' },
+      egg:  { options: [['개', '개'], ['판', '판']], default: '개' },
+    };
+    if (type && unitMap[type]) {
+      const cfg = unitMap[type];
+      unitSelect.innerHTML = cfg.options
+        .map(([val, label]) => `<option value="${val}">${label}</option>`)
+        .join('');
+      unitSelect.value = cfg.default;
+    } else {
+      // 구분 미선택 시: 기본 비어있음
+      unitSelect.innerHTML = '<option value="">구분을 먼저 선택</option>';
+    }
 
     if (type === 'egg') {
       wrap.style.display = 'none';
@@ -273,6 +297,7 @@ async function showAddScheduleModal() {
     const memo = document.getElementById('m_memo').value;
 
     if (!date || !type || !qty) { alert('날짜, 구분, 수량은 필수입니다.'); return; }
+    if (!staff) { alert('담당자는 필수입니다.'); return; }
 
     let itemId = null;
     let itemName = '계란';
@@ -285,7 +310,29 @@ async function showAddScheduleModal() {
       if (!itemId) { alert('품목을 선택해주세요.'); return; }
     }
 
-    await addDoc(collection(db, 'schedules'), {
+   // [묶음 5E] 중복 등록 강제 차단 — 같은 date + type + itemId(또는 egg)의 scheduled 항목 있으면 등록 거부
+    // (수정하려면 기존 항목을 취소하고 재등록해야 함)
+    const existingSchedules = await loadSchedules();
+    const duplicate = existingSchedules.find(s => {
+      if (s.status !== 'scheduled') return false;
+      if (s.date !== date) return false;
+      if (s.type !== type) return false;
+      // 계란은 itemId 없음 → type만 일치하면 중복
+      if (type === 'egg') return true;
+      // 그 외(원육/봉투)는 itemId 정확히 일치
+      return s.itemId === itemId;
+    });
+    if (duplicate) {
+      const dupLabel = type === 'egg' ? '계란' : itemName;
+      alert(
+        `이미 ${date}에 [${dupLabel}] 입고예정이 등록되어 있습니다.\n` +
+        `(기존: ${duplicate.orderedQty}${duplicate.orderedUnit})\n\n` +
+        `수정하시려면 기존 항목을 먼저 취소한 뒤 다시 등록해주세요.`
+      );
+      return;
+    }
+
+    const scheduleRef = await addDoc(collection(db, 'schedules'), {
       date, type,
       itemId,
       itemNameSnapshot: itemName,
@@ -296,6 +343,29 @@ async function showAddScheduleModal() {
       orderMemo: memo,
       createdAt: new Date(),
       updatedAt: new Date(),
+    });
+
+    // [묶음 5A] 사무 로그 발행 — 입고예정 등록 (운영자가 메인 화면에서 등록 추적 가능하게)
+    // 계란은 구분=품목이라 typeLabel 생략 ("계란 계란" 중복 방지)
+    const typeLabel = type === 'meat' ? '원육' : type === 'bag' ? '봉투' : '';
+    const itemLabel = type === 'egg' ? '계란' : `${typeLabel} ${itemName}`;
+    const today = getToday();
+    await recordActivity({
+      action: 'schedule',
+      subAction: 'register',
+      date: today,
+      staff,
+      message: `입고예정 등록 — ${itemLabel} ${qty}${unit} (예정일 ${date}) / 담당: ${staff}`,
+      details: {
+        scheduleId: scheduleRef.id,
+        type,
+        itemId,
+        itemName,
+        orderedQty: qty,
+        orderedUnit: unit,
+        scheduledDate: date,
+        memo: memo || null,
+      },
     });
 
     closeModal();

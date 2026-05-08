@@ -461,6 +461,23 @@ function showAddFrozenModal() {
       reason: note || null,
     });
 
+    // [묶음 5A] 사무 로그 발행 — 원육 입고 (운영자가 메인 화면에서 변동 추적 가능하게)
+    await recordActivity({
+      action: 'meat',
+      subAction: 'incoming',
+      date,
+      staff,
+      message: `원육 입고 (냉동창고) — ${meatName} +${(qtyG/1000).toFixed(1)}kg / 담당: ${staff}`,
+      details: {
+        meatStockId: stockRef.id,
+        meatTypeId,
+        meatName,
+        stage: 'frozen',
+        qtyG,
+        note: note || null,
+      },
+    });
+
     closeModal();
     renderTab('frozen');
     alert('입고 등록 완료!');

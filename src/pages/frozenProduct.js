@@ -7,6 +7,7 @@ import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
+import { recordActivity } from '../services/activityLogs.js';
 
 let frozenProducts = [];
 let selectedProductId = null;
@@ -574,6 +575,7 @@ function showIncomingModal(product) {
     const note = document.getElementById('m_note').value;
 
     if (!qty || !date) { alert('수량과 날짜는 필수입니다.'); return; }
+    if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (await blockIfClosed(date)) return;
 
     // 봉투 차감 + ledger items 누적
@@ -653,6 +655,25 @@ function showIncomingModal(product) {
       });
       await updateDoc(doc(db, 'frozenLogs', frozenLogRef.id), { ledgerId: ledgerRef.id });
     }
+
+    // [묶음 5A] 사무 로그 발행 — 동결제품 입고 (운영자가 메인 화면에서 변동 추적 가능하게)
+    await recordActivity({
+      action: 'frozenProduct',
+      subAction: 'incoming',
+      date,
+      staff,
+      message: `동결제품 입고 — ${product.name} +${qty}봉 / 담당: ${staff}`,
+      details: {
+        frozenLogId: frozenLogRef.id,
+        productId: product.id,
+        productName: product.name,
+        qty,
+        expiryDate: expiry || null,
+        deductedBagQty,
+        bagTypeId: product.bagTypeId || null,
+        note: note || null,
+      },
+    });
 
     closeModal();
     await showProductDetail(product);

@@ -306,6 +306,7 @@ function showBagIncomingModal(bag) {
     const note = document.getElementById('m_note').value;
 
     if (!qty || !date) { alert('수량과 날짜는 필수입니다.'); return; }
+    if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (await blockIfClosed(date)) return;
 
     const before = bag.currentQty || 0;
@@ -327,6 +328,23 @@ function showBagIncomingModal(bag) {
       after,
       staffName: staff,
       note,
+    });
+
+    // [묶음 5A] 사무 로그 발행 — 봉투 입고 (운영자가 메인 화면에서 변동 추적 가능하게)
+    await recordActivity({
+      action: 'bag',
+      subAction: 'incoming',
+      date,
+      staff,
+      message: `봉투 입고 — ${bag.name} +${qty}장 / 담당: ${staff}`,
+      details: {
+        bagTypeId: bag.id,
+        bagName: bag.name,
+        qty,
+        before,
+        after,
+        note: note || null,
+      },
     });
 
     bagTypes = await loadBagTypes();
