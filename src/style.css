@@ -1862,3 +1862,228 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   white-space: nowrap;
 }
 .tload-blocker-jump:hover { background: #ffe0e0; }
+
+/* ===== 통계 페이지 [묶음 7A] ===== */
+.stats-wrap {
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  height: 100%;
+}
+
+/* 가로 탭 */
+.stats-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 2px solid #e0e0e0;
+  flex-shrink: 0;
+}
+.stats-tab {
+  padding: 10px 18px;
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  font-family: 'Noto Sans KR', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  color: #666;
+  cursor: pointer;
+  margin-bottom: -2px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.stats-tab:hover {
+  color: #4A7C59;
+}
+.stats-tab.active {
+  color: #4A7C59;
+  border-bottom-color: #4A7C59;
+  font-weight: 600;
+}
+
+/* 컨트롤 영역 */
+.stats-controls {
+  background: #f7f7f7;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.stats-control-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.stats-control-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #555;
+  min-width: 36px;
+}
+.stats-mode-group {
+  display: flex;
+  gap: 4px;
+}
+.stats-mode-btn,
+.stats-agg-btn {
+  padding: 5px 11px;
+  background: white;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  font-family: 'Noto Sans KR', sans-serif;
+  font-size: 12px;
+  color: #555;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.stats-mode-btn:hover,
+.stats-agg-btn:hover {
+  border-color: #4A7C59;
+  color: #4A7C59;
+}
+.stats-mode-btn.active,
+.stats-agg-btn.active {
+  background: #4A7C59;
+  border-color: #4A7C59;
+  color: white;
+}
+.stats-date-input {
+  padding: 5px 8px;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  font-family: 'Noto Sans KR', sans-serif;
+  font-size: 12px;
+  color: #333;
+}
+.stats-date-sep {
+  color: #888;
+  font-size: 12px;
+}
+.stats-download-btn {
+  padding: 5px 12px;
+  background: #4A7C59;
+  border: none;
+  border-radius: 4px;
+  color: white;
+  font-family: 'Noto Sans KR', sans-serif;
+  font-size: 12px;
+  cursor: pointer;
+  margin-left: auto;
+  transition: background 0.15s;
+}
+.stats-download-btn:hover {
+  background: #3d6a4a;
+}
+
+/* 합계 박스 */
+.stats-summary {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 10px 14px;
+  min-height: 36px;
+  flex-shrink: 0;
+}
+
+/* 차트 영역 */
+.stats-chart-area {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 16px;
+  min-height: 280px;
+  flex-shrink: 0;
+}
+
+/* 하단 상세 */
+.stats-detail-area {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 14px;
+  min-height: 80px;
+}
+
+/* placeholder 공통 */
+.stats-placeholder {
+  color: #999;
+  font-size: 12px;
+  text-align: center;
+  padding: 12px 0;
+}
+
+/* ===== 통계 미리보기 테이블 [묶음 7A-2] ===== */
+.stats-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  font-size: 13px;
+  color: #444;
+}
+.stats-summary-row b {
+  color: #4A7C59;
+  font-weight: 600;
+  margin-left: 4px;
+}
+.stats-detail-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 4px;
+}
+.stats-detail-note {
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 10px;
+}
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-family: 'Noto Sans KR', sans-serif;
+}
+.stats-table thead th {
+  text-align: left;
+  font-weight: 500;
+  color: #666;
+  padding: 6px 8px;
+  border-bottom: 1px solid #e0e0e0;
+  background: #fafafa;
+}
+.stats-table tbody td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #f0f0f0;
+  color: #333;
+}
+.stats-table tbody tr:hover {
+  background: #fafafa;
+}
+.stats-color-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.stats-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  background: #e8eef0;
+  color: #555;
+}
+.stats-tag-raw {
+  background: #e8f3ec;
+  color: #3d6a4a;
+}
+.stats-tag-freezeDry {
+  background: #f0e9e0;
+  color: #8a6d3b;
+}

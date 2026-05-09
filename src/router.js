@@ -9,6 +9,7 @@ import { renderFrozenSep } from './pages/frozenSep.js';
 import { renderSchedule } from './pages/schedule.js';
 import { renderProduction } from './pages/production.js';
 import { renderMain } from './pages/main.js';
+import { renderStats } from './pages/stats.js'; // [묶음 7A] 통계 페이지
 
 export async function renderPage(menuId) {
   const content = document.getElementById('mainContent');
@@ -47,6 +48,9 @@ export async function renderPage(menuId) {
       break;
     case 'production':
       await renderProduction();
+      break;
+    case 'stats': // [묶음 7A] 통계
+      await renderStats();
       break;
     default:
       content.innerHTML = `

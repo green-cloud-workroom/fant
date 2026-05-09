@@ -25,12 +25,20 @@ let calendarProductions = [];
 let calendarEvents = [];
 let calendarWeekOffset = 0;  // 0=오늘 포함 주, +1=한 주 앞으로, -1=뒤로
 
+// [묶음 6E-4] selectedDate 모드 — 캘린더에서 [이 날짜로 보기] 클릭 시 그 날짜를 1번 화면에 표시
+//   null이면 기본 모드 (오늘 또는 마감 후 다음 영업일)
+//   값이 있으면 보기 전용 모드 (마감 액션 버튼 disabled, 원육 출고도 그 날짜 기준)
+let selectedProductionDate = null;
+let selectedDateProductions = [];
+
 // [묶음 6C-1] 로그 패널 데이터 — 당일 전체 + 어제 이전 미확인(확인 필수)만
 let combinedLogs = [];
 
 export async function renderMain() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>메인 로딩 중...</p></div>`;
+  selectedProductionDate = null;
+  selectedDateProductions = [];
   await loadAllData();
   renderMainLayout();
 }
@@ -81,12 +89,27 @@ function renderMainLayout() {
   const today = getToday();
   const nextBizDay = getNextBusinessDay(today);
   const isCompleted = completionDoc?.status === 'completed';
-  const activeProductions = isCompleted ? nextProductions : productions;
-  const activeDateLabel = isCompleted ? `불러온 다음 영업일 생산 (${nextBizDay})` : '오늘 생산';
-  const meatNeedsTitle = isCompleted ? '🥩 불러온 생산 원육 출고' : '🥩 오늘 원육 출고';
+
+  // [묶음 6E-4] selectedDate 모드 — 캘린더에서 [이 날짜로 보기] 클릭한 상태
+  const isViewingSelectedDate = selectedProductionDate !== null;
+
+  // 활성 productions 결정 (selectedDate 모드 우선)
+  const activeProductions = isViewingSelectedDate
+    ? selectedDateProductions
+    : (isCompleted ? nextProductions : productions);
+
+  const activeDateLabel = isViewingSelectedDate
+    ? `${selectedProductionDate} 생산 (보기 전용)`
+    : (isCompleted ? `불러온 다음 영업일 생산 (${nextBizDay})` : '오늘 생산');
+
+  const meatNeedsTitle = isViewingSelectedDate
+    ? `🥩 ${selectedProductionDate} 원육 출고`
+    : (isCompleted ? '🥩 불러온 생산 원육 출고' : '🥩 오늘 원육 출고');
 
   const days = ['일', '월', '화', '수', '목', '금', '토'];
-  const displayDate = isCompleted ? nextBizDay : today;
+  const displayDate = isViewingSelectedDate
+    ? selectedProductionDate
+    : (isCompleted ? nextBizDay : today);
   const displayDateObj = new Date(displayDate + 'T00:00:00');
   const todayStr = `${displayDateObj.getMonth()+1}/${displayDateObj.getDate()} (${days[displayDateObj.getDay()]})`;
 
@@ -94,23 +117,32 @@ function renderMainLayout() {
     <div class="main-layout">
       <div class="main-panel-left">
         <div class="main-panel-header">
-          <span class="main-panel-title">📅 ${todayStr} 생산</span>
+          <span class="main-panel-title">📅 ${todayStr} 생산${isViewingSelectedDate ? ' <span style="font-size:11px;color:#3182ce;font-weight:normal;">(보기 전용)</span>' : ''}</span>
           <div style="display:flex;gap:6px;align-items:center;">
             <button class="btn-secondary" id="btnBigView" style="font-size:11px;padding:3px 10px;">크게보기</button>
-            ${isCompleted
-              ? `<button class="btn-secondary" id="btnCancelCompletion" style="font-size:11px;padding:3px 10px;color:#e53e3e;">내일생산취소</button>`
-              : `<button class="btn-primary" id="btnTomorrowLoad" style="font-size:12px;padding:5px 14px;" ${nextProductions.length === 0 ? 'disabled title="다음 영업일에 등록된 생산이 없습니다"' : ''}>내일생산불러오기</button>`
+            ${isViewingSelectedDate
+              ? `
+                <button class="btn-primary" id="btnTomorrowLoad" style="font-size:12px;padding:5px 14px;opacity:0.5;cursor:not-allowed;" disabled title="오늘 화면에서만 가능">내일생산불러오기</button>
+                <button class="btn-secondary" id="btnBackToToday" style="font-size:11px;padding:3px 10px;color:#3182ce;">↩ 오늘로 돌아가기</button>
+              `
+              : (isCompleted
+                ? `
+                  <button class="btn-secondary" id="btnRefreshCompletion" style="font-size:11px;padding:3px 10px;color:#3182ce;" title="롤백 후 변경된 생산 기준으로 재차감">새로고침</button>
+                  <button class="btn-secondary" id="btnCancelCompletion" style="font-size:11px;padding:3px 10px;color:#e53e3e;">내일생산취소</button>
+                `
+                : `<button class="btn-primary" id="btnTomorrowLoad" style="font-size:12px;padding:5px 14px;" ${nextProductions.length === 0 ? 'disabled title="다음 영업일에 등록된 생산이 없습니다"' : ''}>내일생산불러오기</button>`
+              )
             }
           </div>
         </div>
         <div class="main-production-area">
           <div class="main-production-label">
             <span>${activeDateLabel}</span>
-            ${isCompleted ? '<span class="main-completed-pill">내일생산불러오기 완료</span>' : ''}
+            ${isCompleted && !isViewingSelectedDate ? '<span class="main-completed-pill">내일생산불러오기 완료</span>' : ''}
           </div>
           <div class="main-production-grid">
             ${activeProductions.length === 0
-              ? `<div class="main-empty">${isCompleted ? '불러온 다음 영업일 생산 없음' : '오늘 생산 없음'}</div>`
+              ? `<div class="main-empty">${isViewingSelectedDate ? '선택한 날짜에 생산 없음' : (isCompleted ? '불러온 다음 영업일 생산 없음' : '오늘 생산 없음')}</div>`
               : activeProductions.map(p => renderProductionTableCard(p)).join('')}
           </div>
         </div>
@@ -123,7 +155,7 @@ function renderMainLayout() {
             <span class="main-panel-title">${meatNeedsTitle}</span>
           </div>
           <div style="padding:12px;font-size:12px;">
-            ${renderMeatNeeds(activeProductions, isCompleted)}
+            ${renderMeatNeeds(activeProductions, isCompleted && !isViewingSelectedDate)}
           </div>
         </div>
 
@@ -150,6 +182,10 @@ function renderMainLayout() {
   document.getElementById('btnBigView')?.addEventListener('click', showBigView);
   document.getElementById('btnTomorrowLoad')?.addEventListener('click', handleTomorrowLoad);
   document.getElementById('btnCancelCompletion')?.addEventListener('click', handleCancelCompletion);
+  // [묶음 6E-3] 새로고침 버튼 — 마감 후 다음 영업일 생산 변경됐을 때 롤백+재차감
+  document.getElementById('btnRefreshCompletion')?.addEventListener('click', handleRefreshCompletion);
+  // [묶음 6E-4] 오늘로 돌아가기 버튼 — selectedDate 모드 해제
+  document.getElementById('btnBackToToday')?.addEventListener('click', handleBackToToday);
 
   // 차단 영역의 점프 버튼 (기존 알림 카드와 동일 동작)
   document.querySelectorAll('.alert-card-jump').forEach(btn => {
@@ -365,6 +401,9 @@ function formatScheduleLabel(s) {
 
 // 날짜 클릭 시 요약 모달
 function showDateModal(date) {
+  // [묶음 6F] 캘린더 편집 권한 — admin/office만 이벤트/휴일 변경 가능 (production role 차단)
+  const canEditCalendar = currentUserRole === 'admin' || currentUserRole === 'office';
+
   const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
   const d = new Date(date + 'T00:00:00');
   const dateLabel = `${parseInt(date.split('-')[1])}월 ${parseInt(date.split('-')[2])}일 (${dayNames[d.getDay()]})`;
@@ -380,17 +419,19 @@ function showDateModal(date) {
   const schedules = calendarSchedules.filter(s => s.date === date);
   const productions = calendarProductions.filter(p => p.date === date);
 
-  // [묶음 6B-2] 이벤트 항목마다 수정/삭제 버튼
+  // [묶음 6B-2] 이벤트 항목마다 수정/삭제 버튼 — [묶음 6F] admin/office만 노출
   const eventsHtml = events.length === 0
     ? '<div class="cal-modal-empty">등록된 이벤트 없음</div>'
     : events.map(e => `
         <div class="cal-modal-list-item cal-event-item" data-event-id="${e.id}">
           <div class="cal-event-row">
             <span class="cal-event-title">📌 ${escapeHtmlMain(e.title || '')}</span>
-            <span class="cal-event-actions">
-              <button class="cal-event-btn" data-event-act="edit" data-event-id="${e.id}">수정</button>
-              <button class="cal-event-btn cal-event-btn-danger" data-event-act="delete" data-event-id="${e.id}">삭제</button>
-            </span>
+            ${canEditCalendar ? `
+              <span class="cal-event-actions">
+                <button class="cal-event-btn" data-event-act="edit" data-event-id="${e.id}">수정</button>
+                <button class="cal-event-btn cal-event-btn-danger" data-event-act="delete" data-event-id="${e.id}">삭제</button>
+              </span>
+            ` : ''}
           </div>
           ${e.content ? `<div class="cal-modal-list-sub">${escapeHtmlMain(e.content)}</div>` : ''}
         </div>
@@ -408,14 +449,26 @@ function showDateModal(date) {
         return `<div class="cal-modal-list-item">🏭 ${escapeHtmlMain(p.recipeName || '')}${badge}</div>`;
       }).join('');
 
-  // [묶음 6B-2] 휴일 토글 — 토/일은 자동이라 잠금 (체크박스 disabled). 평일만 토글 가능.
-  const holidayToggleHtml = isWeekend
-    ? `<label class="cal-holiday-toggle" style="opacity:0.5;cursor:not-allowed;">
+  // [묶음 6B-2] 휴일 토글 — 토/일은 자동 잠금. [묶음 6F] production role도 잠금
+  let holidayToggleHtml;
+  if (isWeekend) {
+    holidayToggleHtml = `<label class="cal-holiday-toggle" style="opacity:0.5;cursor:not-allowed;">
          <input type="checkbox" checked disabled> 휴일 (토/일은 자동)
-       </label>`
-    : `<label class="cal-holiday-toggle">
+       </label>`;
+  } else if (!canEditCalendar) {
+    holidayToggleHtml = `<label class="cal-holiday-toggle" style="opacity:0.5;cursor:not-allowed;" title="대표/사무실만 변경 가능">
+         <input type="checkbox" ${isManualHoliday ? 'checked' : ''} disabled> 이 날을 휴일로 지정
+       </label>`;
+  } else {
+    holidayToggleHtml = `<label class="cal-holiday-toggle">
          <input type="checkbox" id="chkManualHoliday" ${isManualHoliday ? 'checked' : ''}> 이 날을 휴일로 지정
        </label>`;
+  }
+
+  // [묶음 6F] [+ 이벤트 추가] 버튼은 admin/office만. production은 안내 텍스트로 대체
+  const addEventBtnHtml = canEditCalendar
+    ? `<button class="btn-secondary" id="btnAddEvent">+ 이벤트 추가</button>`
+    : `<span style="color:#888;font-size:12px;align-self:center;">이벤트 등록은 대표/사무실만 가능</span>`;
 
   showModal(`
     <h3 style="margin:0 0 12px 0;font-size:16px;">${dateLabel} ${holidayPill}</h3>
@@ -440,13 +493,15 @@ function showDateModal(date) {
     </div>
 
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap;">
-      <button class="btn-secondary" id="btnAddEvent">+ 이벤트 추가</button>
-      <button class="btn-secondary" disabled title="묶음 6E에서 활성화" style="opacity:0.5;cursor:not-allowed;">이 날짜로 보기</button>
+      ${addEventBtnHtml}
+      ${productions.length > 0
+        ? `<button class="btn-secondary" id="btnViewThisDate">이 날짜로 보기</button>`
+        : `<button class="btn-secondary" disabled title="생산 없음" style="opacity:0.5;cursor:not-allowed;">이 날짜로 보기</button>`}
       <button class="btn-secondary" onclick="closeModal()">닫기</button>
     </div>
   `);
 
-  // [묶음 6B-2] 이벤트 추가 / 수정 / 삭제 / 휴일 토글 바인딩
+  // [묶음 6B-2] 이벤트 추가 / 수정 / 삭제 / 휴일 토글 바인딩 (권한 없으면 버튼 자체가 없음)
   document.getElementById('btnAddEvent')?.addEventListener('click', () => {
     showEventEditModal(date, null);
   });
@@ -463,6 +518,14 @@ function showDateModal(date) {
   });
   document.getElementById('chkManualHoliday')?.addEventListener('change', async (ev) => {
     await toggleManualHoliday(date, ev.target.checked);
+  });
+
+  // [묶음 6E-4] 이 날짜로 보기 버튼 — selectedDate 모드 진입
+  document.getElementById('btnViewThisDate')?.addEventListener('click', () => {
+    selectedProductionDate = date;
+    selectedDateProductions = calendarProductions.filter(p => p.date === date);
+    closeModal();
+    renderMainLayout();
   });
 }
 
@@ -644,6 +707,7 @@ const REQUIRES_ACK_KEYS = new Set([
   'minStock:alert',          // 최소재고 미달 (자동 — 6C-3)
   'frozenStockLow:alert',    // 냉동창고 잔량 부족 (자동 — 6C-3)
   'schedule:completeDiff',   // [묶음 6C-2] 입고 완료 차이 있음
+  'closing:refresh',         // [묶음 6E-3] 마감 새로고침 (롤백+재차감)
 ]);
 
 // 로그 → '사무'/'생산'/'무시' 분류 — action:subAction 오버라이드 우선
@@ -1195,22 +1259,23 @@ function bindModalAckButtons() {
 // ============================================================
 
 // 자동 발행 dedup — 같은 (action, subAction, date, dedupKey) 이미 있으면 skip.
-// recordActivity 직접 호출하지 않고 addDoc 사용 — staff='시스템'은 currentUser 검증 우회 필요.
+// [묶음 6F] race condition 방지 — deterministic 문서 ID + setDoc 사용.
+//   같은 사유면 항상 같은 문서 ID → 두 호출이 거의 동시에 발생해도 setDoc 덮어쓰기로 1건만 남음.
+//   addDoc 시절엔 매번 랜덤 ID 생성돼서 race condition으로 중복 발행 가능했음.
+// recordActivity 직접 호출하지 않고 setDoc 사용 — staff='시스템'은 currentUser 검증 우회 필요.
 async function ensureAutoLog({ action, subAction, date, message, details, dedupKey }) {
   try {
-    const snap = await getDocs(query(
-      collection(db, 'activityLogs'),
-      where('date', '==', date),
-    ));
-    const exists = snap.docs.some(d => {
-      const data = d.data();
-      return data.action === action
-          && data.subAction === subAction
-          && data.details?.dedupKey === dedupKey;
-    });
-    if (exists) return;
+    // 문서 ID — Firestore 허용 문자(영숫자/언더스코어/하이픈)만 남김
+    const safeKey = `${action}_${subAction}_${date}_${dedupKey}`.replace(/[^\w-]/g, '_');
+    const docId = `auto_${safeKey}`;
+    const ref = doc(db, 'activityLogs', docId);
 
-    await addDoc(collection(db, 'activityLogs'), {
+    // 1차 체크: 같은 ID 문서 존재 여부 (deterministic이라 단일 doc 조회로 빠름)
+    const existing = await getDoc(ref);
+    if (existing.exists()) return;
+
+    // setDoc — 두 번 호출돼도 같은 ID에 덮어쓰기 → 1건만 존재
+    await setDoc(ref, {
       action, subAction, date,
       staff: '시스템',
       uid: null,
@@ -2119,10 +2184,208 @@ async function handleCancelCompletion() {
   }
 }
 
+// [묶음 6E-3] 마감 새로고침 — 다음 영업일 생산 변경 시 롤백 + 재차감
+//   사용 시나리오: 사무가 다음 영업일 생산 추가/수정/삭제 → 차감과 실제 생산 사이 불일치
+//   흐름: 1) 롤백 → 2) 차단 5조건 재검사 → 3) 담당자 재선택 → 4) 재차감 → 5) 사무 로그 발행
+//   권한: 모든 role (admin + office + production) — 운영자 결정
+//   차단 발견 시: 롤백 완료 상태로 두고 함수 종료. 사용자가 차단 처리 후 [내일생산불러오기]로 재마감.
+async function handleRefreshCompletion() {
+  if (completionDoc?.status !== 'completed') {
+    alert('마감 상태에서만 새로고침이 가능합니다.');
+    return;
+  }
+  if (nextProductions.length === 0) {
+    alert('다음 영업일에 등록된 생산이 없습니다.');
+    return;
+  }
+
+  const __c = await showConfirmModal({
+    title: '내일생산불러오기 새로고침',
+    message: '기존 차감을 롤백하고 변경된 다음 영업일 생산 기준으로 다시 차감합니다.\n진행하시겠습니까?',
+    confirmText: '진행',
+    danger: false,
+  });
+  if (!__c) return;
+
+  const reason = await showPromptModal({
+    title: '내일생산불러오기 새로고침',
+    message: '롤백 후 차단 항목이 다시 검사됩니다.',
+    label: '새로고침 사유',
+    placeholder: '예: 다음 영업일 생산 추가',
+    required: true,
+    multiline: true,
+  });
+  if (reason === null || !reason) return;
+
+  const today = getToday();
+  const oldStaffName = completionDoc?.staffName || 'unknown';
+  const productionBatchId = `productionCompletion:${completionDoc?.runDate || today}`;
+
+  try {
+    // === 1단계: 롤백 (handleCancelCompletion 로직 그대로) ===
+    if (completionDoc?.ledgerId) {
+      const ledgerSnap = await getDoc(doc(db, 'stockLedger', completionDoc.ledgerId));
+      if (ledgerSnap.exists()) {
+        const items = ledgerSnap.data().items || [];
+        for (const item of items) {
+          const docSnap = await getDoc(doc(db, item.collection, item.docId));
+          if (!docSnap.exists()) continue;
+          const currentVal = docSnap.data()[item.field];
+
+          if (currentVal !== item.after) {
+            const __cf = await showConfirmModal({
+              title: '재고 변동 감지',
+              message: `이전 마감 이후 ${item.label} 재고가 변경된 이력이 있습니다.\n마감 당시 차감분만 복원됩니다.\n\n강제 복원하시겠습니까?`,
+              confirmText: '강제 복원',
+              danger: true,
+            });
+            if (!__cf) continue;
+          }
+
+          // 자동 재포장 신규 lot은 remaining=0 + closed=true
+          if (item.isNewDoc) {
+            const newRemaining = currentVal - item.delta;
+            await updateDoc(doc(db, item.collection, item.docId), {
+              [item.field]: newRemaining,
+              closed: true,
+              updatedAt: new Date(),
+            });
+          } else {
+            await updateDoc(doc(db, item.collection, item.docId), {
+              [item.field]: currentVal - item.delta,
+              closed: false,
+              updatedAt: new Date(),
+            });
+          }
+
+          if (item.collection === 'meatStocks') {
+            const docData = docSnap.data();
+            await recordMeatLog({
+              type: 'productionRollback',
+              date: today,
+              meatTypeId: docData.meatTypeId || null,
+              meatNameSnapshot: docData.meatNameSnapshot || '',
+              stage: docData.stage || 'frozen',
+              meatStockId: item.docId,
+              delta: -item.delta,
+              before: currentVal,
+              after: currentVal - item.delta,
+              staff: oldStaffName,
+              reason: `새로고침 롤백 - ${reason}`,
+              batchId: productionBatchId,
+            });
+          }
+        }
+        await updateDoc(doc(db, 'stockLedger', completionDoc.ledgerId), {
+          status: 'rolledBack',
+          rolledBackAt: new Date(),
+        });
+      }
+    }
+
+    if (completionDoc?.id) {
+      await updateDoc(doc(db, 'productionCompletion', completionDoc.id), {
+        status: 'cancelled',
+        cancelReason: `새로고침: ${reason}`,
+        cancelledAt: new Date(),
+      });
+    }
+
+    for (const p of nextProductions) {
+      await updateDoc(doc(db, 'productions', p.id), { lockedByCompletion: false });
+    }
+
+    // 데이터 다시 로드 — 재검사 정확하게
+    await loadAllData();
+
+    // === 2단계: 차단 5조건 재검사 (롤백된 재고 상태 기준) ===
+    const blockers = await gatherTomorrowLoadBlockers(today);
+    if (blockers.length > 0) {
+      renderMainLayout();
+      alert('롤백은 완료됐습니다.\n차단 항목이 발견되어 재차감을 진행할 수 없습니다.\n차단 항목 처리 후 [내일생산불러오기] 버튼으로 다시 진행해주세요.');
+      showTomorrowLoadBlockersModal(blockers);
+      return;
+    }
+
+    // === 3단계: 담당자 재선택 모달 ===
+    const staffSnap = await getDoc(doc(db, 'staffGroups', 'lead'));
+    const members = staffSnap.exists() ? staffSnap.data().members || [] : [];
+
+    showModal(`
+      <h3 class="modal-title">새로고침 — 담당자 선택</h3>
+      <p style="font-size:12px;color:#888;margin-bottom:16px;">
+        롤백 완료. 다음 영업일(${getNextBusinessDay(today)}) 생산 기준으로 재차감합니다.
+      </p>
+      <div class="form-group">
+        <label>담당자 *</label>
+        <select id="m_refresh_staff">
+          <option value="">선택</option>
+          ${members.map(m => `<option value="${m.name}">${m.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeModal()">취소 (마감 안 된 상태로 유지)</button>
+        <button class="btn-primary" id="btnConfirmRefresh">재차감 진행</button>
+      </div>
+    `);
+
+    document.getElementById('btnConfirmRefresh').addEventListener('click', async () => {
+      const newStaff = document.getElementById('m_refresh_staff').value;
+      if (!newStaff) { alert('담당자를 선택해주세요.'); return; }
+      closeModal();
+
+      // === 4단계: 재차감 ===
+      await executeProductionLoad(today, newStaff);
+
+      // === 5단계: 사무 로그 발행 (확인 필수) ===
+      // executeProductionLoad가 내부적으로 loadAllData + renderMainLayout + alert까지 이미 끝낸 상태.
+      // 메인은 이 시점에 옛 로그 기준으로 그려져 있음. recordActivity 후 로그 패널만 다시 그려서 즉시 반영.
+      try {
+        await recordActivity({
+          action: 'closing',
+          subAction: 'refresh',
+          date: today,
+          staff: newStaff,
+          message: `🔄 내일생산불러오기 새로고침 — 사유: ${reason} / 담당: ${newStaff} (이전 담당: ${oldStaffName})`,
+          details: {
+            previousStaff: oldStaffName,
+            newStaff,
+            reason,
+            runDate: getNextBusinessDay(today),
+          },
+        });
+        // [묶음 6E-3] 신규 로그 즉시 화면 반영 — loadCombinedLogs로 데이터 다시 받고 패널만 재렌더
+        await loadCombinedLogs();
+        refreshLogPanels();
+      } catch (err) {
+        console.warn('[6E-3] 새로고침 활동 로그 발행 실패:', err);
+      }
+    });
+
+  } catch (err) {
+    console.error('[6E-3] 새로고침 실패:', err);
+    alert('오류가 발생했습니다: ' + err.message);
+    await loadAllData();
+    renderMainLayout();
+  }
+}
+
+// [묶음 6E-4] selectedDate 모드 해제 — 1번 화면을 다시 오늘 기준(또는 마감 후 다음 영업일)으로 표시
+function handleBackToToday() {
+  selectedProductionDate = null;
+  selectedDateProductions = [];
+  renderMainLayout();
+}
+
 function showBigView() {
   const isCompleted = completionDoc?.status === 'completed';
-  const displayProductions = isCompleted ? nextProductions : productions;
-  const title = isCompleted ? `${getNextBusinessDay(getToday())} 불러온 생산` : `${getToday()} 생산 현황`;
+  const isViewingSelectedDate = selectedProductionDate !== null;
+  const displayProductions = isViewingSelectedDate
+    ? selectedDateProductions
+    : (isCompleted ? nextProductions : productions);
+  const title = isViewingSelectedDate
+    ? `${selectedProductionDate} 생산 현황`
+    : (isCompleted ? `${getNextBusinessDay(getToday())} 불러온 생산` : `${getToday()} 생산 현황`);
 
   showModal(`
     <h3 class="modal-title">${title}</h3>
