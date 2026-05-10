@@ -2087,3 +2087,98 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   background: #f0e9e0;
   color: #8a6d3b;
 }
+
+/* ===== 통계 차트 [묶음 7B] ===== */
+.stats-recipe-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.stats-recipe-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: #f5f5f5;
+  border: 1px solid #e0e0e0;
+  border-radius: 14px;
+  font-family: 'Noto Sans KR', sans-serif;
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.12s;
+}
+.stats-recipe-chip:hover {
+  border-color: var(--recipe-color, #4A7C59);
+}
+.stats-recipe-chip input {
+  display: none;
+}
+.stats-recipe-chip-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ccc;
+  transition: background 0.12s;
+}
+.stats-recipe-chip input:checked ~ .stats-recipe-chip-dot {
+  background: var(--recipe-color, #4A7C59);
+}
+.stats-recipe-chip-label {
+  color: #777;
+  transition: color 0.12s;
+}
+.stats-recipe-chip input:checked ~ .stats-recipe-chip-label {
+  color: #333;
+  font-weight: 500;
+}
+.stats-recipe-chip:has(input:checked) {
+  background: white;
+  border-color: var(--recipe-color, #4A7C59);
+}
+
+/* canvas 컨테이너: 고정 높이 320px (운영자 결정 1) */
+.stats-chart-canvas-wrap {
+  position: relative;
+  height: 320px;
+  width: 100%;
+}
+
+/* ===== 통계 [묶음 7F-2] ===== */
+.stats-expected-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 5px;
+  background: #fff4d6;
+  color: #b07a00;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.stats-expected-note {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  background: #fff4d6;
+  color: #8a5e00;
+  border-radius: 8px;
+  font-size: 10px;
+}
+
+.stats-download-btn-all {
+  background: #5B89C9;
+  margin-left: 6px;
+}
+
+.stats-download-btn-all:hover {
+  background: #4670a8;
+}
+
+.stats-download-btn:disabled,
+.stats-download-btn-all:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
