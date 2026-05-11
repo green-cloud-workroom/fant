@@ -58,6 +58,10 @@ export function renderLayout() {
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const menuId = btn.dataset.menu;
+      if (menuId === 'settings' && currentUserRole === 'production') {
+        alert('설정은 대표/사무실 계정만 가능합니다.');
+        return;
+      }
       setCurrentMenu(menuId);
       renderLayout();
       renderPage(menuId);

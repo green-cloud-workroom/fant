@@ -8,11 +8,17 @@ import { loadHolidaysCache } from '../utils/date.js';
 
 // 설정 페이지 렌더
 export async function renderSettings() {
+  if (currentUserRole === 'production') {
+    alert('설정은 대표/사무실 계정만 가능합니다.');
+    return;
+  }
+
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>설정 로딩 중...</p></div>`;
 
   const staffGroups = await loadStaffGroups();
   const holidays = await loadHolidays();
+  const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
   
   content.innerHTML = `
     <div class="settings-wrap">
@@ -22,9 +28,9 @@ export async function renderSettings() {
       <div class="settings-section">
         <h3 class="settings-section-title">담당자 관리</h3>
         <div class="staff-groups">
-          ${renderStaffGroup('senior', '선임', staffGroups.senior)}
-          ${renderStaffGroup('lead', '주임', staffGroups.lead)}
-          ${renderStaffGroup('office', '사무', staffGroups.office)}
+          ${renderStaffGroup('senior', '선임', staffGroups.senior, isWriter)}
+          ${renderStaffGroup('lead', '주임', staffGroups.lead, isWriter)}
+          ${renderStaffGroup('office', '사무', staffGroups.office, isWriter)}
         </div>
       </div>
 
@@ -38,7 +44,7 @@ export async function renderSettings() {
   `;
 
   // 이벤트 바인딩
-  bindStaffEvents(staffGroups);
+  if (isWriter) bindStaffEvents(staffGroups);
   bindHolidayEvents(holidays);
 }
 
@@ -55,18 +61,18 @@ async function loadStaffGroups() {
 }
 
 // 담당자 그룹 렌더
-function renderStaffGroup(key, label, members) {
+function renderStaffGroup(key, label, members, isWriter = false) {
   return `
     <div class="staff-group" data-group="${key}">
       <div class="staff-group-header">
         <span class="staff-group-label">${label}</span>
-        <button class="btn-add-staff" data-group="${key}">+ 추가</button>
+        ${isWriter ? `<button class="btn-add-staff" data-group="${key}">+ 추가</button>` : ''}
       </div>
       <div class="staff-list" id="staffList-${key}">
         ${members.map((m, i) => `
           <div class="staff-item" data-group="${key}" data-index="${i}">
             <span>${m.name}</span>
-            <button class="btn-del-staff" data-group="${key}" data-index="${i}">삭제</button>
+            ${isWriter ? `<button class="btn-del-staff" data-group="${key}" data-index="${i}">삭제</button>` : ''}
           </div>
         `).join('')}
         ${members.length === 0 ? '<p class="staff-empty">담당자 없음</p>' : ''}
@@ -123,17 +129,18 @@ async function saveStaffGroup(groupKey, members) {
 
 // 새로고침
 function renderSettingsRefresh(staffGroups) {
-  document.getElementById('staffList-senior').innerHTML = renderStaffList('senior', staffGroups.senior);
-  document.getElementById('staffList-lead').innerHTML = renderStaffList('lead', staffGroups.lead);
-  document.getElementById('staffList-office').innerHTML = renderStaffList('office', staffGroups.office);
+  const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
+  document.getElementById('staffList-senior').innerHTML = renderStaffList('senior', staffGroups.senior, isWriter);
+  document.getElementById('staffList-lead').innerHTML = renderStaffList('lead', staffGroups.lead, isWriter);
+  document.getElementById('staffList-office').innerHTML = renderStaffList('office', staffGroups.office, isWriter);
   bindStaffEvents(staffGroups);
 }
 
-function renderStaffList(key, members) {
+function renderStaffList(key, members, isWriter = false) {
   return members.map((m, i) => `
     <div class="staff-item" data-group="${key}" data-index="${i}">
       <span>${m.name}</span>
-      <button class="btn-del-staff" data-group="${key}" data-index="${i}">삭제</button>
+      ${isWriter ? `<button class="btn-del-staff" data-group="${key}" data-index="${i}">삭제</button>` : ''}
     </div>
   `).join('') || '<p class="staff-empty">담당자 없음</p>';
 }

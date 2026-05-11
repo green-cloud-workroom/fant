@@ -37,13 +37,14 @@ async function loadFrozenLogs(productId) {
 
 function renderFrozenProductLayout() {
   const content = document.getElementById('mainContent');
+  const canManageFrozenProduct = currentUserRole === 'admin' || currentUserRole === 'office';
   content.innerHTML = `
     <div class="recipe-wrap">
       <!-- 왼쪽: 제품 목록 -->
       <div class="recipe-list-panel">
         <div class="panel-header">
           <span class="panel-title">제품 목록</span>
-          <button class="btn-primary" id="btnNewProduct">+ 추가</button>
+          ${canManageFrozenProduct ? '<button class="btn-primary" id="btnNewProduct">+ 추가</button>' : ''}
         </div>
         <div class="recipe-list" id="productList">
           ${renderProductList()}
@@ -58,7 +59,7 @@ function renderFrozenProductLayout() {
   `;
 
   bindProductListEvents();
-  document.getElementById('btnNewProduct').addEventListener('click', showNewProductModal);
+  document.getElementById('btnNewProduct')?.addEventListener('click', showNewProductModal);
 }
 
 function renderProductList() {
@@ -92,6 +93,7 @@ function bindProductListEvents() {
 async function showProductDetail(product) {
   const detail = document.getElementById('productDetail');
   const logs = await loadFrozenLogs(product.id);
+  const canManageFrozenProduct = currentUserRole === 'admin' || currentUserRole === 'office';
 
   // 연결 봉투 정보
   let bagName = '-';
@@ -104,7 +106,7 @@ async function showProductDetail(product) {
     <div class="detail-header">
       <span class="detail-title">${product.name}</span>
       <div class="detail-actions">
-        <button class="btn-secondary" id="btnEditProduct">수정</button>
+        ${canManageFrozenProduct ? '<button class="btn-secondary" id="btnEditProduct">수정</button>' : ''}
         <button class="btn-primary" id="btnAddIncoming">+ 입고 등록</button>
       </div>
     </div>
@@ -156,8 +158,10 @@ async function showProductDetail(product) {
                     <td>${l.staffName || '-'}</td>
                     <td>${l.note || '-'}</td>
                     <td>
-                      <button class="btn-edit-row" data-logid="${l.id}" style="margin-right:4px;">수정</button>
-                      <button class="btn-del-row" data-logid="${l.id}" data-qty="${l.qty}" data-bagqty="${l.deductedBagQty || 0}" data-bagid="${product.bagTypeId || ''}">삭제</button>
+                      ${canManageFrozenProduct ? `
+                        <button class="btn-edit-row" data-logid="${l.id}" style="margin-right:4px;">수정</button>
+                        <button class="btn-del-row" data-logid="${l.id}" data-qty="${l.qty}" data-bagqty="${l.deductedBagQty || 0}" data-bagid="${product.bagTypeId || ''}">삭제</button>
+                      ` : ''}
                     </td>
                   </tr>
                 `).join('')}
@@ -169,7 +173,7 @@ async function showProductDetail(product) {
   `;
 
   document.getElementById('btnAddIncoming').addEventListener('click', () => showIncomingModal(product));
-  document.getElementById('btnEditProduct').addEventListener('click', () => showEditProductModal(product));
+  document.getElementById('btnEditProduct')?.addEventListener('click', () => showEditProductModal(product));
 
   document.querySelectorAll('.btn-edit-row').forEach(btn => {
     btn.addEventListener('click', async () => {

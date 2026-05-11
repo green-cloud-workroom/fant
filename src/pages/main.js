@@ -89,6 +89,7 @@ function renderMainLayout() {
   const today = getToday();
   const nextBizDay = getNextBusinessDay(today);
   const isCompleted = completionDoc?.status === 'completed';
+  const canRefreshCompletion = currentUserRole === 'admin' || currentUserRole === 'office';
 
   // [묶음 6E-4] selectedDate 모드 — 캘린더에서 [이 날짜로 보기] 클릭한 상태
   const isViewingSelectedDate = selectedProductionDate !== null;
@@ -127,7 +128,7 @@ function renderMainLayout() {
               `
               : (isCompleted
                 ? `
-                  <button class="btn-secondary" id="btnRefreshCompletion" style="font-size:11px;padding:3px 10px;color:#3182ce;" title="롤백 후 변경된 생산 기준으로 재차감">새로고침</button>
+                  ${canRefreshCompletion ? '<button class="btn-secondary" id="btnRefreshCompletion" style="font-size:11px;padding:3px 10px;color:#3182ce;" title="롤백 후 변경된 생산 기준으로 재차감">새로고침</button>' : ''}
                   <button class="btn-secondary" id="btnCancelCompletion" style="font-size:11px;padding:3px 10px;color:#e53e3e;">내일생산취소</button>
                 `
                 : `<button class="btn-primary" id="btnTomorrowLoad" style="font-size:12px;padding:5px 14px;" ${nextProductions.length === 0 ? 'disabled title="다음 영업일에 등록된 생산이 없습니다"' : ''}>내일생산불러오기</button>`

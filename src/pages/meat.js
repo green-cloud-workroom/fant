@@ -126,10 +126,11 @@ async function renderTab(tab) {
 // 냉동창고 탭
 function renderFrozenTab(stocks, logs) {
   const tabContent = document.getElementById('tabContent');
+  const canManageMeatTypes = currentUserRole === 'admin' || currentUserRole === 'office';
   tabContent.innerHTML = `
     <div style="display:flex;gap:8px;margin-bottom:16px;">
       <button class="btn-primary" id="btnAddFrozen">+ 원육 입고 등록</button>
-      <button class="btn-secondary" id="btnMeatTypes">원육 종류 관리</button>
+      ${canManageMeatTypes ? '<button class="btn-secondary" id="btnMeatTypes">원육 종류 관리</button>' : ''}
     </div>
 
     <div class="form-section">
@@ -196,7 +197,7 @@ function renderFrozenTab(stocks, logs) {
   `;
 
   document.getElementById('btnAddFrozen').addEventListener('click', showAddFrozenModal);
-  document.getElementById('btnMeatTypes').addEventListener('click', () => {
+  document.getElementById('btnMeatTypes')?.addEventListener('click', () => {
     if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
       alert('원육 종류 관리는 대표/사무실 계정만 가능합니다.');
       return;

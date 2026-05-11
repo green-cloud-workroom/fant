@@ -814,6 +814,7 @@ async function showBreadPanAdjustModal() {
 
 function renderPanRow(r) {
   if (r.status === 'cancelled') return '';
+  const canCancelOrder = currentUserRole === 'admin' || currentUserRole === 'office';
 
   // 묶음 3 정책: 발주 행만 표시 (옛 work 행은 renderFrozenPanLayout에서 필터링됨)
   const isConfirmed = r.status === 'confirmed';
@@ -832,7 +833,9 @@ function renderPanRow(r) {
       <button class="btn-del-row btn-order-delete" data-id="${r.id}">삭제</button>
     `;
   } else {
-    actionHtml = `<button class="btn-secondary btn-order-cancel" data-id="${r.id}" style="font-size:11px;padding:3px 10px;">발주 취소</button>`;
+    actionHtml = canCancelOrder
+      ? `<button class="btn-secondary btn-order-cancel" data-id="${r.id}" style="font-size:11px;padding:3px 10px;">발주 취소</button>`
+      : '';
   }
 
   return `

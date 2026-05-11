@@ -91,6 +91,7 @@ function getRoundBadgeHtml(p) {
 
 function renderProductionLayout() {
   const content = document.getElementById('mainContent');
+  const canManageProduction = currentUserRole === 'admin' || currentUserRole === 'office';
   content.innerHTML = `
     <div class="production-wrap">
       <!-- 왼쪽 3/4 -->
@@ -117,7 +118,7 @@ function renderProductionLayout() {
             카드를 선택하거나 아래에서 새 생산을 추가하세요
           </div>
         </div>
-        <button class="btn-primary" id="btnNewProduction" style="width:100%;margin-top:12px;">+ 새 생산 추가</button>
+        ${canManageProduction ? '<button class="btn-primary" id="btnNewProduction" style="width:100%;margin-top:12px;">+ 새 생산 추가</button>' : ''}
       </div>
     </div>
   `;
@@ -132,7 +133,7 @@ function renderProductionLayout() {
     bindCardEvents();
   });
 
-  document.getElementById('btnNewProduction').addEventListener('click', () => showProductionForm(null));
+  document.getElementById('btnNewProduction')?.addEventListener('click', () => showProductionForm(null));
   document.getElementById('btnCopySheet').addEventListener('click', showCopySheetModal);
   document.getElementById('btnBigView').addEventListener('click', showBigViewModal);
 
@@ -176,6 +177,7 @@ function renderHolidaysOfMonth(dateStr) {
   return `<span class="holiday-month-list">이번 달 공휴일: ${items}</span>`;
 }
 function renderProductionCards() {
+  const canManageProduction = currentUserRole === 'admin' || currentUserRole === 'office';
   if (productions.length === 0) {
     return '<div style="color:#aaa;font-size:13px;padding:20px;text-align:center;">오늘 생산 없음</div>';
   }
@@ -187,7 +189,7 @@ function renderProductionCards() {
       <div class="card-info">${p.productionUnitQty} ${p.productionUnitName}</div>
       ${p.category === 'raw' ? `<div class="card-sub">${p.rawBoxQty || 0}박스</div>` : ''}
       ${p.category === 'freezeDry' ? `<div class="card-sub">${p.freezeDryBagQty || 0}봉 / ${p.breadPanQty || 0}빵판 / ${p.freezePanQty || 0}동결판</div>` : ''}
-      <button class="card-del" data-id="${p.id}">✕</button>
+      ${canManageProduction ? `<button class="card-del" data-id="${p.id}">✕</button>` : ''}
     </div>
   `).join('');
 }
@@ -229,6 +231,7 @@ function bindCardEvents() {
 
 function showProductionForm(production) {
   const isNew = !production;
+  const canManageProduction = currentUserRole === 'admin' || currentUserRole === 'office';
   const form = document.getElementById('productionForm');
 
   form.innerHTML = `
@@ -269,7 +272,7 @@ function showProductionForm(production) {
       <!-- 참고 수치 -->
       <div id="pf_refs" style="font-size:11px;color:#888;margin-bottom:12px;"></div>
 
-      <button class="btn-primary" id="btnSaveProduction" style="width:100%;">${isNew ? '저장' : '수정'}</button>
+      ${canManageProduction ? `<button class="btn-primary" id="btnSaveProduction" style="width:100%;">${isNew ? '저장' : '수정'}</button>` : ''}
     </div>
   `;
 
@@ -321,7 +324,7 @@ const ingHtml = (recipe.ingredients || []).map(ing => {
 
   if (production) updateIngredients();
 
-  document.getElementById('btnSaveProduction').addEventListener('click', async () => {
+  document.getElementById('btnSaveProduction')?.addEventListener('click', async () => {
     if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
       alert('생산 입력은 대표/사무실 계정만 가능합니다.');
       return;

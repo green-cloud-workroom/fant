@@ -26,13 +26,14 @@ let selectedBagId = null;
 
 function renderBagLayout() {
   const content = document.getElementById('mainContent');
+  const canManageBagTypes = currentUserRole === 'admin' || currentUserRole === 'office';
   content.innerHTML = `
     <div class="recipe-wrap">
       <!-- 왼쪽: 봉투 목록 -->
       <div class="recipe-list-panel">
         <div class="panel-header">
           <span class="panel-title">봉투 목록</span>
-          <button class="btn-primary" id="btnNewBag">+ 추가</button>
+          ${canManageBagTypes ? '<button class="btn-primary" id="btnNewBag">+ 추가</button>' : ''}
         </div>
         <div class="recipe-list" id="bagList">
           ${renderBagList()}
@@ -47,7 +48,7 @@ function renderBagLayout() {
   `;
 
   bindBagListEvents();
-  document.getElementById('btnNewBag').addEventListener('click', showNewBagModal);
+  document.getElementById('btnNewBag')?.addEventListener('click', showNewBagModal);
 }
 
 function renderBagList() {
@@ -99,6 +100,7 @@ function bindBagListEvents() {
 
 async function showBagDetail(bag) {
   const detail = document.getElementById('bagDetail');
+  const canManageBagTypes = currentUserRole === 'admin' || currentUserRole === 'office';
 
   // 입고 이력 로드
   const q = query(collection(db, 'bagLogs'), orderBy('timestamp', 'desc'));
@@ -112,7 +114,7 @@ async function showBagDetail(bag) {
     <div class="detail-header">
       <span class="detail-title">${bag.name}</span>
       <div class="detail-actions">
-        <button class="btn-secondary" id="btnEditBag">수정</button>
+        ${canManageBagTypes ? '<button class="btn-secondary" id="btnEditBag">수정</button>' : ''}
         <button class="btn-secondary" id="btnAdjustBag">수동조정</button>
         <button class="btn-primary" id="btnAddBagIncoming">+ 입고 등록</button>
       </div>
@@ -179,7 +181,7 @@ async function showBagDetail(bag) {
 
   document.getElementById('btnAddBagIncoming').addEventListener('click', () => showBagIncomingModal(bag));
   document.getElementById('btnAdjustBag').addEventListener('click', () => showBagAdjustModal(bag));
-  document.getElementById('btnEditBag').addEventListener('click', () => showEditBagModal(bag));
+  document.getElementById('btnEditBag')?.addEventListener('click', () => showEditBagModal(bag));
 }
 
 function showNewBagModal() {

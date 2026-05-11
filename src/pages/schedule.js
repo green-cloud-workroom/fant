@@ -45,6 +45,7 @@ async function loadBagTypes() {
 function renderScheduleLayout(schedules) {
   const content = document.getElementById('mainContent');
   const today = getToday();
+  const canManageSchedule = currentUserRole === 'admin' || currentUserRole === 'office';
 
   const active = schedules.filter(s => s.status === 'scheduled');
   const done = schedules.filter(s => s.status !== 'scheduled');
@@ -55,7 +56,7 @@ function renderScheduleLayout(schedules) {
     <div class="page-wrap">
       <div class="page-header">
         <h2 class="page-title">입고 예정관리</h2>
-        <button class="btn-primary" id="btnAddSchedule">+ 입고 예정 등록</button>
+        ${canManageSchedule ? '<button class="btn-primary" id="btnAddSchedule">+ 입고 예정 등록</button>' : ''}
       </div>
 
       <!-- 활성 목록 -->
@@ -76,7 +77,7 @@ function renderScheduleLayout(schedules) {
           <tbody>
             ${active.length === 0 ?
               `<tr><td colspan="8" style="text-align:center;color:#aaa;padding:20px;">입고 예정 없음</td></tr>` :
-              active.map(s => renderScheduleRow(s, today)).join('')}
+              active.map(s => renderScheduleRow(s, today, canManageSchedule)).join('')}
           </tbody>
         </table>
       </div>
@@ -111,7 +112,7 @@ function renderScheduleLayout(schedules) {
     </div>
   `;
 
-  document.getElementById('btnAddSchedule').addEventListener('click', () => showScheduleModal());
+  document.getElementById('btnAddSchedule')?.addEventListener('click', () => showScheduleModal());
   document.getElementById('btnToggleDone').addEventListener('click', () => {
     const section = document.getElementById('doneSection');
     showDone = !showDone;
@@ -165,7 +166,7 @@ function renderScheduleLayout(schedules) {
   });
 }
 
-function renderScheduleRow(s, today) {
+function renderScheduleRow(s, today, canManageSchedule = false) {
   const isOverdue = s.date < today;
   return `
     <tr style="background:${isOverdue ? '#fffdf0' : 'white'}">
@@ -177,9 +178,9 @@ function renderScheduleRow(s, today) {
       <td>${s.orderMemo || '-'}</td>
       <td><span style="color:#e67e22;font-size:12px">⏳ 예정</span></td>
       <td style="white-space:nowrap">
-        <button class="btn-secondary btn-edit-schedule" data-id="${s.id}" style="font-size:11px;padding:3px 10px;margin-right:4px;">수정</button>
+        ${canManageSchedule ? `<button class="btn-secondary btn-edit-schedule" data-id="${s.id}" style="font-size:11px;padding:3px 10px;margin-right:4px;">수정</button>` : ''}
         <button class="btn-primary btn-complete" data-id="${s.id}" style="font-size:11px;padding:3px 10px;margin-right:4px;">완료</button>
-        <button class="btn-secondary btn-cancel-schedule" data-id="${s.id}" style="font-size:11px;padding:3px 10px;">취소</button>
+        ${canManageSchedule ? `<button class="btn-secondary btn-cancel-schedule" data-id="${s.id}" style="font-size:11px;padding:3px 10px;">취소</button>` : ''}
       </td>
     </tr>
   `;
