@@ -133,7 +133,7 @@ function renderSettingsRefresh(staffGroups) {
   document.getElementById('staffList-senior').innerHTML = renderStaffList('senior', staffGroups.senior, isWriter);
   document.getElementById('staffList-lead').innerHTML = renderStaffList('lead', staffGroups.lead, isWriter);
   document.getElementById('staffList-office').innerHTML = renderStaffList('office', staffGroups.office, isWriter);
-  bindStaffEvents(staffGroups);
+  if (isWriter) bindStaffEvents(staffGroups);
 }
 
 function renderStaffList(key, members, isWriter = false) {
