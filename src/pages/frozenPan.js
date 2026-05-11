@@ -5,6 +5,7 @@ import {
 import { getTodayKST as getToday } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
+import { currentUserRole } from '../app.js';
 import { round2, breadToSilicon, breadToFrozenPan } from '../utils/number.js';
 import { showPromptModal, showConfirmModal } from '../utils/modal.js';
 import { recordActivity } from '../services/activityLogs.js';
@@ -1480,6 +1481,12 @@ async function confirmOrder(row, lots, staff) {
 }
 
 async function cancelOrder(row, lots, staff) {
+  // [권한 매트릭스] production은 발주 취소 불가
+  if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+    alert('발주 취소는 대표/사무실 계정만 가능합니다.');
+    return;
+  }
+
   const reason = await showPromptModal({
     title: '발주 취소',
     message: '취소 후에는 차감된 동결판 재고가 복원됩니다.',

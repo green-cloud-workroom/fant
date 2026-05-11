@@ -370,12 +370,6 @@ async function handleClosingClick() {
   const mode = btn.dataset.mode;
   const targetDate = btn.dataset.targetDate;
 
-  // 권한 체크
-  if (currentUserRole !== 'production') {
-    alert('마감은 생산실(QC) 계정에서만 가능합니다.');
-    return;
-  }
-
   if (mode === 'release') {
     showReleaseConfirmModal(targetDate);
     return;

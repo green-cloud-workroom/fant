@@ -1,4 +1,4 @@
-﻿import { db } from '../firebase.js';
+import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, setDoc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc, where
 } from 'firebase/firestore';
@@ -40,9 +40,9 @@ function getMeatLogTypeLabel(type) {
   const map = {
     frozenIncoming: '입고',
     frozenOut: '전처리로 출고',
-    processedIn: '전처리 입고',
-    processedOut: '소분으로 출고',
-    repackedIn: '소분 입고',
+    processedIn: '전처리',
+    processedOut: '재포장으로 출고',
+    repackedIn: '재포장',
     repackedOut: '출고',
     productionDeduct: '생산차감',
     productionRollback: '생산복원',
@@ -86,7 +86,7 @@ function renderMeatLayout() {
         <div class="tab-group">
           <button class="tab-btn ${currentTab === 'frozen' ? 'active' : ''}" data-tab="frozen">냉동창고</button>
           <button class="tab-btn ${currentTab === 'processed' ? 'active' : ''}" data-tab="processed">전처리</button>
-          <button class="tab-btn ${currentTab === 'repacked' ? 'active' : ''}" data-tab="repacked">소분</button>
+          <button class="tab-btn ${currentTab === 'repacked' ? 'active' : ''}" data-tab="repacked">재포장</button>
         </div>
       </div>
       <div id="tabContent"></div>
@@ -123,7 +123,7 @@ async function renderTab(tab) {
   }
 }
 
-// ?됰룞李쎄퀬 ??
+// 냉동창고 탭
 function renderFrozenTab(stocks, logs) {
   const tabContent = document.getElementById('tabContent');
   tabContent.innerHTML = `
@@ -134,7 +134,7 @@ function renderFrozenTab(stocks, logs) {
 
     <div class="form-section">
       <div class="section-header">
-        <span class="section-title">목록</span>
+        <span class="section-title">잔량</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -142,18 +142,18 @@ function renderFrozenTab(stocks, logs) {
             <tr>
               <th>원육명</th>
               <th>작업일</th>
-              <th>용량</th>
+              <th>잔량</th>
               <th>수동조정</th>
             </tr>
           </thead>
           <tbody>
-            ${stocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">?깅줉???ш퀬 ?놁쓬</td></tr>` :
+            ${stocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">등록된 재고 없음</td></tr>` :
               stocks.map(s => `
                 <tr>
                   <td>${s.meatNameSnapshot}</td>
                   <td>${s.incomingDate || '-'}</td>
                   <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(2)}kg</td>
-                  <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">議곗젙</button></td>
+                  <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
                 </tr>
               `).join('')}
           </tbody>
@@ -163,22 +163,22 @@ function renderFrozenTab(stocks, logs) {
 
     <div class="form-section">
       <div class="section-header">
-        <span class="section-title">?대젰</span>
+        <span class="section-title">이력</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
-              <th>?좎쭨</th>
-              <th>?먮즺紐?/th>
-              <th>援щ텇</th>
-              <th>?섎웾</th>
-              <th>?대떦??/th>
-              <th>?ъ쑀</th>
+              <th>날짜</th>
+              <th>원료명</th>
+              <th>구분</th>
+              <th>수량</th>
+              <th>담당자</th>
+              <th>사유</th>
             </tr>
           </thead>
           <tbody>
-            ${logs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">?대젰 ?놁쓬</td></tr>` :
+            ${logs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
               logs.map(l => `
                 <tr>
                   <td>${formatMeatLogTimestamp(l.timestamp)}</td>
@@ -198,7 +198,7 @@ function renderFrozenTab(stocks, logs) {
   document.getElementById('btnAddFrozen').addEventListener('click', showAddFrozenModal);
   document.getElementById('btnMeatTypes').addEventListener('click', () => {
     if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
-      alert('?먯쑁 醫낅쪟 愿由щ뒗 ????щТ??怨꾩젙留?媛?ν빀?덈떎.');
+      alert('원육 종류 관리는 대표/사무실 계정만 가능합니다.');
       return;
     }
     showMeatTypesModal();
@@ -208,7 +208,7 @@ function renderFrozenTab(stocks, logs) {
   });
 }
 
-// ?꾩쿂由???
+// 전처리 탭
 function renderProcessedTab(stocks, logs) {
   const tabContent = document.getElementById('tabContent');
   tabContent.innerHTML = `
@@ -218,26 +218,26 @@ function renderProcessedTab(stocks, logs) {
 
     <div class="form-section">
       <div class="section-header">
-        <span class="section-title">목록</span>
+        <span class="section-title">잔량</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
-              <th>?먯쑁紐?/th>
-              <th>?묒뾽??/th>
-              <th>?붾웾</th>
-              <th>?섎룞議곗젙</th>
+              <th>원육명</th>
+              <th>작업일</th>
+              <th>잔량</th>
+              <th>수동조정</th>
             </tr>
           </thead>
           <tbody>
-            ${stocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">?깅줉???꾩쿂由??ш퀬 ?놁쓬</td></tr>` :
+            ${stocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">등록된 전처리 재고 없음</td></tr>` :
               stocks.map(s => `
                 <tr style="background:${s.batchColor || 'white'}11">
                   <td>${s.meatNameSnapshot}</td>
                   <td>${s.processedDate || '-'}</td>
                   <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(2)}kg</td>
-                  <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">議곗젙</button></td>
+                  <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
                 </tr>
               `).join('')}
           </tbody>
@@ -247,22 +247,22 @@ function renderProcessedTab(stocks, logs) {
 
     <div class="form-section">
       <div class="section-header">
-        <span class="section-title">?대젰</span>
+        <span class="section-title">이력</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
-              <th>?좎쭨</th>
-              <th>?먮즺紐?/th>
-              <th>援щ텇</th>
-              <th>?섎웾</th>
-              <th>?대떦??/th>
-              <th>?ъ쑀</th>
+              <th>날짜</th>
+              <th>원료명</th>
+              <th>구분</th>
+              <th>수량</th>
+              <th>담당자</th>
+              <th>사유</th>
             </tr>
           </thead>
           <tbody>
-            ${logs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">?대젰 ?놁쓬</td></tr>` :
+            ${logs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
               logs.map(l => `
                 <tr>
                   <td>${formatMeatLogTimestamp(l.timestamp)}</td>
@@ -285,36 +285,36 @@ function renderProcessedTab(stocks, logs) {
   });
 }
 
-// ?ы룷????
+// 재포장 탭
 function renderRepackedTab(stocks, logs) {
   const tabContent = document.getElementById('tabContent');
   tabContent.innerHTML = `
     <div style="display:flex;gap:8px;margin-bottom:16px;">
-      <button class="btn-primary" id="btnAddRepacked">+ 소분 등록</button>
+      <button class="btn-primary" id="btnAddRepacked">+ 재포장 등록</button>
     </div>
 
     <div class="form-section">
       <div class="section-header">
-        <span class="section-title">목록</span>
+        <span class="section-title">잔량</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
-              <th>?먯쑁紐?/th>
-              <th>?묒뾽??/th>
-              <th>?붾웾</th>
-              <th>?섎룞議곗젙</th>
+              <th>원육명</th>
+              <th>작업일</th>
+              <th>잔량</th>
+              <th>수동조정</th>
             </tr>
           </thead>
           <tbody>
-            ${stocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">?깅줉???ы룷???ш퀬 ?놁쓬</td></tr>` :
+            ${stocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">등록된 재포장 재고 없음</td></tr>` :
               stocks.map(s => `
                 <tr style="background:${s.batchColor || 'white'}11">
                   <td>${s.meatNameSnapshot}</td>
                   <td>${s.repackedDate || '-'}</td>
                   <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(2)}kg</td>
-                  <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">議곗젙</button></td>
+                  <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
                 </tr>
               `).join('')}
           </tbody>
@@ -324,22 +324,22 @@ function renderRepackedTab(stocks, logs) {
 
     <div class="form-section">
       <div class="section-header">
-        <span class="section-title">?대젰</span>
+        <span class="section-title">이력</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
-              <th>?좎쭨</th>
-              <th>?먮즺紐?/th>
-              <th>援щ텇</th>
-              <th>?섎웾</th>
-              <th>?대떦??/th>
-              <th>?ъ쑀</th>
+              <th>날짜</th>
+              <th>원료명</th>
+              <th>구분</th>
+              <th>수량</th>
+              <th>담당자</th>
+              <th>사유</th>
             </tr>
           </thead>
           <tbody>
-            ${logs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">?대젰 ?놁쓬</td></tr>` :
+            ${logs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
               logs.map(l => `
                 <tr>
                   <td>${formatMeatLogTimestamp(l.timestamp)}</td>
@@ -362,24 +362,24 @@ function renderRepackedTab(stocks, logs) {
   });
 }
 
-// ?먯쑁 ?낃퀬 ?깅줉 紐⑤떖
+// 원육 입고 등록 모달
 function showAddFrozenModal() {
   showModal(`
-    <h3 class="modal-title">?먯쑁 ?낃퀬 ?깅줉</h3>
+    <h3 class="modal-title">원육 입고 등록</h3>
     <div class="form-group">
-      <label>?먯쑁 醫낅쪟 *</label>
+      <label>원육 종류 *</label>
       <select id="m_meatType">
-        <option value="">?좏깮</option>
+        <option value="">선택</option>
         ${meatTypes.map(m => `<option value="${m.id}" data-weight="${m.defaultUnitWeightG}">${m.name}</option>`).join('')}
       </select>
     </div>
     <div class="form-row">
       <div class="form-group">
-        <label>以묐웾 *</label>
-        <input type="number" id="m_weight" placeholder="以묐웾" />
+        <label>중량 *</label>
+        <input type="number" id="m_weight" placeholder="중량" />
       </div>
       <div class="form-group">
-        <label>?⑥쐞</label>
+        <label>단위</label>
         <select id="m_unit">
           <option value="kg">kg</option>
           <option value="g">g</option>
@@ -387,31 +387,27 @@ function showAddFrozenModal() {
       </div>
     </div>
     <div class="form-group">
-      <label>?낃퀬??/label>
+      <label>입고일</label>
       <input type="date" id="m_date" value="${getToday()}" />
     </div>
     <div class="form-group">
-      <label>?대떦??/label>
+      <label>담당자</label>
       <select id="m_staff">
-        <option value="">?좏깮</option>
+        <option value="">선택</option>
         ${getStaffOptions(['lead', 'office'])}
       </select>
     </div>
     <div class="form-group">
-      <label>鍮꾧퀬</label>
-      <input type="text" id="m_note" placeholder="鍮꾧퀬" />
+      <label>비고</label>
+      <input type="text" id="m_note" placeholder="비고" />
     </div>
     <div class="modal-actions">
-      <button class="btn-secondary" onclick="closeModal()">痍⑥냼</button>
-      <button class="btn-primary" id="btnSaveFrozen">異붽?</button>
+      <button class="btn-secondary" onclick="closeModal()">취소</button>
+      <button class="btn-primary" id="btnSaveFrozen">추가</button>
     </div>
   `);
 
   document.getElementById('btnSaveFrozen').addEventListener('click', async () => {
-    if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
-      alert('?먯쑁 ?낃퀬 ?깅줉? ????щТ??怨꾩젙留?媛?ν빀?덈떎.');
-      return;
-    }
     const meatTypeId = document.getElementById('m_meatType').value;
     const meatTypeEl = document.getElementById('m_meatType');
     const meatName = meatTypeEl.options[meatTypeEl.selectedIndex]?.text;
@@ -422,11 +418,11 @@ function showAddFrozenModal() {
     const note = document.getElementById('m_note').value;
 
     if (!meatTypeId || !weight || !date) {
-      alert('?먯쑁 醫낅쪟, 以묐웾, ?좎쭨???꾩닔?낅땲??');
+      alert('원육 종류, 중량, 날짜는 필수입니다.');
       return;
     }
     if (!staff) {
-      alert('?대떦?먮? ?좏깮?댁＜?몄슂.');
+      alert('담당자를 선택해주세요.');
       return;
     }
     if (await blockIfClosed(date)) return;
@@ -461,13 +457,13 @@ function showAddFrozenModal() {
       reason: note || null,
     });
 
-    // [臾띠쓬 5A] ?щТ 濡쒓렇 諛쒗뻾 ???먯쑁 ?낃퀬 (?댁쁺?먭? 硫붿씤 ?붾㈃?먯꽌 蹂??異붿쟻 媛?ν븯寃?
+    // [묶음 5A] 사무 로그 발행 — 원육 입고 (운영자가 메인 화면에서 변동 추적 가능하게)
     await recordActivity({
       action: 'meat',
       subAction: 'incoming',
       date,
       staff,
-      message: `?먯쑁 ?낃퀬 (?됰룞李쎄퀬) ??${meatName} +${(qtyG/1000).toFixed(1)}kg / ?대떦: ${staff}`,
+      message: `원육 입고 (냉동창고) — ${meatName} +${(qtyG/1000).toFixed(1)}kg / 담당: ${staff}`,
       details: {
         meatStockId: stockRef.id,
         meatTypeId,
@@ -480,53 +476,53 @@ function showAddFrozenModal() {
 
     closeModal();
     renderTab('frozen');
-    alert('?낃퀬 ?깅줉 ?꾨즺!');
+    alert('입고 등록 완료!');
   });
 }
 
-// ?꾩쿂由??깅줉 紐⑤떖
+// 전처리 등록 모달
 function showAddProcessedModal() {
   showModal(`
-    <h3 class="modal-title">?꾩쿂由??깅줉</h3>
+    <h3 class="modal-title">전처리 등록</h3>
     <div class="form-group">
-      <label>?먯쑁 醫낅쪟 *</label>
+      <label>원육 종류 *</label>
       <select id="m_meatType">
-        <option value="">?좏깮</option>
+        <option value="">선택</option>
         ${meatTypes.map(m => `<option value="${m.id}" data-weight="${m.defaultUnitWeightG}">${m.name}</option>`).join('')}
       </select>
     </div>
     <div class="form-row">
       <div class="form-group">
-        <label>媛쒕떦 以묐웾(g) *</label>
+        <label>개당 중량(g) *</label>
         <input type="number" id="m_unitWeight" placeholder="g" />
       </div>
       <div class="form-group">
-        <label>媛쒖닔 *</label>
-        <input type="number" id="m_count" placeholder="媛쒖닔" />
+        <label>개수 *</label>
+        <input type="number" id="m_count" placeholder="개수" />
       </div>
     </div>
     <div class="form-group">
-      <label>?꾩쿂由ъ씪</label>
+      <label>전처리일</label>
       <input type="date" id="m_date" value="${getToday()}" />
     </div>
     <div class="form-group">
-      <label>?대떦??/label>
+      <label>담당자</label>
       <select id="m_staff">
-        <option value="">?좏깮</option>
+        <option value="">선택</option>
         ${getStaffOptions(['lead', 'office'])}
       </select>
     </div>
     <div class="form-group">
-      <label>鍮꾧퀬</label>
-      <input type="text" id="m_note" placeholder="鍮꾧퀬" />
+      <label>비고</label>
+      <input type="text" id="m_note" placeholder="비고" />
     </div>
     <div class="modal-actions">
-      <button class="btn-secondary" onclick="closeModal()">痍⑥냼</button>
-      <button class="btn-primary" id="btnSaveProcessed">異붽?</button>
+      <button class="btn-secondary" onclick="closeModal()">취소</button>
+      <button class="btn-primary" id="btnSaveProcessed">추가</button>
     </div>
   `);
 
-  // ?먯쑁 ?좏깮 ??湲곕낯 媛쒕떦以묐웾 ?먮룞 ?명똿
+  // 원육 선택 시 기본 개당중량 자동 세팅
   document.getElementById('m_meatType').addEventListener('change', (e) => {
     const opt = e.target.options[e.target.selectedIndex];
     const defaultWeight = opt.dataset.weight;
@@ -544,18 +540,18 @@ function showAddProcessedModal() {
     const note = document.getElementById('m_note').value;
 
     if (!meatTypeId || !unitWeight || !count || !date) {
-      alert('?먯쑁 醫낅쪟, 媛쒕떦 以묐웾, 媛쒖닔, ?좎쭨???꾩닔?낅땲??');
+      alert('원육 종류, 개당 중량, 개수, 날짜는 필수입니다.');
       return;
     }
     if (!staff) {
-      alert('?대떦?먮? ?좏깮?댁＜?몄슂.');
+      alert('담당자를 선택해주세요.');
       return;
     }
     if (await blockIfClosed(date)) return;
 
     const totalG = unitWeight * count;
 
-    // ?됰룞李쎄퀬 ?붾웾 ?뺤씤 (FIFO ?쒖꽌: incomingDate ?ㅻ쫫李⑥닚)
+    // 냉동창고 잔량 확인 (FIFO 순서: incomingDate 오름차순)
     const allFrozen = await loadMeatStocks('frozen');
     const candidates = allFrozen
       .filter(s => s.meatTypeId === meatTypeId && s.remaining > 0)
@@ -563,14 +559,14 @@ function showAddProcessedModal() {
 
     const totalAvailable = candidates.reduce((sum, s) => sum + s.remaining, 0);
     if (totalAvailable < totalG) {
-      alert(`?됰룞李쎄퀬 ?붾웾??遺議깊빀?덈떎.\n${meatName}: ?꾩슂 ${(totalG/1000).toFixed(1)}kg / ?꾩옱 ${(totalAvailable/1000).toFixed(1)}kg`);
+      alert(`냉동창고 잔량이 부족합니다.\n${meatName}: 필요 ${(totalG/1000).toFixed(1)}kg / 현재 ${(totalAvailable/1000).toFixed(1)}kg`);
       return;
     }
 
     const batchId = Date.now().toString();
     const batchColor = getRandomColor();
 
-    // ?됰룞李쎄퀬 FIFO 李④컧 + frozenOut 濡쒓렇
+    // 냉동창고 FIFO 차감 + frozenOut 로그
     let remainingToDeduct = totalG;
     for (const lot of candidates) {
       if (remainingToDeduct <= 0) break;
@@ -594,14 +590,14 @@ function showAddProcessedModal() {
         before: lot.remaining,
         after: newRemaining,
         staff,
-        reason: '?꾩쿂由??깅줉 ?먮룞李④컧',
+        reason: '전처리 등록 자동차감',
         batchId,
       });
 
       remainingToDeduct -= deduct;
     }
 
-    // ?꾩쿂由??좉퇋 ??異붽?
+    // 전처리 신규 행 추가
     const newStockRef = await addDoc(collection(db, 'meatStocks'), {
       meatTypeId,
       meatNameSnapshot: meatName,
@@ -638,49 +634,49 @@ function showAddProcessedModal() {
 
     closeModal();
     renderTab('processed');
-    alert('?꾩쿂由??깅줉 ?꾨즺!');
+    alert('전처리 등록 완료!');
   });
 }
 
-// ?ы룷???깅줉 紐⑤떖
+// 재포장 등록 모달
 function showAddRepackedModal() {
   showModal(`
-    <h3 class="modal-title">?ы룷???깅줉</h3>
+    <h3 class="modal-title">재포장 등록</h3>
     <div class="form-group">
-      <label>?먯쑁 醫낅쪟 *</label>
+      <label>원육 종류 *</label>
       <select id="m_meatType">
-        <option value="">?좏깮</option>
+        <option value="">선택</option>
         ${meatTypes.map(m => `<option value="${m.id}" data-weight="${m.defaultUnitWeightG}">${m.name}</option>`).join('')}
       </select>
     </div>
     <div class="form-row">
       <div class="form-group">
-        <label>媛쒕떦 以묐웾(g) *</label>
+        <label>개당 중량(g) *</label>
         <input type="number" id="m_unitWeight" placeholder="g" />
       </div>
       <div class="form-group">
-        <label>媛쒖닔 *</label>
-        <input type="number" id="m_count" placeholder="媛쒖닔" />
+        <label>개수 *</label>
+        <input type="number" id="m_count" placeholder="개수" />
       </div>
     </div>
     <div class="form-group">
-      <label>?ы룷?μ씪</label>
+      <label>재포장일</label>
       <input type="date" id="m_date" value="${getToday()}" />
     </div>
     <div class="form-group">
-      <label>?대떦??/label>
+      <label>담당자</label>
       <select id="m_staff">
-        <option value="">?좏깮</option>
+        <option value="">선택</option>
         ${getStaffOptions(['lead', 'office'])}
       </select>
     </div>
     <div class="form-group">
-      <label>鍮꾧퀬</label>
-      <input type="text" id="m_note" placeholder="鍮꾧퀬" />
+      <label>비고</label>
+      <input type="text" id="m_note" placeholder="비고" />
     </div>
     <div class="modal-actions">
-      <button class="btn-secondary" onclick="closeModal()">痍⑥냼</button>
-      <button class="btn-primary" id="btnSaveRepacked">異붽?</button>
+      <button class="btn-secondary" onclick="closeModal()">취소</button>
+      <button class="btn-primary" id="btnSaveRepacked">추가</button>
     </div>
   `);
 
@@ -701,26 +697,26 @@ function showAddRepackedModal() {
     const note = document.getElementById('m_note').value;
 
     if (!meatTypeId || !unitWeight || !count || !date) {
-      alert('?먯쑁 醫낅쪟, 媛쒕떦 以묐웾, 媛쒖닔, ?좎쭨???꾩닔?낅땲??');
+      alert('원육 종류, 개당 중량, 개수, 날짜는 필수입니다.');
       return;
     }
     if (!staff) {
-      alert('?대떦?먮? ?좏깮?댁＜?몄슂.');
+      alert('담당자를 선택해주세요.');
       return;
     }
     if (await blockIfClosed(date)) return;
 
     const totalG = unitWeight * count;
 
-    // 媛숈? ?먯쑁 ?쒖꽦 ?ы룷????以묐났 李⑤떒 (spec 9????)
+    // 같은 원육 활성 재포장 행 중복 차단 (spec 9절 탭3)
     const allRepacked = await loadMeatStocks('repacked');
     const existingActive = allRepacked.find(s => s.meatTypeId === meatTypeId && s.remaining > 0);
     if (existingActive) {
-      alert(`媛숈? ?먯쑁???ы룷???됱씠 ?대? 議댁옱?⑸땲??\n${meatName}: 湲곗〈 ?붾웾 ${(existingActive.remaining/1000).toFixed(1)}kg\n湲곗〈 ?ы룷?μ쓣 紐⑤몢 ?ъ슜?????깅줉?섏꽭??`);
+      alert(`같은 원육의 재포장 행이 이미 존재합니다.\n${meatName}: 기존 잔량 ${(existingActive.remaining/1000).toFixed(1)}kg\n기존 재포장을 모두 사용한 후 등록하세요.`);
       return;
     }
 
-    // ?꾩쿂由??붾웾 ?뺤씤 (FIFO ?쒖꽌: processedDate ?ㅻ쫫李⑥닚)
+    // 전처리 잔량 확인 (FIFO 순서: processedDate 오름차순)
     const allProcessed = await loadMeatStocks('processed');
     const candidates = allProcessed
       .filter(s => s.meatTypeId === meatTypeId && s.remaining > 0)
@@ -728,14 +724,14 @@ function showAddRepackedModal() {
 
     const totalAvailable = candidates.reduce((sum, s) => sum + s.remaining, 0);
     if (totalAvailable < totalG) {
-      alert(`?꾩쿂由??붾웾??遺議깊빀?덈떎.\n${meatName}: ?꾩슂 ${(totalG/1000).toFixed(1)}kg / ?꾩옱 ${(totalAvailable/1000).toFixed(1)}kg`);
+      alert(`전처리 잔량이 부족합니다.\n${meatName}: 필요 ${(totalG/1000).toFixed(1)}kg / 현재 ${(totalAvailable/1000).toFixed(1)}kg`);
       return;
     }
 
     const batchId = Date.now().toString();
     const batchColor = getRandomColor();
 
-    // ?꾩쿂由?FIFO 李④컧 + processedOut 濡쒓렇
+    // 전처리 FIFO 차감 + processedOut 로그
     let remainingToDeduct = totalG;
     for (const lot of candidates) {
       if (remainingToDeduct <= 0) break;
@@ -759,14 +755,14 @@ function showAddRepackedModal() {
         before: lot.remaining,
         after: newRemaining,
         staff,
-        reason: '?ы룷???깅줉 ?먮룞李④컧',
+        reason: '재포장 등록 자동차감',
         batchId,
       });
 
       remainingToDeduct -= deduct;
     }
 
-    // ?ы룷???좉퇋 ??異붽?
+    // 재포장 신규 행 추가
     const newStockRef = await addDoc(collection(db, 'meatStocks'), {
       meatTypeId,
       meatNameSnapshot: meatName,
@@ -803,34 +799,34 @@ function showAddRepackedModal() {
 
     closeModal();
     renderTab('repacked');
-    alert('?ы룷???깅줉 ?꾨즺!');
+    alert('재포장 등록 완료!');
   });
 }
 
-// ?섎룞 議곗젙 紐⑤떖
+// 수동 조정 모달
 function showAdjustModal(id, name, remaining) {
   showModal(`
-    <h3 class="modal-title">?섎룞 ?ш퀬 議곗젙 ??${name}</h3>
-    <p style="font-size:12px;color:#888;margin-bottom:16px;">湲곗〈 ?붾웾: <strong>${(remaining/1000).toFixed(1)}kg</strong> (${remaining}g)</p>
+    <h3 class="modal-title">수동 재고 조정 — ${name}</h3>
+    <p style="font-size:12px;color:#888;margin-bottom:16px;">기존 잔량: <strong>${(remaining/1000).toFixed(1)}kg</strong> (${remaining}g)</p>
     <div class="form-group">
-      <label>?ㅼ젣 ?붾웾 (g) *</label>
-      <input type="number" id="m_actualRemaining" placeholder="?ㅼ젣 ?붾웾(g) ?낅젰" min="0" step="1" />
-      <p style="font-size:11px;color:#aaa;margin-top:4px;">?ㅼ젣濡??⑥븘?덈뒗 ?묒쓣 g ?⑥쐞濡??낅젰?섏꽭?? 0 ?댁긽留?媛??</p>
+      <label>실제 잔량 (g) *</label>
+      <input type="number" id="m_actualRemaining" placeholder="실제 잔량(g) 입력" min="0" step="1" />
+      <p style="font-size:11px;color:#aaa;margin-top:4px;">실제로 남아있는 양을 g 단위로 입력하세요. 0 이상만 가능.</p>
     </div>
     <div class="form-group">
-      <label>?ъ쑀 *</label>
-      <input type="text" id="m_adjustReason" placeholder="議곗젙 ?ъ쑀 ?낅젰" />
+      <label>사유 *</label>
+      <input type="text" id="m_adjustReason" placeholder="조정 사유 입력" />
     </div>
     <div class="form-group">
-      <label>?대떦??*</label>
+      <label>담당자 *</label>
       <select id="m_staff">
-        <option value="">?좏깮</option>
+        <option value="">선택</option>
         ${getStaffOptions(['lead', 'office'])}
       </select>
     </div>
     <div class="modal-actions">
-      <button class="btn-secondary" onclick="closeModal()">痍⑥냼</button>
-      <button class="btn-primary" id="btnSaveAdjust">議곗젙</button>
+      <button class="btn-secondary" onclick="closeModal()">취소</button>
+      <button class="btn-primary" id="btnSaveAdjust">조정</button>
     </div>
   `);
 
@@ -840,28 +836,28 @@ function showAdjustModal(id, name, remaining) {
     const staff = document.getElementById('m_staff').value;
 
     if (inputVal === '' || isNaN(parseFloat(inputVal))) {
-      alert('?ㅼ젣 ?붾웾???낅젰?댁＜?몄슂.');
+      alert('실제 잔량을 입력해주세요.');
       return;
     }
     const newRemaining = parseFloat(inputVal);
     if (newRemaining < 0) {
-      alert('?ㅼ젣 ?붾웾? 0 ?댁긽?댁뼱???⑸땲??\n?붾웾???뚯닔媛 ?????놁뒿?덈떎.');
+      alert('실제 잔량은 0 이상이어야 합니다.\n잔량이 음수가 될 수 없습니다.');
       return;
     }
     if (!reason || !staff) {
-      alert('?ъ쑀? ?대떦?먮뒗 ?꾩닔?낅땲??');
+      alert('사유와 담당자는 필수입니다.');
       return;
     }
     const delta = newRemaining - remaining;
     if (delta === 0) {
-      alert('湲곗〈 ?붾웾怨??숈씪?⑸땲?? 蹂寃쏀븷 媛믪쓣 ?낅젰?댁＜?몄슂.');
+      alert('기존 잔량과 동일합니다. 변경할 값을 입력해주세요.');
       return;
     }
 
     const adjustDate = getToday();
     if (await blockIfClosed(adjustDate)) return;
 
-    // meatStocks 臾몄꽌?먯꽌 meatTypeId 媛?몄삤湲?(meatLogs 湲곕줉??
+    // meatStocks 문서에서 meatTypeId 가져오기 (meatLogs 기록용)
     const stockSnap = await getDoc(doc(db, 'meatStocks', id));
     const stockData = stockSnap.exists() ? stockSnap.data() : {};
     const meatTypeId = stockData.meatTypeId || null;
@@ -872,13 +868,13 @@ function showAdjustModal(id, name, remaining) {
       updatedAt: new Date(),
     });
 
-    const stageKor = currentTab === 'frozen' ? '냉동창고' : currentTab === 'processed' ? '전처리' : '소분';
+    const stageKor = currentTab === 'frozen' ? '냉동창고' : currentTab === 'processed' ? '전처리' : '재포장';
     await recordActivity({
       action: 'meat',
       subAction: 'adjust',
       date: adjustDate,
       staff,
-      message: `?먯쑁 ?섎룞議곗젙 (${stageKor}) ??${name} ${(remaining/1000).toFixed(1)}kg ??${(newRemaining/1000).toFixed(1)}kg / ?ъ쑀: ${reason} / ?대떦: ${staff}`,
+      message: `원육 수동조정 (${stageKor}) — ${name} ${(remaining/1000).toFixed(1)}kg → ${(newRemaining/1000).toFixed(1)}kg / 사유: ${reason} / 담당: ${staff}`,
       details: {
         meatStockId: id,
         meatName: name,
@@ -906,11 +902,11 @@ function showAdjustModal(id, name, remaining) {
 
     closeModal();
     renderTab(currentTab);
-    alert('議곗젙 ?꾨즺!');
+    alert('조정 완료!');
   });
 }
 
-// ?먯쑁 醫낅쪟 愿由?紐⑤떖
+// 원육 종류 관리 모달
 function showMeatTypesModal() {
   showModal(`
     <h3 class="modal-title">원육 종류 관리</h3>
@@ -984,7 +980,10 @@ function showMeatTypesModal() {
       const id = e.target.dataset.id;
       const showInStats = e.target.checked;
       try {
-        await updateDoc(doc(db, 'meatTypes', id), { showInStats, updatedAt: new Date() });
+        await updateDoc(doc(db, 'meatTypes', id), {
+          showInStats,
+          updatedAt: new Date(),
+        });
         const target = meatTypes.find(m => m.id === id);
         if (target) target.showInStats = showInStats;
       } catch (err) {
@@ -1018,7 +1017,8 @@ function showMeatTypesModal() {
     showMeatTypesModal();
   });
 }
-// ?좏떥
+
+// 유틸
 
 function getRandomColor() {
   const colors = ['#e8f4ea', '#e8eef8', '#fef0e8', '#f0e8fe', '#fff0e8', '#e8f8f4'];
@@ -1045,7 +1045,7 @@ function getStaffOptions(groups) {
   return options;
 }
 
-// 紐⑤떖
+// 모달
 function showModal(html) {
   const existing = document.getElementById('modalOverlay');
   if (existing) existing.remove();
@@ -1057,7 +1057,7 @@ function showModal(html) {
   document.body.appendChild(overlay);
 
   overlay.addEventListener('click', (e) => {
-    // ?몃? ?대┃ ?ロ옒 鍮꾪솢?깊솕 (臾띠쓬 1F: 紐⑤떖 ?щ씪吏??댁뒋 ?고쉶)
+    // 외부 클릭 닫힘 비활성화 (묶음 1F: 모달 사라짐 이슈 우회)
   });
 
   loadStaffCache();

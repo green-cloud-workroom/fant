@@ -186,6 +186,12 @@ async function showProductDetail(product) {
 
   document.querySelectorAll('.btn-del-row').forEach(btn => {
     btn.addEventListener('click', async () => {
+      // [권한 매트릭스 C4] production은 동결제품 입고 삭제 불가
+      if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+        alert('동결제품 입고 삭제는 대표/사무실 계정만 가능합니다.');
+        return;
+      }
+
       const __c = await showConfirmModal({ title:'동결제품 입고 삭제', message:'삭제하시겠습니까?\n차감된 봉투 재고가 복원됩니다.', confirmText:'삭제', danger:true }); if (!__c) return;
       const logId = btn.dataset.logid;
 
@@ -386,6 +392,12 @@ function showEditIncomingModal(product, log) {
 
     if (!newQty || newQty <= 0) { alert('수량은 1개 이상이어야 합니다.'); return; }
     if (await blockIfClosed(log.date)) return;
+
+    // [권한 매트릭스 C4] production은 동결제품 입고 수정 불가
+    if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+      alert('동결제품 입고 수정은 대표/사무실 계정만 가능합니다.');
+      return;
+    }
 
     const oldQty = log.qty || 0;
     const oldDeducted = log.deductedBagQty || 0;

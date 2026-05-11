@@ -1,8 +1,7 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy
+  collection, getDocs, doc, setDoc, updateDoc, addDoc, query, orderBy
 } from 'firebase/firestore';
-import { showConfirmModal } from '../utils/modal.js';
 
 let recipes = [];
 let selectedRecipeId = null;
@@ -16,7 +15,6 @@ async function loadMeatTypes() {
   const snap = await getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
-
 // [봉투 연동] 봉투 목록 로드 (drag-drop 순번 유지하려고 sortOrder 정렬, active만)
 async function loadBagTypes() {
   const q = query(collection(db, 'bagTypes'), orderBy('sortOrder'));
@@ -133,7 +131,6 @@ function showRecipeDetail(recipe) {
     <div class="detail-header">
       <span class="detail-title">${isNew ? '새 레시피' : getDisplayName(recipe)}</span>
       <div class="detail-actions">
-        ${!isNew ? `<button class="btn-danger" id="btnDeleteRecipe">삭제</button>` : ''}
         <button class="btn-primary" id="btnSaveRecipe">저장</button>
       </div>
     </div>
@@ -267,9 +264,6 @@ function showRecipeDetail(recipe) {
   document.getElementById('btnSaveRecipe').addEventListener('click', () => saveRecipe(recipe?.id));
 
   // 삭제
-  if (!isNew) {
-    document.getElementById('btnDeleteRecipe').addEventListener('click', () => deleteRecipe(recipe.id));
-  }
 }
 
 function renderIngredientRows(ingredients) {
@@ -459,12 +453,4 @@ async function saveRecipe(id) {
   }
 
   alert('저장되었습니다.');
-}
-
-async function deleteRecipe(id) {
-  const __c = await showConfirmModal({ title:'레시피 삭제', message:'레시피를 삭제하시겠습니까?\n(비활성화를 권장합니다)', confirmText:'삭제', danger:true }); if (!__c) return;
-  await deleteDoc(doc(db, 'recipes', id));
-  recipes = await loadRecipes();
-  selectedRecipeId = null;
-  renderRecipeLayout();
 }

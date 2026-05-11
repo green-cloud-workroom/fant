@@ -535,6 +535,9 @@ function escapeHtmlMain(s) {
     '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;',
   }[c]));
 }
+function formatNumberMain(n) {
+  return Number(n || 0).toLocaleString('ko-KR');
+}
 function truncateMain(s, n) {
   if (!s) return '';
   return s.length > n ? s.substring(0, n) + '…' : s;
@@ -704,6 +707,7 @@ const LOG_CATEGORY_OVERRIDE = {
 const REQUIRES_ACK_KEYS = new Set([
   'scheduleDue:trigger',     // 입고 예정일 도래 (자동 — 6C-3)
   'autoRepack:trigger',      // 생산 자동 재포장 (자동 — 6C-3)
+  'autoRepack:diff',         // 자동 재포장 차이 발생 로그
   'minStock:alert',          // 최소재고 미달 (자동 — 6C-3)
   'frozenStockLow:alert',    // 냉동창고 잔량 부족 (자동 — 6C-3)
   'schedule:completeDiff',   // [묶음 6C-2] 입고 완료 차이 있음
@@ -934,6 +938,18 @@ function bindLogActions() {
 // [확인] 단건
 async function ackOneLog(logId) {
   try {
+    const logSnap = await getDoc(doc(db, 'activityLogs', logId));
+    if (!logSnap.exists()) {
+      alert('로그를 찾을 수 없습니다.');
+      return;
+    }
+
+    const log = { id: logId, ...logSnap.data() };
+    if (log.action === 'autoRepack' && log.subAction === 'trigger' && log.acknowledged !== true) {
+      await showAutoRepackConfirmModal(logId, log);
+      return;
+    }
+
     await acknowledgeLog(logId, getStaffLabelFromRole());
     await loadCombinedLogs();
     refreshLogPanels();
@@ -941,6 +957,189 @@ async function ackOneLog(logId) {
     console.error('[6C-1] 확인 처리 실패:', err);
     alert('확인 처리 중 오류가 발생했습니다.');
   }
+}
+
+// ============================================================
+// [묶음 9 #9] 자동 재포장 확인 모달 + 차이 처리
+// ============================================================
+
+async function getLeadStaffOptionNames() {
+  const staffSnap = await getDoc(doc(db, 'staffGroups', 'lead'));
+  const members = staffSnap.exists() ? staffSnap.data().members || [] : [];
+  return members
+    .filter(m => m && m.active !== false && m.name)
+    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+    .map(m => m.name);
+}
+
+async function showAutoRepackConfirmModal(logId, log) {
+  if (currentUserRole === 'office') {
+    alert('자동 재포장 확인은 생산실/대표 계정에서만 처리할 수 있습니다.');
+    return;
+  }
+
+  const d = log.details || {};
+  const meatName = d.meatName || '?';
+  const surplusG = Number(d.surplusG) || 0;
+  const processedUnitWeightG = Number(d.processedUnitWeightG) || 0;
+  const repackedStockId = d.repackedStockId;
+  const mode = d.mode;
+
+  if (!repackedStockId || !processedUnitWeightG) {
+    alert('자동 재포장 로그 데이터가 손상되어 처리할 수 없습니다. (운영자에게 문의)');
+    return;
+  }
+
+  const refCount = surplusG / processedUnitWeightG;
+  const refCountDisplay = Number.isInteger(refCount)
+    ? `${refCount}개`
+    : `약 ${refCount.toFixed(2)}개`;
+  const staffOptions = await getLeadStaffOptionNames();
+
+  if (staffOptions.length === 0) {
+    alert('주임 그룹 담당자가 등록되어 있지 않습니다. 설정에서 추가해주세요.');
+    return;
+  }
+
+  const html = `
+    <div style="padding:16px; min-width:440px; max-width:560px;">
+      <h3 style="margin:0 0 12px;">자동 재포장 확인 — ${escapeHtmlMain(meatName)}</h3>
+      <div style="background:#f5f5f5; padding:12px; border-radius:4px; margin-bottom:16px; line-height:1.7;">
+        <div><b>시스템 자동 재포장 수량 (수정 불가)</b></div>
+        <div style="font-size:15px; font-weight:600; color:#1f2937;">${formatNumberMain(surplusG)}g (${(surplusG / 1000).toFixed(2)}kg)</div>
+        <div style="font-size:13px; color:#6b7280; margin-top:4px;">
+          단위중량 ${formatNumberMain(processedUnitWeightG)}g 기준 ${refCountDisplay}<br>
+          모드: ${mode === 'merged' ? '기존 lot 합산' : '신규 lot 생성'}
+        </div>
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="display:block; margin-bottom:4px;"><b>실제 재포장 수량 (개)</b></label>
+        <input type="number" id="ar-actual-count" min="0" step="1" value="" placeholder="실제 만든 개수 입력" style="width:100%; padding:8px; box-sizing:border-box;">
+        <div id="ar-actual-g" style="font-size:13px; color:#6b7280; margin-top:4px;">→ 개수 입력 시 환산 g 자동 표시</div>
+      </div>
+      <div style="margin-bottom:16px;">
+        <label style="display:block; margin-bottom:4px;"><b>실제 재포장 담당자 (주임)</b></label>
+        <select id="ar-staff" style="width:100%; padding:8px; box-sizing:border-box;">
+          <option value="">담당자 선택...</option>
+          ${staffOptions.map(s => `<option value="${escapeHtmlMain(s)}">${escapeHtmlMain(s)}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button id="ar-cancel" style="padding:8px 16px; background:#e5e7eb; border:none; border-radius:4px; cursor:pointer;">취소</button>
+        <button id="ar-confirm" style="padding:8px 16px; background:#2563eb; color:white; border:none; border-radius:4px; cursor:pointer;">확인</button>
+      </div>
+    </div>
+  `;
+
+  showModal(html);
+
+  const inputEl = document.getElementById('ar-actual-count');
+  const gDisplay = document.getElementById('ar-actual-g');
+
+  inputEl.addEventListener('input', () => {
+    const cnt = parseInt(inputEl.value, 10);
+    if (isNaN(cnt) || cnt < 0) {
+      gDisplay.textContent = '→ 개수 입력 시 환산 g 자동 표시';
+      return;
+    }
+    const actualG = cnt * processedUnitWeightG;
+    const diffG = actualG - surplusG;
+    const diffText = diffG === 0 ? ' (시스템과 동일)' : ` (차이 ${diffG > 0 ? '+' : ''}${formatNumberMain(diffG)}g)`;
+    gDisplay.textContent = `→ ${formatNumberMain(actualG)}g (${(actualG / 1000).toFixed(2)}kg)${diffText}`;
+  });
+
+  document.getElementById('ar-cancel').addEventListener('click', () => {
+    closeModal();
+  });
+
+  document.getElementById('ar-confirm').addEventListener('click', async () => {
+    const actualCount = parseInt(inputEl.value, 10);
+    const staffName = document.getElementById('ar-staff').value;
+
+    if (!staffName) {
+      alert('담당자를 선택해주세요.');
+      return;
+    }
+    if (isNaN(actualCount) || actualCount < 0) {
+      alert('실제 수량은 0 이상의 정수여야 합니다.');
+      return;
+    }
+    if (actualCount === 0) {
+      const ok = await showConfirmModal({
+        title: '실제 재포장 수량 0개',
+        message: '실제 재포장 수량이 0개입니다.\n자동 재포장 lot을 0g으로 만들고 마감 처리합니다.\n진행할까요?',
+        confirmText: '진행',
+        cancelText: '취소',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+
+    closeModal();
+    try {
+      await processAutoRepackConfirm({ logId, log, actualCount, surplusG, processedUnitWeightG, staffName });
+    } catch (err) {
+      console.error('[묶음 9 #9] 자동 재포장 확인 처리 실패:', err);
+      alert('확인 처리 중 오류가 발생했습니다: ' + (err.message || err));
+    }
+  });
+}
+
+async function processAutoRepackConfirm({ logId, log, actualCount, surplusG, processedUnitWeightG, staffName }) {
+  const d = log.details || {};
+  const repackedStockId = d.repackedStockId;
+  const meatTypeId = d.meatTypeId;
+  const meatName = d.meatName;
+  const today = getToday();
+  const actualG = actualCount * processedUnitWeightG;
+  const diffG = actualG - surplusG;
+
+  if (diffG === 0) {
+    await acknowledgeLog(logId, staffName);
+    await loadCombinedLogs();
+    refreshLogPanels();
+    return;
+  }
+
+  const lotRef = doc(db, 'meatStocks', repackedStockId);
+  const lotSnap = await getDoc(lotRef);
+  if (!lotSnap.exists()) throw new Error('자동 재포장 lot 문서를 찾을 수 없습니다.');
+
+  const lot = lotSnap.data();
+  const currentRemaining = Number(lot.remaining) || 0;
+  const newRemaining = currentRemaining + diffG;
+  if (newRemaining < 0) {
+    throw new Error(`자동 재포장 lot 잔량이 음수가 됩니다 (현재 ${currentRemaining}g, 보정 ${diffG}g).`);
+  }
+
+  await updateDoc(lotRef, {
+    remaining: newRemaining,
+    closed: actualCount === 0 && newRemaining === 0,
+    updatedAt: new Date(),
+  });
+
+  await recordActivity({
+    action: 'autoRepack',
+    subAction: 'diff',
+    date: today,
+    staff: staffName,
+    message: `자동 재포장 차이 — ${meatName} 시스템 ${surplusG}g / 실제 ${actualG}g (${diffG > 0 ? '+' : ''}${diffG}g) — 담당: ${staffName}`,
+    details: {
+      meatTypeId,
+      meatName,
+      repackedStockId,
+      processedUnitWeightG,
+      systemG: surplusG,
+      actualCount,
+      actualG,
+      diffG,
+      sourceLogId: logId,
+    },
+  });
+
+  await acknowledgeLog(logId, staffName);
+  await loadCombinedLogs();
+  refreshLogPanels();
 }
 
 // [모두 확인] 섹션 — 확인 필수 제외, 일반 미확인만 일괄
@@ -1235,9 +1434,14 @@ function bindModalAckButtons() {
     btn.addEventListener('click', async () => {
       const logId = btn.dataset.logId;
       try {
+        const target = modalLogs.find(l => l.id === logId);
+        if (target && target.action === 'autoRepack' && target.subAction === 'trigger' && target.acknowledged !== true) {
+          await showAutoRepackConfirmModal(logId, target);
+          return;
+        }
+
         await acknowledgeLog(logId, getStaffLabelFromRole());
         // 모달 데이터 안에서 해당 로그도 갱신
-        const target = modalLogs.find(l => l.id === logId);
         if (target) {
           target.acknowledged = true;
           target.acknowledgedBy = getStaffLabelFromRole();
@@ -1546,10 +1750,6 @@ function renderQuickInfo(isCompleted) {
 
 async function handleTomorrowLoad() {
   const today = getToday();
-  if (currentUserRole !== 'production') {
-    alert('내일생산불러오기는 생산실 계정만 가능합니다.');
-    return;
-  }
   if (nextProductions.length === 0) {
     alert('다음 영업일에 등록된 생산이 없습니다.');
     return;
@@ -1690,8 +1890,26 @@ async function gatherTomorrowLoadBlockers(today) {
     }
   }
 
-  // 차단 4 (자동 재포장 확인 미완료) — 묶음 9에서 추가 예정
-  // TODO [묶음 9]: 자동 재포장 모달 구현 후 미확인 항목이 있으면 blockers.push
+  // 차단 4 — 자동 재포장 확인 미완료
+  const autoRepackSnap = await getDocs(query(
+    collection(db, 'activityLogs'),
+    where('date', '==', getToday()),
+    where('action', '==', 'autoRepack')
+  ));
+  const pendingAutoRepackLogs = autoRepackSnap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(log =>
+      (log.subAction === 'trigger' || log.subAction === 'diff') &&
+      log.acknowledged !== true
+    );
+
+  if (pendingAutoRepackLogs.length > 0) {
+    blockers.push({
+      kind: 'autoRepack',
+      text: `🔄 자동 재포장 확인 미완료 ${pendingAutoRepackLogs.length}건`,
+      jumpMenu: 'main',
+    });
+  }
 
   return blockers;
 }
@@ -2087,10 +2305,6 @@ async function executeProductionLoad(today, staffName) {
 }
 
 async function handleCancelCompletion() {
-  if (currentUserRole !== 'production') {
-    alert('내일생산불러오기 취소는 생산실 계정만 가능합니다.');
-    return;
-  }
   const __c = await showConfirmModal({ title:'내일생산불러오기 취소', message:'내일생산불러오기를 취소하시겠습니까?\n차감된 재고가 복원됩니다.', confirmText:'취소', danger:true }); if (!__c) return;
   const reason = await showPromptModal({
     title: '내일생산불러오기 취소',
@@ -2190,6 +2404,12 @@ async function handleCancelCompletion() {
 //   권한: 모든 role (admin + office + production) — 운영자 결정
 //   차단 발견 시: 롤백 완료 상태로 두고 함수 종료. 사용자가 차단 처리 후 [내일생산불러오기]로 재마감.
 async function handleRefreshCompletion() {
+  // [권한 매트릭스 E3] production은 메인 새로고침(ledger 롤백+재차감) 불가
+  if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+    alert('새로고침은 대표/사무실 계정만 가능합니다.');
+    return;
+  }
+
   if (completionDoc?.status !== 'completed') {
     alert('마감 상태에서만 새로고침이 가능합니다.');
     return;
