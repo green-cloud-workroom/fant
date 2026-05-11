@@ -111,7 +111,7 @@ function renderScheduleLayout(schedules) {
     </div>
   `;
 
-  document.getElementById('btnAddSchedule').addEventListener('click', showAddScheduleModal);
+  document.getElementById('btnAddSchedule').addEventListener('click', () => showScheduleModal());
   document.getElementById('btnToggleDone').addEventListener('click', () => {
     const section = document.getElementById('doneSection');
     showDone = !showDone;
@@ -124,6 +124,23 @@ function renderScheduleLayout(schedules) {
       const id = btn.dataset.id;
       const s = schedules.find(sc => sc.id === id);
       if (s) showCompleteModal(s);
+    });
+  });
+
+  document.querySelectorAll('.btn-edit-schedule').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+        alert('입고 예정 수정은 대표/사무실 계정만 가능합니다.');
+        return;
+      }
+      const id = btn.dataset.id;
+      const s = schedules.find(sc => sc.id === id);
+      if (!s) {
+        alert('입고 예정을 찾을 수 없습니다.');
+        return;
+      }
+      if (await blockIfClosed(s.date)) return;
+      showScheduleModal(s);
     });
   });
 
@@ -160,6 +177,7 @@ function renderScheduleRow(s, today) {
       <td>${s.orderMemo || '-'}</td>
       <td><span style="color:#e67e22;font-size:12px">⏳ 예정</span></td>
       <td style="white-space:nowrap">
+        <button class="btn-secondary btn-edit-schedule" data-id="${s.id}" style="font-size:11px;padding:3px 10px;margin-right:4px;">수정</button>
         <button class="btn-primary btn-complete" data-id="${s.id}" style="font-size:11px;padding:3px 10px;margin-right:4px;">완료</button>
         <button class="btn-secondary btn-cancel-schedule" data-id="${s.id}" style="font-size:11px;padding:3px 10px;">취소</button>
       </td>
@@ -191,19 +209,20 @@ function getTypeLabel(type) {
   return type === 'meat' ? '원육' : type === 'bag' ? '봉투' : '계란';
 }
 
-async function showAddScheduleModal() {
+async function showScheduleModal(editingSchedule = null) {
+  const isEdit = Boolean(editingSchedule);
   const meatTypes = await loadMeatTypes();
   const bagTypes = await loadBagTypes();
 
   showModal(`
-    <h3 class="modal-title">입고 예정 등록</h3>
+    <h3 class="modal-title">입고 예정 ${isEdit ? '수정' : '등록'}</h3>
     <div class="form-group">
       <label>예정일 *</label>
-      <input type="date" id="m_date" value="${getToday()}" />
+      <input type="date" id="m_date" value="${editingSchedule?.date || getToday()}" />
     </div>
     <div class="form-group">
       <label>구분 *</label>
-      <select id="m_type" onchange="updateScheduleItem()">
+      <select id="m_type" onchange="updateScheduleItem()" ${isEdit ? 'disabled' : ''}>
         <option value="">선택</option>
         <option value="meat">원육</option>
         <option value="bag">봉투</option>
@@ -212,14 +231,15 @@ async function showAddScheduleModal() {
     </div>
     <div class="form-group" id="itemSelectWrap" style="display:none;">
       <label>품목 *</label>
-      <select id="m_item">
+      <select id="m_item" ${isEdit ? 'disabled' : ''}>
         <option value="">선택</option>
       </select>
+      ${isEdit ? '<p style="margin:6px 0 0;color:#888;font-size:11px;">구분/품목 변경은 기존 항목 취소 후 새로 등록해주세요.</p>' : ''}
     </div>
     <div class="form-row">
       <div class="form-group">
         <label>발주수량 *</label>
-        <input type="number" id="m_qty" placeholder="수량" />
+        <input type="number" id="m_qty" placeholder="수량" value="${editingSchedule?.orderedQty ?? ''}" />
       </div>
       <div class="form-group">
         <label>단위</label>
@@ -238,11 +258,11 @@ async function showAddScheduleModal() {
     </div>
     <div class="form-group">
       <label>입고메모</label>
-      <input type="text" id="m_memo" placeholder="메모" />
+      <input type="text" id="m_memo" placeholder="메모" value="${escapeAttr(editingSchedule?.orderMemo || '')}" />
     </div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
-      <button class="btn-primary" id="btnSaveSchedule">등록</button>
+      <button class="btn-primary" id="btnSaveSchedule">${isEdit ? '수정' : '등록'}</button>
     </div>
   `);
 
@@ -284,13 +304,23 @@ async function showAddScheduleModal() {
     });
   };
 
+  if (isEdit) {
+    document.getElementById('m_type').value = editingSchedule.type || '';
+    window.updateScheduleItem();
+    if (editingSchedule.type !== 'egg') {
+      document.getElementById('m_item').value = editingSchedule.itemId || '';
+    }
+    document.getElementById('m_unit').value = editingSchedule.orderedUnit || '';
+    document.getElementById('m_staff').value = editingSchedule.orderStaffName || '';
+  }
+
   document.getElementById('btnSaveSchedule').addEventListener('click', async () => {
     if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
-      alert('입고 예정 등록은 대표/사무실 계정만 가능합니다.');
+      alert(`입고 예정 ${isEdit ? '수정' : '등록'}은 대표/사무실 계정만 가능합니다.`);
       return;
     }
     const date = document.getElementById('m_date').value;
-    const type = document.getElementById('m_type').value;
+    const type = isEdit ? editingSchedule.type : document.getElementById('m_type').value;
     const qty = parseFloat(document.getElementById('m_qty').value);
     const unit = document.getElementById('m_unit').value;
     const staff = document.getElementById('m_staff').value;
@@ -298,11 +328,15 @@ async function showAddScheduleModal() {
 
     if (!date || !type || !qty) { alert('날짜, 구분, 수량은 필수입니다.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
+    if (isEdit) {
+      if (await blockIfClosed(editingSchedule.date)) return;
+      if (date !== editingSchedule.date && await blockIfClosed(date)) return;
+    }
 
-    let itemId = null;
-    let itemName = '계란';
+    let itemId = isEdit ? (editingSchedule.itemId || null) : null;
+    let itemName = isEdit ? (editingSchedule.itemNameSnapshot || '계란') : '계란';
 
-    if (type !== 'egg') {
+    if (!isEdit && type !== 'egg') {
       const itemSelect = document.getElementById('m_item');
       itemId = itemSelect.value;
       const opt = itemSelect.options[itemSelect.selectedIndex];
@@ -314,6 +348,7 @@ async function showAddScheduleModal() {
     // (수정하려면 기존 항목을 취소하고 재등록해야 함)
     const existingSchedules = await loadSchedules();
     const duplicate = existingSchedules.find(s => {
+      if (isEdit && s.id === editingSchedule.id) return false;
       if (s.status !== 'scheduled') return false;
       if (s.date !== date) return false;
       if (s.type !== type) return false;
@@ -327,8 +362,56 @@ async function showAddScheduleModal() {
       alert(
         `이미 ${date}에 [${dupLabel}] 입고예정이 등록되어 있습니다.\n` +
         `(기존: ${duplicate.orderedQty}${duplicate.orderedUnit})\n\n` +
-        `수정하시려면 기존 항목을 먼저 취소한 뒤 다시 등록해주세요.`
+        `같은 날짜의 같은 품목은 중복 등록할 수 없습니다.`
       );
+      return;
+    }
+
+    if (isEdit) {
+      const before = {
+        date: editingSchedule.date,
+        orderedQty: editingSchedule.orderedQty,
+        orderedUnit: editingSchedule.orderedUnit,
+        orderStaffName: editingSchedule.orderStaffName || '',
+        orderMemo: editingSchedule.orderMemo || '',
+      };
+
+      await updateDoc(doc(db, 'schedules', editingSchedule.id), {
+        date,
+        orderedQty: qty,
+        orderedUnit: unit,
+        orderStaffName: staff,
+        orderMemo: memo,
+        updatedAt: new Date(),
+      });
+
+      const today = getToday();
+      await recordActivity({
+        action: 'schedule',
+        subAction: 'edit',
+        date: today,
+        staff,
+        message: `입고예정 수정 — ${itemName} ${before.orderedQty}${before.orderedUnit} → ${qty}${unit} (예정일 ${before.date} → ${date}) / 담당: ${staff}`,
+        details: {
+          scheduleId: editingSchedule.id,
+          type,
+          itemId,
+          itemName,
+          before,
+          after: {
+            date,
+            orderedQty: qty,
+            orderedUnit: unit,
+            orderStaffName: staff,
+            orderMemo: memo || '',
+          },
+        },
+      });
+
+      closeModal();
+      const newSchedules = await loadSchedules();
+      renderScheduleLayout(newSchedules);
+      alert('입고 예정 수정 완료!');
       return;
     }
 
@@ -655,6 +738,14 @@ function showCompleteModal(s) {
 }
 
 // 유틸
+
+function escapeAttr(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
 
 let staffCache = {};
 async function loadStaffCache() {
