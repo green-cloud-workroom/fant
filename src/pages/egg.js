@@ -6,6 +6,8 @@ import { getTodayKST as getToday } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { recordActivity } from '../services/activityLogs.js';
 
+let eggFifoExpanded = false;
+
 export async function renderEgg() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>계란 로딩 중...</p></div>`;
@@ -25,12 +27,16 @@ async function loadEggStock() {
 async function loadEggLogs() {
   const q = query(collection(db, 'eggLogs'), orderBy('timestamp', 'desc'));
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() })).slice(0, 50);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
 function renderEggLayout(eggStock, logs) {
   const content = document.getElementById('mainContent');
-  const isLow = eggStock.currentQty < eggStock.minimumQty;
+  const currentQty = Number(eggStock.currentQty || 0);
+  const minimumQty = Number(eggStock.minimumQty || 0);
+  const isLow = currentQty < minimumQty;
+  const fifo = buildEggFifoBreakdown(logs, currentQty);
+  const recentLogs = sortEggLogsDesc(logs).slice(0, 50);
 
   content.innerHTML = `
     <div class="page-wrap">
@@ -48,18 +54,22 @@ function renderEggLayout(eggStock, logs) {
       <div class="form-section" style="background:white;border-radius:8px;padding:20px;margin-bottom:16px;border:1px solid #e8e8e8;">
         <div class="stat-row">
           <div class="stat-item">
-            <span class="stat-label">현재 재고</span>
-            <span class="stat-value" style="font-size:24px;color:${isLow ? '#e53e3e' : '#1a1a1a'}">${eggStock.currentQty}개</span>
+            <button class="egg-fifo-toggle" id="btnToggleEggFifo" type="button" aria-expanded="${eggFifoExpanded ? 'true' : 'false'}">
+              <span class="stat-label">현재 재고</span>
+              <span class="stat-value" style="font-size:24px;color:${isLow ? '#e53e3e' : '#1a1a1a'}">${currentQty}개</span>
+              <span class="egg-fifo-caret">${eggFifoExpanded ? '접기 ▲' : '잔량 보기 ▼'}</span>
+            </button>
           </div>
           <div class="stat-item">
             <span class="stat-label">최소재고</span>
-            <span class="stat-value">${eggStock.minimumQty}개</span>
+            <span class="stat-value">${minimumQty}개</span>
           </div>
           <div class="stat-item">
             <span class="stat-label">상태</span>
             <span class="stat-value" style="color:${isLow ? '#e53e3e' : '#2d7a3a'}">${isLow ? '⚠️ 부족' : '✅ 정상'}</span>
           </div>
         </div>
+        ${eggFifoExpanded ? renderEggFifoPanel(fifo, currentQty) : ''}
       </div>
 
       <!-- 이력 테이블 -->
@@ -81,8 +91,8 @@ function renderEggLayout(eggStock, logs) {
               </tr>
             </thead>
             <tbody>
-              ${logs.length === 0 ? `<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
-                logs.map(l => `
+              ${recentLogs.length === 0 ? `<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
+                recentLogs.map(l => `
                   <tr>
                     <td>${l.date || '-'}</td>
                     <td>
@@ -111,6 +121,126 @@ function renderEggLayout(eggStock, logs) {
   document.getElementById('btnEggOut').addEventListener('click', () => showEggModal('out', eggStock));
   document.getElementById('btnAdjustEgg').addEventListener('click', () => showEggAdjustModal(eggStock));
   document.getElementById('btnSetMinEgg').addEventListener('click', () => showSetMinModal(eggStock));
+  document.getElementById('btnToggleEggFifo').addEventListener('click', () => {
+    eggFifoExpanded = !eggFifoExpanded;
+    renderEggLayout(eggStock, logs);
+  });
+}
+
+function buildEggFifoBreakdown(logs, currentQty) {
+  const lots = [];
+  let unallocatedOutQty = 0;
+
+  for (const log of sortEggLogsAsc(logs)) {
+    const qty = Number(log.qty || 0);
+    if (!qty) continue;
+
+    if (log.type === 'in' || (log.type === 'adjust' && qty > 0)) {
+      lots.push({
+        id: log.id || `${log.date || ''}-${lots.length}`,
+        date: log.date || '-',
+        staffName: log.staffName || '-',
+        source: log.type === 'adjust' ? '조정' : '입고',
+        initialQty: qty,
+        remainingQty: qty,
+        order: lots.length,
+      });
+      continue;
+    }
+
+    if (log.type === 'out' || qty < 0) {
+      let consumeQty = Math.abs(qty);
+      for (const lot of lots) {
+        if (consumeQty <= 0) break;
+        if (lot.remainingQty <= 0) continue;
+        const used = Math.min(lot.remainingQty, consumeQty);
+        lot.remainingQty -= used;
+        consumeQty -= used;
+      }
+      unallocatedOutQty += consumeQty;
+    }
+  }
+
+  const remainingLots = lots.filter(lot => lot.remainingQty > 0);
+  const fifoTotalQty = remainingLots.reduce((sum, lot) => sum + lot.remainingQty, 0);
+
+  return {
+    lots: remainingLots,
+    fifoTotalQty,
+    currentQty,
+    diffQty: fifoTotalQty - currentQty,
+    unallocatedOutQty,
+  };
+}
+
+function renderEggFifoPanel(fifo, currentQty) {
+  const isMatched = fifo.diffQty === 0;
+  const rows = fifo.lots.length === 0
+    ? '<div class="egg-fifo-empty">표시할 잔량 lot이 없습니다.</div>'
+    : fifo.lots.map((lot, index) => `
+        <div class="egg-fifo-row">
+          <span class="egg-fifo-branch">${index === fifo.lots.length - 1 ? '└' : '├'}</span>
+          <span class="egg-fifo-date">${escapeHtml(lot.date)}</span>
+          <span class="egg-fifo-staff">${escapeHtml(lot.staffName)}</span>
+          <span class="egg-fifo-source">${lot.source}</span>
+          <span class="egg-fifo-qty">+${formatEggQty(lot.initialQty)} → ${formatEggQty(lot.remainingQty)} 남음</span>
+        </div>
+      `).join('');
+
+  const mismatchHtml = isMatched
+    ? ''
+    : `<div class="egg-fifo-warning">FIFO 분해 합계 ${formatEggQty(fifo.fifoTotalQty)} / 현재 재고 ${formatEggQty(currentQty)}로 ${formatEggQty(Math.abs(fifo.diffQty))} 차이가 있습니다.</div>`;
+  const unallocatedHtml = fifo.unallocatedOutQty > 0
+    ? `<div class="egg-fifo-warning">입고 lot보다 먼저 기록된 출고/감소 ${formatEggQty(fifo.unallocatedOutQty)}는 분해에서 배분하지 못했습니다.</div>`
+    : '';
+
+  return `
+    <div class="egg-fifo-panel">
+      <div class="egg-fifo-note">FIFO 가정 표시입니다. 실제 출고 lot은 추적되지 않아 참고용으로만 봅니다.</div>
+      ${rows}
+      <div class="egg-fifo-total">분해 합계 ${formatEggQty(fifo.fifoTotalQty)} / 현재 재고 ${formatEggQty(currentQty)}</div>
+      ${mismatchHtml}
+      ${unallocatedHtml}
+    </div>
+  `;
+}
+
+function sortEggLogsAsc(logs) {
+  return [...logs].sort((a, b) => {
+    const timeDiff = getEggLogTime(a) - getEggLogTime(b);
+    if (timeDiff !== 0) return timeDiff;
+    return String(a.id || '').localeCompare(String(b.id || ''));
+  });
+}
+
+function sortEggLogsDesc(logs) {
+  return [...logs].sort((a, b) => {
+    const timeDiff = getEggLogTime(b) - getEggLogTime(a);
+    if (timeDiff !== 0) return timeDiff;
+    return String(b.id || '').localeCompare(String(a.id || ''));
+  });
+}
+
+function getEggLogTime(log) {
+  const ts = log.timestamp;
+  if (ts?.toMillis) return ts.toMillis();
+  if (ts instanceof Date) return ts.getTime();
+  if (typeof ts === 'number') return ts;
+  const parsed = Date.parse(log.date || '');
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatEggQty(qty) {
+  return `${Number(qty || 0).toLocaleString()}개`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 function showEggModal(type, eggStock) {
