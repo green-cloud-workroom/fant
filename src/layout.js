@@ -3,6 +3,7 @@ import { renderPage } from './router.js';
 import { formatKstDate, formatKstDateWithDay, getTodayKST } from './utils/date.js';
 import { db } from './firebase.js';
 import { doc, getDoc } from 'firebase/firestore';
+import { showConfirmModal } from './utils/modal.js';
 
 // [Phase 3d] 모달 자동 오픈 1회 플래그 — 모듈 레벨에서 유지
 let blockingModalAutoShown = false;
@@ -390,12 +391,32 @@ async function handleClosingClick() {
       return;
     }
 
-    // 차단 없음 → 담당자 선택 모달
+    if (result.totalWarnings > 0) {
+      const ok = await showClosingWarningsConfirm(result, targetDate);
+      if (!ok) return;
+    }
+
+    // 차단 없음 + 경고 확인 완료 → 담당자 선택 모달
     showCloseConfirmModal(targetDate);
   } catch (e) {
     console.error('handleClosingClick error', e);
     alert('마감 처리 중 오류가 발생했습니다. 콘솔 확인.');
   }
+}
+
+async function showClosingWarningsConfirm(result, targetDate) {
+  const dateLabel = formatKstDateWithDay(targetDate);
+  const lines = (result.warnings || []).map((w, i) => {
+    const num = ['①', '②', '③'][i] || `${i + 1}.`;
+    return `${num} ${w.reason || w.label}`;
+  });
+
+  return showConfirmModal({
+    title: `${dateLabel} 마감 경고`,
+    message: `아래 경고 항목이 있습니다.\n마감은 가능하지만 확인 후 진행해주세요.\n\n${lines.join('\n')}\n\n그래도 마감하시겠습니까?`,
+    confirmText: '그래도 마감',
+    danger: false,
+  });
 }
 /**
  * [Phase 4d]

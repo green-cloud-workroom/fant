@@ -1,11 +1,21 @@
 // src/services/closingChecksLogic.js
 //
-// 마감 차단 항목 판정 — 순수 함수 4개 + 집계 함수 1개 (Phase 3a 추가).
+// 마감 차단/경고 항목 판정 — 순수 함수 + 집계 함수.
 // firebase 의존성 없음. 데이터 배열을 인자로 받아 판정만 수행.
 // 단위 테스트(test.js)는 이 파일만 import해서 검증한다.
-//
-// Phase 2 — V1: 차단 항목 1, 2, 3, 7번.
-// Phase 3a — aggregateBlockingItems, BLOCKING_ITEM_META 추가.
+
+export const DEFAULT_CLOSING_FLAGS = {
+  blockTomorrowProd: true,
+  blockFrozenOrder: true,
+  blockScheduleDue: true,
+  blockAutoRepack: true,
+  blockProdLog: true,
+  blockOfficeLog: true,
+  blockEggOut: true,
+  warnNoTomorrowProd: true,
+  warnBagMin: true,
+  warnMeatMin: true,
+};
 
 /**
  * 1. 내일생산불러오기 처리 안 됨
@@ -137,6 +147,160 @@ export function judgeEggOutputForProduction(productions, eggLogs, dateStr) {
 }
 
 /**
+ * 4. 미확인 자동 재포장 로그 있음
+ *
+ * autoRepack:trigger / autoRepack:diff 는 전용 확인 모달/흐름이 있으므로
+ * 생산 로그 미확인 항목(5번)에서 제외하고 여기서 전담한다.
+ */
+export function judgeAutoRepackLogsAcknowledged(activityLogs, dateStr) {
+  const pending = (activityLogs || []).filter(log =>
+    log.date === dateStr &&
+    log.action === 'autoRepack' &&
+    (log.subAction === 'trigger' || log.subAction === 'diff') &&
+    log.acknowledged !== true
+  );
+
+  return {
+    blocked: pending.length > 0,
+    reason: pending.length > 0
+      ? `자동 재포장 확인 ${pending.length}건 미완료`
+      : '',
+    count: pending.length
+  };
+}
+
+const PRODUCTION_LOG_ACTIONS = new Set([
+  'production',
+  'repackaging',
+  'pretreat',
+  'event',
+  'scheduleDue',
+  'autoRepack',
+  'minStock',
+  'frozenStockLow',
+]);
+
+const OFFICE_LOG_ACTIONS = new Set([
+  'bag',
+  'egg',
+  'meat',
+  'frozenProduct',
+  'frozenSep',
+  'schedule',
+  'frozenPan',
+  'closing',
+]);
+
+function classifyClosingLog(log) {
+  const key = `${log.action}:${log.subAction}`;
+  if (key === 'meat:adjust') return 'production';
+  if (PRODUCTION_LOG_ACTIONS.has(log.action)) return 'production';
+  if (OFFICE_LOG_ACTIONS.has(log.action)) return 'office';
+  return 'ignore';
+}
+
+function isAutoRepackAckLog(log) {
+  return log.action === 'autoRepack' &&
+    (log.subAction === 'trigger' || log.subAction === 'diff');
+}
+
+function isMinimumStockAlertLog(log) {
+  return log.action === 'minStock' && log.subAction === 'alert';
+}
+
+/**
+ * 5. 생산 로그 미확인 항목 있음
+ */
+export function judgeProductionLogsAcknowledged(activityLogs, dateStr) {
+  const pending = (activityLogs || []).filter(log =>
+    log.date === dateStr &&
+    log.acknowledged !== true &&
+    classifyClosingLog(log) === 'production' &&
+    !isAutoRepackAckLog(log) &&
+    !isMinimumStockAlertLog(log)
+  );
+
+  return {
+    blocked: pending.length > 0,
+    reason: pending.length > 0
+      ? `생산 로그 미확인 항목 ${pending.length}건 있습니다`
+      : '',
+    count: pending.length
+  };
+}
+
+/**
+ * 6. 사무 로그 미확인 항목 있음
+ */
+export function judgeOfficeLogsAcknowledged(activityLogs, dateStr) {
+  const pending = (activityLogs || []).filter(log =>
+    log.date === dateStr &&
+    log.acknowledged !== true &&
+    classifyClosingLog(log) === 'office' &&
+    !isMinimumStockAlertLog(log)
+  );
+
+  return {
+    blocked: pending.length > 0,
+    reason: pending.length > 0
+      ? `사무 로그 미확인 항목 ${pending.length}건 있습니다`
+      : '',
+    count: pending.length
+  };
+}
+
+/**
+ * 경고 1. 내일 생산 입력 없음
+ */
+export function judgeNoTomorrowProduction(nextDayProductions) {
+  const count = (nextDayProductions || []).length;
+  return {
+    warned: count === 0,
+    reason: count === 0 ? '내일 생산 입력이 없습니다' : '',
+    count: count === 0 ? 1 : 0
+  };
+}
+
+/**
+ * 경고 2. 봉투 최소재고 미달
+ */
+export function judgeBagMinimumStock(bagTypes) {
+  const lowItems = (bagTypes || []).filter(b =>
+    b.minimumQty && (b.currentQty || 0) < b.minimumQty
+  );
+
+  return {
+    warned: lowItems.length > 0,
+    reason: lowItems.length > 0
+      ? `봉투 최소재고 미달 ${lowItems.length}건 있습니다`
+      : '',
+    count: lowItems.length
+  };
+}
+
+/**
+ * 경고 3. 원육 최소재고 미달
+ */
+export function judgeMeatMinimumStock(meatTypes, meatStocks) {
+  const openStocks = (meatStocks || []).filter(s => !s.closed);
+  const lowItems = (meatTypes || []).filter(mt => {
+    if (!mt.minimumQtyG) return false;
+    const total = openStocks
+      .filter(s => s.meatTypeId === mt.id)
+      .reduce((sum, s) => sum + (s.remaining || 0), 0);
+    return total < mt.minimumQtyG;
+  });
+
+  return {
+    warned: lowItems.length > 0,
+    reason: lowItems.length > 0
+      ? `원육 최소재고 미달 ${lowItems.length}건 있습니다`
+      : '',
+    count: lowItems.length
+  };
+}
+
+/**
  * [Phase 3a 신규]
  * 차단 항목 메타데이터 — V1 차단 항목 1, 2, 3, 7번.
  *
@@ -151,7 +315,16 @@ export const BLOCKING_ITEM_META = {
   1: { label: '내일생산불러오기 처리 안 됨', jumpMenu: 'main' },
   2: { label: '동결건조 발주 확인 처리 안 됨', jumpMenu: 'frozenPan' },
   3: { label: '입고 예정 완료/취소 처리 안 됨', jumpMenu: 'schedule' },
+  4: { label: '자동 재포장 확인 미완료', jumpMenu: 'main' },
+  5: { label: '생산 로그 미확인 항목 있음', jumpMenu: 'main' },
+  6: { label: '사무 로그 미확인 항목 있음', jumpMenu: 'main' },
   7: { label: '계란 출고 미입력', jumpMenu: 'egg' }
+};
+
+export const WARNING_ITEM_META = {
+  1: { label: '내일 생산 입력 없음', jumpMenu: 'production' },
+  2: { label: '봉투 최소재고 미달', jumpMenu: 'bag' },
+  3: { label: '원육 최소재고 미달', jumpMenu: 'meat' },
 };
 
 /**
@@ -170,13 +343,29 @@ export const BLOCKING_ITEM_META = {
  *   items: Array<{ id: number, label: string, reason: string, count: number, jumpMenu: string }>
  * }}
  */
-export function aggregateBlockingItems(item1, item2, item3, item7) {
-  const map = { 1: item1, 2: item2, 3: item3, 7: item7 };
+export function aggregateBlockingItems(results = {}, flags = DEFAULT_CLOSING_FLAGS) {
+  const mergedFlags = { ...DEFAULT_CLOSING_FLAGS, ...(flags || {}) };
+  const blockerMap = {
+    1: { result: results.item1, flag: 'blockTomorrowProd' },
+    2: { result: results.item2, flag: 'blockFrozenOrder' },
+    3: { result: results.item3, flag: 'blockScheduleDue' },
+    4: { result: results.item4, flag: 'blockAutoRepack' },
+    5: { result: results.item5, flag: 'blockProdLog' },
+    6: { result: results.item6, flag: 'blockOfficeLog' },
+    7: { result: results.item7, flag: 'blockEggOut' },
+  };
+  const warningMap = {
+    1: { result: results.warn1, flag: 'warnNoTomorrowProd' },
+    2: { result: results.warn2, flag: 'warnBagMin' },
+    3: { result: results.warn3, flag: 'warnMeatMin' },
+  };
   const items = [];
+  const warnings = [];
 
-  for (const id of [1, 2, 3, 7]) {
-    const result = map[id];
-    if (result && result.blocked) {
+  for (const id of [1, 2, 3, 4, 5, 6, 7]) {
+    const entry = blockerMap[id];
+    const result = entry?.result;
+    if (mergedFlags[entry.flag] && result && result.blocked) {
       items.push({
         id,
         label: BLOCKING_ITEM_META[id].label,
@@ -187,8 +376,25 @@ export function aggregateBlockingItems(item1, item2, item3, item7) {
     }
   }
 
+  for (const id of [1, 2, 3]) {
+    const entry = warningMap[id];
+    const result = entry?.result;
+    if (mergedFlags[entry.flag] && result && result.warned) {
+      warnings.push({
+        id,
+        label: WARNING_ITEM_META[id].label,
+        reason: result.reason || '',
+        count: result.count || 0,
+        jumpMenu: WARNING_ITEM_META[id].jumpMenu
+      });
+    }
+  }
+
   return {
     totalBlocked: items.length,
-    items
+    items,
+    totalWarnings: warnings.length,
+    warnings,
+    flags: mergedFlags
   };
 }

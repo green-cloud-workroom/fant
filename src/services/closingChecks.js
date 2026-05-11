@@ -1,20 +1,25 @@
 // src/services/closingChecks.js
 //
-// 마감 차단 항목 체크 함수 4개 (Phase 2 — V1) + wrapper 함수 1개 (Phase 3a).
+// 마감 차단/경고 항목 체크 wrapper.
 //
 // Firestore에서 데이터를 fetch한 뒤 closingChecksLogic.js의 순수 함수로 판정.
 // 각 함수 시그니처: (dateStr) => Promise<{ blocked: boolean, reason: string, count: number }>
 //
-// 차단 항목 4·5·6번은 알림 인프라(미확인 로그 시스템)가 만들어진 이후에 추가 예정.
-
 import { db } from '../firebase.js';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { getNextBusinessDay } from '../utils/date.js';
 import {
+  DEFAULT_CLOSING_FLAGS,
   judgeTomorrowProductionLoaded,
   judgeFrozenOrdersConfirmed,
   judgeSchedulesProcessed,
   judgeEggOutputForProduction,
+  judgeAutoRepackLogsAcknowledged,
+  judgeProductionLogsAcknowledged,
+  judgeOfficeLogsAcknowledged,
+  judgeNoTomorrowProduction,
+  judgeBagMinimumStock,
+  judgeMeatMinimumStock,
   aggregateBlockingItems
 } from './closingChecksLogic.js';
 
@@ -22,13 +27,7 @@ import {
  * 1. 내일생산불러오기 처리 안 됨
  */
 export async function checkTomorrowProductionLoaded(dateStr) {
-  const nextBizDay = getNextBusinessDay(dateStr);
-
-  // 다음 영업일 productions
-  const prodSnap = await getDocs(collection(db, 'productions'));
-  const nextDayProductions = prodSnap.docs
-    .map(d => d.data())
-    .filter(p => p.date === nextBizDay && p.status !== 'deleted');
+  const nextDayProductions = await loadNextDayProductions(dateStr);
 
   // dateStr 시점의 productionCompletion 전체 (judge에서 필터)
   const compSnap = await getDocs(collection(db, 'productionCompletion'));
@@ -68,6 +67,69 @@ export async function checkEggOutputForProduction(dateStr) {
   return judgeEggOutputForProduction(productions, eggLogs, dateStr);
 }
 
+export async function checkAutoRepackLogsAcknowledged(dateStr) {
+  const logs = await loadActivityLogsByDate(dateStr);
+  return judgeAutoRepackLogsAcknowledged(logs, dateStr);
+}
+
+export async function checkProductionLogsAcknowledged(dateStr) {
+  const logs = await loadActivityLogsByDate(dateStr);
+  return judgeProductionLogsAcknowledged(logs, dateStr);
+}
+
+export async function checkOfficeLogsAcknowledged(dateStr) {
+  const logs = await loadActivityLogsByDate(dateStr);
+  return judgeOfficeLogsAcknowledged(logs, dateStr);
+}
+
+export async function checkNoTomorrowProduction(dateStr) {
+  const nextDayProductions = await loadNextDayProductions(dateStr);
+  return judgeNoTomorrowProduction(nextDayProductions);
+}
+
+export async function checkBagMinimumStock() {
+  const bagSnap = await getDocs(collection(db, 'bagTypes'));
+  const bagTypes = bagSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return judgeBagMinimumStock(bagTypes);
+}
+
+export async function checkMeatMinimumStock() {
+  const meatTypesSnap = await getDocs(collection(db, 'meatTypes'));
+  const meatTypes = meatTypesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  const meatStocksSnap = await getDocs(collection(db, 'meatStocks'));
+  const meatStocks = meatStocksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  return judgeMeatMinimumStock(meatTypes, meatStocks);
+}
+
+async function loadNextDayProductions(dateStr) {
+  const nextBizDay = getNextBusinessDay(dateStr);
+  const prodSnap = await getDocs(collection(db, 'productions'));
+  return prodSnap.docs
+    .map(d => d.data())
+    .filter(p => p.date === nextBizDay && p.status !== 'deleted');
+}
+
+async function loadActivityLogsByDate(dateStr) {
+  const snap = await getDocs(query(
+    collection(db, 'activityLogs'),
+    where('date', '==', dateStr)
+  ));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+async function loadClosingFlags() {
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'closingFlags'));
+    if (!snap.exists()) return DEFAULT_CLOSING_FLAGS;
+    return { ...DEFAULT_CLOSING_FLAGS, ...snap.data() };
+  } catch (err) {
+    console.warn('[closingChecks] closingFlags 로드 실패, 기본값 ON 사용:', err);
+    return DEFAULT_CLOSING_FLAGS;
+  }
+}
+
 /**
  * [Phase 3a 신규]
  * 지정 날짜의 모든 마감 차단 항목 조회 — wrapper.
@@ -89,18 +151,51 @@ export async function checkEggOutputForProduction(dateStr) {
  * }>}
  */
 export async function getAllBlockingItems(dateStr) {
-  const [item1, item2, item3, item7] = await Promise.all([
+  const [
+    item1,
+    item2,
+    item3,
+    item4,
+    item5,
+    item6,
+    item7,
+    warn1,
+    warn2,
+    warn3,
+    flags
+  ] = await Promise.all([
     checkTomorrowProductionLoaded(dateStr),
     checkFrozenOrdersConfirmed(dateStr),
     checkSchedulesProcessed(dateStr),
-    checkEggOutputForProduction(dateStr)
+    checkAutoRepackLogsAcknowledged(dateStr),
+    checkProductionLogsAcknowledged(dateStr),
+    checkOfficeLogsAcknowledged(dateStr),
+    checkEggOutputForProduction(dateStr),
+    checkNoTomorrowProduction(dateStr),
+    checkBagMinimumStock(),
+    checkMeatMinimumStock(),
+    loadClosingFlags()
   ]);
 
-  const aggregated = aggregateBlockingItems(item1, item2, item3, item7);
+  const aggregated = aggregateBlockingItems({
+    item1,
+    item2,
+    item3,
+    item4,
+    item5,
+    item6,
+    item7,
+    warn1,
+    warn2,
+    warn3,
+  }, flags);
 
   return {
     date: dateStr,
     totalBlocked: aggregated.totalBlocked,
-    items: aggregated.items
+    items: aggregated.items,
+    totalWarnings: aggregated.totalWarnings,
+    warnings: aggregated.warnings,
+    flags: aggregated.flags
   };
 }
