@@ -76,6 +76,12 @@ function renderProductList() {
             ${active ? '' : '<span class="tag tag-inactive">\uBE44\uD65C\uC131</span>'}
           </div>
         </div>
+        ${currentUserRole === 'admin' || currentUserRole === 'office' ? `
+          <label class="toggle-switch" title="${active ? '활성' : '비활성'}" onclick="event.stopPropagation()">
+            <input type="checkbox" class="product-active-toggle" data-id="${p.id}" ${active ? 'checked' : ''}>
+            <span class="toggle-slider"></span>
+          </label>
+        ` : ''}
       </div>
     `;
     }).join('');
@@ -89,6 +95,51 @@ function bindProductListEvents() {
       item.classList.add('active');
       const product = frozenProducts.find(p => p.id === selectedProductId);
       await showProductDetail(product);
+    });
+  });
+
+  document.querySelectorAll('.product-active-toggle').forEach(cb => {
+    cb.addEventListener('click', (e) => e.stopPropagation());
+    cb.addEventListener('change', async (e) => {
+      if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+        alert('동결제품 활성 변경은 대표/사무실 계정만 가능합니다.');
+        e.target.checked = !e.target.checked;
+        return;
+      }
+      const id = e.target.dataset.id;
+      const active = e.target.checked;
+      const target = frozenProducts.find(p => p.id === id);
+      const previousActive = target?.active !== false;
+      try {
+        await updateDoc(doc(db, 'frozenProducts', id), {
+          active,
+          updatedAt: new Date(),
+        });
+        if (target) target.active = active;
+        if (previousActive !== active) {
+          await recordActivity({
+            action: 'frozenProduct',
+            subAction: 'activeToggle',
+            date: getToday(),
+            staff: getRoleStaffLabel(),
+            message: `Frozen product ${active ? 'active' : 'inactive'} — ${target?.name || id}`,
+            details: {
+              productId: id,
+              productName: target?.name || null,
+              active,
+            },
+          });
+        }
+        renderFrozenProductLayout();
+        if (selectedProductId) {
+          const selected = frozenProducts.find(p => p.id === selectedProductId);
+          if (selected) await showProductDetail(selected);
+        }
+      } catch (err) {
+        console.error('[frozenProduct] active save failed:', err);
+        alert('활성 상태 저장 중 오류가 발생했습니다.');
+        e.target.checked = !active;
+      }
     });
   });
 }
@@ -296,7 +347,6 @@ async function showProductModal(product) {
     .map(d => ({ id: d.id, ...d.data() }))
     .filter(b => b.category === 'freezeDry' && (b.active !== false || (!isNew && b.id === product?.bagTypeId)));
   const recipes = await getActiveFreezeDryRecipes();
-  const active = isNew ? true : product.active !== false;
 
   showModal(`
     <h3 class="modal-title">${isNew ? '동결제품 추가' : '동결제품 수정'}</h3>
@@ -320,15 +370,6 @@ async function showProductModal(product) {
         <option value="true" ${product?.requiresSeparation ? 'selected' : ''}>예</option>
       </select>
     </div>
-    ${!isNew ? `
-      <div class="form-group">
-        <label>\uD65C\uC131 \uC0C1\uD0DC</label>
-        <label class="toggle-switch" title="${active ? '\uD65C\uC131' : '\uBE44\uD65C\uC131'}">
-          <input type="checkbox" id="m_productActive" ${active ? 'checked' : ''}>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-    ` : ''}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn-primary" id="btnSaveProduct">${isNew ? '추가' : '저장'}</button>
@@ -344,8 +385,7 @@ async function showProductModal(product) {
     const recipeRef = name;
     const bagTypeId = document.getElementById('m_bagType').value;
     const requiresSeparation = document.getElementById('m_separation').value === 'true';
-    const nextActive = isNew ? true : document.getElementById('m_productActive').checked;
-    const previousActive = isNew ? true : product.active !== false;
+    const nextActive = isNew ? true : product.active !== false;
 
     if (!name || !bagTypeId) { alert('제품명과 연결 봉투는 필수입니다.'); return; }
 
@@ -364,20 +404,6 @@ async function showProductModal(product) {
       await addDoc(collection(db, 'frozenProducts'), data);
     } else {
       await updateDoc(doc(db, 'frozenProducts', product.id), data);
-      if (previousActive !== nextActive) {
-        await recordActivity({
-          action: 'frozenProduct',
-          subAction: 'activeToggle',
-          date: getToday(),
-          staff: getRoleStaffLabel(),
-          message: `Frozen product ${nextActive ? 'active' : 'inactive'} — ${name}`,
-          details: {
-            productId: product.id,
-            productName: name,
-            active: nextActive,
-          },
-        });
-      }
     }
 
     frozenProducts = await loadFrozenProducts();

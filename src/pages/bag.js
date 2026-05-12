@@ -87,6 +87,12 @@ function renderBagItem(b) {
           </span>
         </div>
       </div>
+      ${currentUserRole === 'admin' || currentUserRole === 'office' ? `
+        <label class="toggle-switch" title="${inactive ? '비활성' : '활성'}" onclick="event.stopPropagation()">
+          <input type="checkbox" class="bag-active-toggle" data-id="${b.id}" ${inactive ? '' : 'checked'}>
+          <span class="toggle-slider"></span>
+        </label>
+      ` : ''}
     </div>
   `;
 }
@@ -99,6 +105,51 @@ function bindBagListEvents() {
       showBagDetail(bag);
       document.querySelectorAll('.recipe-list-item').forEach(i => i.classList.remove('active'));
       item.classList.add('active');
+    });
+  });
+
+  document.querySelectorAll('.bag-active-toggle').forEach(cb => {
+    cb.addEventListener('click', (e) => e.stopPropagation());
+    cb.addEventListener('change', async (e) => {
+      if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+        alert('봉투 종류 활성 변경은 대표/사무실 계정만 가능합니다.');
+        e.target.checked = !e.target.checked;
+        return;
+      }
+      const id = e.target.dataset.id;
+      const active = e.target.checked;
+      const target = bagTypes.find(b => b.id === id);
+      const previousActive = target?.active !== false;
+      try {
+        await updateDoc(doc(db, 'bagTypes', id), {
+          active,
+          updatedAt: new Date(),
+        });
+        if (target) target.active = active;
+        if (previousActive !== active) {
+          await recordActivity({
+            action: 'bag',
+            subAction: 'activeToggle',
+            date: getToday(),
+            staff: getRoleStaffLabel(),
+            message: `봉투 종류 ${active ? '활성' : '비활성'} — ${target?.name || id}`,
+            details: {
+              bagTypeId: id,
+              bagName: target?.name || null,
+              active,
+            },
+          });
+        }
+        renderBagLayout();
+        if (selectedBagId) {
+          const selected = bagTypes.find(b => b.id === selectedBagId);
+          if (selected) await showBagDetail(selected);
+        }
+      } catch (err) {
+        console.error('[bag] active save failed:', err);
+        alert('활성 상태 저장 중 오류가 발생했습니다.');
+        e.target.checked = !active;
+      }
     });
   });
 }
@@ -219,17 +270,6 @@ function showBagModal(bag) {
         <input type="number" id="m_minBox" value="${bag?.minimumBoxQty || ''}" placeholder="박스" />
       </div>
     </div>
-    ${!isNew ? `
-      <div class="form-group">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-          <span>활성 상태</span>
-          <span class="toggle-switch">
-            <input type="checkbox" id="m_bagActive" ${bag.active !== false ? 'checked' : ''}>
-            <span class="toggle-slider"></span>
-          </span>
-        </label>
-      </div>
-    ` : ''}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn-primary" id="btnSaveBag">${isNew ? '추가' : '저장'}</button>
@@ -255,10 +295,9 @@ function showBagModal(bag) {
       minimumBoxQty: minBox,
       minimumQty: minBox * piecesPerBox,
       sortOrder: isNew ? bagTypes.length : bag.sortOrder,
-      active: isNew ? true : document.getElementById('m_bagActive')?.checked !== false,
+      active: isNew ? true : bag.active !== false,
       updatedAt: new Date(),
     };
-    const previousActive = isNew ? true : bag.active !== false;
 
     if (isNew) {
       data.currentQty = 0;
@@ -266,20 +305,6 @@ function showBagModal(bag) {
       await addDoc(collection(db, 'bagTypes'), data);
     } else {
       await updateDoc(doc(db, 'bagTypes', bag.id), data);
-      if (previousActive !== data.active) {
-        await recordActivity({
-          action: 'bag',
-          subAction: 'activeToggle',
-          date: getToday(),
-          staff: getRoleStaffLabel(),
-          message: `봉투 종류 ${data.active ? '활성' : '비활성'} — ${name}`,
-          details: {
-            bagTypeId: bag.id,
-            bagName: name,
-            active: data.active,
-          },
-        });
-      }
     }
 
     bagTypes = await loadBagTypes();
