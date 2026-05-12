@@ -120,7 +120,7 @@ async function batchDelete(projectId, collectionName, docs, token) {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
         },
         body: JSON.stringify({
           writes: slice.map((doc) => ({ delete: doc.name })),

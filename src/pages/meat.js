@@ -1105,8 +1105,6 @@ function showModal(html) {
   overlay.addEventListener('click', (e) => {
     // 외부 클릭 닫힘 비활성화 (묶음 1F: 모달 사라짐 이슈 우회)
   });
-
-  loadStaffCache();
 }
 
 window.closeModal = function() {

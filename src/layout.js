@@ -436,7 +436,8 @@ async function showClosingWarningsConfirm(result, targetDate) {
   const dateLabel = formatKstDateWithDay(targetDate);
   const lines = (result.warnings || []).map((w, i) => {
     const num = ['①', '②', '③'][i] || `${i + 1}.`;
-    return `${num} ${w.reason || w.label}`;
+    const detailLines = (w.details || []).map(d => `   - ${d}`);
+    return [`${num} ${w.reason || w.label}`, ...detailLines].join('\n');
   });
 
   return showConfirmModal({

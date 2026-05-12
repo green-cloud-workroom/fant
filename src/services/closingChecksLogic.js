@@ -283,7 +283,18 @@ export function judgeBagMinimumStock(bagTypes) {
     reason: lowItems.length > 0
       ? `봉투 최소재고 미달 ${lowItems.length}건 있습니다`
       : '',
-    count: lowItems.length
+    count: lowItems.length,
+    details: lowItems.map(b => {
+      const current = b.currentQty || 0;
+      const minimum = b.minimumQty || 0;
+      const piecesPerBox = b.piecesPerBox || 0;
+      const currentBox = piecesPerBox ? Math.floor(current / piecesPerBox) : null;
+      const minimumBox = piecesPerBox ? Math.ceil(minimum / piecesPerBox) : null;
+      const boxText = currentBox !== null && minimumBox !== null
+        ? ` (${currentBox}박스 / 최소 ${minimumBox}박스)`
+        : '';
+      return `${b.name || b.id || '봉투'}: ${current}장 / 최소 ${minimum}장${boxText}`;
+    })
   };
 }
 
@@ -292,20 +303,27 @@ export function judgeBagMinimumStock(bagTypes) {
  */
 export function judgeMeatMinimumStock(meatTypes, meatStocks) {
   const openStocks = (meatStocks || []).filter(s => !s.closed);
-  const lowItems = (meatTypes || []).filter(mt => {
+  const lowItems = (meatTypes || []).map(mt => {
     if (!mt.minimumQtyG) return false;
     const total = openStocks
       .filter(s => s.meatTypeId === mt.id)
       .reduce((sum, s) => sum + (s.remaining || 0), 0);
-    return total < mt.minimumQtyG;
-  });
+    return total < mt.minimumQtyG
+      ? { ...mt, currentQtyG: total }
+      : null;
+  }).filter(Boolean);
 
   return {
     warned: lowItems.length > 0,
     reason: lowItems.length > 0
       ? `원육 최소재고 미달 ${lowItems.length}건 있습니다`
       : '',
-    count: lowItems.length
+    count: lowItems.length,
+    details: lowItems.map(mt => {
+      const currentKg = ((mt.currentQtyG || 0) / 1000).toLocaleString('ko-KR', { maximumFractionDigits: 2 });
+      const minimumKg = ((mt.minimumQtyG || 0) / 1000).toLocaleString('ko-KR', { maximumFractionDigits: 2 });
+      return `${mt.name || mt.id || '원육'}: ${currentKg}kg / 최소 ${minimumKg}kg`;
+    })
   };
 }
 
@@ -395,6 +413,7 @@ export function aggregateBlockingItems(results = {}, flags = DEFAULT_CLOSING_FLA
         label: WARNING_ITEM_META[id].label,
         reason: result.reason || '',
         count: result.count || 0,
+        details: result.details || [],
         jumpMenu: WARNING_ITEM_META[id].jumpMenu
       });
     }
