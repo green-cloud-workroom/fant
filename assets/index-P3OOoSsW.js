@@ -2153,7 +2153,7 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
           </div>
         </div>
 
-        <!-- [묶음 6C-1] 3번 화면 = 차단 영역 + 생산 로그 + 사무 로그 -->
+        <!-- 3번 화면 = 차단 영역 + 생산 로그 + 사무 로그 -->
         <div class="main-panel-3">
           ${Qu()}
           ${$u(`production`)}
@@ -2273,7 +2273,7 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
     <div class="log-blocker-area">
       ${e.join(``)}
     </div>
-  `}function $u(e){let t=e===`production`?`🏭 생산 로그`:`🗒️ 사무 로그`,n=wu.filter(t=>Ju(t)===e);n.sort((e,t)=>{let n=Yu(e)&&e.acknowledged!==!0?1:0,r=Yu(t)&&t.acknowledged!==!0?1:0;if(n!==r)return r-n;let i=e.timestamp?.toMillis?e.timestamp.toMillis():0;return(t.timestamp?.toMillis?t.timestamp.toMillis():0)-i});let r=n.some(e=>e.acknowledged!==!0&&!Yu(e)),i=n.length===0?`<div class="log-empty">${e===`production`?`6C-2/3에서 발행 추가 예정`:`오늘 사무 로그 없음`}</div>`:n.map(e=>ed(e)).join(``);return`
+  `}function $u(e){let t=e===`production`?`🏭 생산 로그`:`🗒️ 사무 로그`,n=wu.filter(t=>Ju(t)===e);n.sort((e,t)=>{let n=Yu(e)&&e.acknowledged!==!0?1:0,r=Yu(t)&&t.acknowledged!==!0?1:0;if(n!==r)return r-n;let i=e.timestamp?.toMillis?e.timestamp.toMillis():0;return(t.timestamp?.toMillis?t.timestamp.toMillis():0)-i});let r=n.some(e=>e.acknowledged!==!0&&!Yu(e)),i=n.length===0?`<div class="log-empty">${e===`production`?`오늘 생산 로그 없음`:`오늘 사무 로그 없음`}</div>`:n.map(e=>ed(e)).join(``);return`
     <div class="log-section">
       <div class="log-section-header">
         <span class="log-section-title">${t}</span>
