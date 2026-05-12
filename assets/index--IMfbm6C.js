@@ -683,8 +683,14 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
           </span>
         </div>
       </div>
+      ${F===`admin`||F===`office`?`
+        <label class="toggle-switch" title="${n?`비활성`:`활성`}" onclick="event.stopPropagation()">
+          <input type="checkbox" class="bag-active-toggle" data-id="${e.id}" ${n?``:`checked`}>
+          <span class="toggle-slider"></span>
+        </label>
+      `:``}
     </div>
-  `}function Jo(){document.querySelectorAll(`.recipe-list-item`).forEach(e=>{e.addEventListener(`click`,()=>{Wo=e.dataset.id,Yo(Vo.find(e=>e.id===Wo)),document.querySelectorAll(`.recipe-list-item`).forEach(e=>e.classList.remove(`active`)),e.classList.add(`active`)})})}async function Yo(e){let t=document.getElementById(`bagDetail`),n=F===`admin`||F===`office`,r=(await C(T(j(P,`bagLogs`),se(`timestamp`,`desc`)))).docs.map(e=>({id:e.id,...e.data()})).filter(t=>t.bagTypeId===e.id).slice(0,30);t.innerHTML=`
+  `}function Jo(){document.querySelectorAll(`.recipe-list-item`).forEach(e=>{e.addEventListener(`click`,()=>{Wo=e.dataset.id,Yo(Vo.find(e=>e.id===Wo)),document.querySelectorAll(`.recipe-list-item`).forEach(e=>e.classList.remove(`active`)),e.classList.add(`active`)})}),document.querySelectorAll(`.bag-active-toggle`).forEach(e=>{e.addEventListener(`click`,e=>e.stopPropagation()),e.addEventListener(`change`,async e=>{if(F!==`admin`&&F!==`office`){alert(`봉투 종류 활성 변경은 대표/사무실 계정만 가능합니다.`),e.target.checked=!e.target.checked;return}let t=e.target.dataset.id,n=e.target.checked,r=Vo.find(e=>e.id===t),i=r?.active!==!1;try{if(await E(k(P,`bagTypes`,t),{active:n,updatedAt:new Date}),r&&(r.active=n),i!==n&&await io({action:`bag`,subAction:`activeToggle`,date:I(),staff:as(),message:`봉투 종류 ${n?`활성`:`비활성`} — ${r?.name||t}`,details:{bagTypeId:t,bagName:r?.name||null,active:n}}),Go(),Wo){let e=Vo.find(e=>e.id===Wo);e&&await Yo(e)}}catch(t){console.error(`[bag] active save failed:`,t),alert(`활성 상태 저장 중 오류가 발생했습니다.`),e.target.checked=!n}})})}async function Yo(e){let t=document.getElementById(`bagDetail`),n=F===`admin`||F===`office`,r=(await C(T(j(P,`bagLogs`),se(`timestamp`,`desc`)))).docs.map(e=>({id:e.id,...e.data()})).filter(t=>t.bagTypeId===e.id).slice(0,30);t.innerHTML=`
     <div class="detail-header">
       <span class="detail-title">${e.name}</span>
       <div class="detail-actions">
@@ -774,22 +780,11 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
         <input type="number" id="m_minBox" value="${e?.minimumBoxQty||``}" placeholder="박스" />
       </div>
     </div>
-    ${t?``:`
-      <div class="form-group">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-          <span>활성 상태</span>
-          <span class="toggle-switch">
-            <input type="checkbox" id="m_bagActive" ${e.active===!1?``:`checked`}>
-            <span class="toggle-slider"></span>
-          </span>
-        </label>
-      </div>
-    `}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn-primary" id="btnSaveBag">${t?`추가`:`저장`}</button>
     </div>
-  `),document.getElementById(`btnSaveBag`).addEventListener(`click`,async()=>{if(F!==`admin`&&F!==`office`){alert(`봉투 등록/수정은 대표/사무실 계정만 가능합니다.`);return}let n=document.getElementById(`m_bagName`).value.trim(),r=document.getElementById(`m_bagCategory`).value,i=parseInt(document.getElementById(`m_piecesPerBox`).value)||0,a=parseInt(document.getElementById(`m_minBox`).value)||0;if(!n||!r){alert(`봉투명과 종류는 필수입니다.`);return}let o={name:n,category:r,piecesPerBox:i,minimumBoxQty:a,minimumQty:a*i,sortOrder:t?Vo.length:e.sortOrder,active:t?!0:document.getElementById(`m_bagActive`)?.checked!==!1,updatedAt:new Date},s=t?!0:e.active!==!1;t?(o.currentQty=0,o.createdAt=new Date,await M(j(P,`bagTypes`),o)):(await E(k(P,`bagTypes`,e.id),o),s!==o.active&&await io({action:`bag`,subAction:`activeToggle`,date:I(),staff:as(),message:`봉투 종류 ${o.active?`활성`:`비활성`} — ${n}`,details:{bagTypeId:e.id,bagName:n,active:o.active}})),Vo=await Uo(),closeModal(),Go(),alert(t?`봉투 추가 완료!`:`수정 완료!`)})}function Qo(e){Zo(e)}function $o(e){is(`
+  `),document.getElementById(`btnSaveBag`).addEventListener(`click`,async()=>{if(F!==`admin`&&F!==`office`){alert(`봉투 등록/수정은 대표/사무실 계정만 가능합니다.`);return}let n=document.getElementById(`m_bagName`).value.trim(),r=document.getElementById(`m_bagCategory`).value,i=parseInt(document.getElementById(`m_piecesPerBox`).value)||0,a=parseInt(document.getElementById(`m_minBox`).value)||0;if(!n||!r){alert(`봉투명과 종류는 필수입니다.`);return}let o={name:n,category:r,piecesPerBox:i,minimumBoxQty:a,minimumQty:a*i,sortOrder:t?Vo.length:e.sortOrder,active:t?!0:e.active!==!1,updatedAt:new Date};t?(o.currentQty=0,o.createdAt=new Date,await M(j(P,`bagTypes`),o)):await E(k(P,`bagTypes`,e.id),o),Vo=await Uo(),closeModal(),Go(),alert(t?`봉투 추가 완료!`:`수정 완료!`)})}function Qo(e){Zo(e)}function $o(e){is(`
     <h3 class="modal-title">봉투 입고 등록 — ${e.name}</h3>
     <div class="form-row">
       <div class="form-group">
@@ -1037,8 +1032,14 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
             ${t?``:`<span class="tag tag-inactive">비활성</span>`}
           </div>
         </div>
+        ${F===`admin`||F===`office`?`
+          <label class="toggle-switch" title="${t?`활성`:`비활성`}" onclick="event.stopPropagation()">
+            <input type="checkbox" class="product-active-toggle" data-id="${e.id}" ${t?`checked`:``}>
+            <span class="toggle-slider"></span>
+          </label>
+        `:``}
       </div>
-    `}).join(``)}function Ps(){document.querySelectorAll(`.recipe-list-item`).forEach(e=>{e.addEventListener(`click`,async()=>{Os=e.dataset.id,document.querySelectorAll(`.recipe-list-item`).forEach(e=>e.classList.remove(`active`)),e.classList.add(`active`),await Fs(Ds.find(e=>e.id===Os))})})}async function Fs(e){let t=document.getElementById(`productDetail`),n=await js(e.id),r=F===`admin`||F===`office`,i=e.active!==!1,a=`-`;if(e.bagTypeId){let t=await A(k(P,`bagTypes`,e.bagTypeId));t.exists()&&(a=t.data().name)}t.innerHTML=`
+    `}).join(``)}function Ps(){document.querySelectorAll(`.recipe-list-item`).forEach(e=>{e.addEventListener(`click`,async()=>{Os=e.dataset.id,document.querySelectorAll(`.recipe-list-item`).forEach(e=>e.classList.remove(`active`)),e.classList.add(`active`),await Fs(Ds.find(e=>e.id===Os))})}),document.querySelectorAll(`.product-active-toggle`).forEach(e=>{e.addEventListener(`click`,e=>e.stopPropagation()),e.addEventListener(`change`,async e=>{if(F!==`admin`&&F!==`office`){alert(`동결제품 활성 변경은 대표/사무실 계정만 가능합니다.`),e.target.checked=!e.target.checked;return}let t=e.target.dataset.id,n=e.target.checked,r=Ds.find(e=>e.id===t),i=r?.active!==!1;try{if(await E(k(P,`frozenProducts`,t),{active:n,updatedAt:new Date}),r&&(r.active=n),i!==n&&await io({action:`frozenProduct`,subAction:`activeToggle`,date:I(),staff:Ws(),message:`Frozen product ${n?`active`:`inactive`} — ${r?.name||t}`,details:{productId:t,productName:r?.name||null,active:n}}),Ms(),Os){let e=Ds.find(e=>e.id===Os);e&&await Fs(e)}}catch(t){console.error(`[frozenProduct] active save failed:`,t),alert(`활성 상태 저장 중 오류가 발생했습니다.`),e.target.checked=!n}})})}async function Fs(e){let t=document.getElementById(`productDetail`),n=await js(e.id),r=F===`admin`||F===`office`,i=e.active!==!1,a=`-`;if(e.bagTypeId){let t=await A(k(P,`bagTypes`,e.bagTypeId));t.exists()&&(a=t.data().name)}t.innerHTML=`
     <div class="detail-header">
       <span class="detail-title">${e.name}</span>
       <div class="detail-actions">
@@ -1106,7 +1107,7 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
       </div>
     </div>
   `,document.getElementById(`btnAddIncoming`)?.addEventListener(`click`,()=>Bs(e)),document.getElementById(`btnEditProduct`)?.addEventListener(`click`,()=>Ls(e)),document.querySelectorAll(`.btn-edit-row`).forEach(t=>{t.addEventListener(`click`,async()=>{let n=t.dataset.logid,r=await A(k(P,`frozenLogs`,n));if(!r.exists()){alert(`입고 로그를 찾을 수 없습니다.`);return}zs(e,{id:n,...r.data()})})}),document.querySelectorAll(`.btn-del-row`).forEach(t=>{t.addEventListener(`click`,async()=>{if(F!==`admin`&&F!==`office`){alert(`동결제품 입고 삭제는 대표/사무실 계정만 가능합니다.`);return}if(!await wa({title:`동결제품 입고 삭제`,message:`삭제하시겠습니까?
-차감된 봉투 재고가 복원됩니다.`,confirmText:`삭제`,danger:!0}))return;let n=t.dataset.logid,r=await A(k(P,`frozenLogs`,n));if(!r.exists()){alert(`입고 로그를 찾을 수 없습니다.`);return}let i=r.data();if(!await L(i.date)){if(i.ledgerId){let e=await A(k(P,`stockLedger`,i.ledgerId));if(e.exists()&&e.data().status===`active`){let t=e.data().items||[];for(let e of t){let t=await A(k(P,e.collection,e.docId));if(!t.exists())continue;let n=t.data()[e.field]||0;if(n!==e.after&&!await wa({title:`재고 변동 감지`,message:`동결제품 입고 이후 ${e.label} 재고가 변경된 이력이 있습니다.\n입고 당시 차감분만 복원됩니다.\n\n강제 복원하시겠습니까?`,confirmText:`강제 복원`,danger:!0}))continue;let r=n-e.delta;await E(k(P,e.collection,e.docId),{[e.field]:r,updatedAt:new Date}),e.collection===`bagTypes`&&await M(j(P,`bagLogs`),{date:I(),timestamp:new Date,bagTypeId:e.docId,bagNameSnapshot:t.data().name||``,type:`autoDeductReverse`,qty:-e.delta,before:n,after:r,staffName:i.staffName||``,note:`동결제품 입고 삭제 복원 - ${i.productNameSnapshot||``}`})}await E(k(P,`stockLedger`,i.ledgerId),{status:`rolledBack`,rolledBackAt:new Date})}}else if(i.bagTypeId&&(i.deductedBagQty||0)>0){let e=await A(k(P,`bagTypes`,i.bagTypeId));if(e.exists()){let t=e.data().currentQty||0;await E(k(P,`bagTypes`,i.bagTypeId),{currentQty:t+i.deductedBagQty,updatedAt:new Date})}}await E(k(P,`frozenLogs`,n),{status:`deleted`}),await Fs(e),alert(`삭제 완료!`)}})})}function Is(){Rs(null)}function Ls(e){Rs(e)}async function Rs(e){let t=!e,n=(await C(T(j(P,`bagTypes`),se(`sortOrder`)))).docs.map(e=>({id:e.id,...e.data()})).filter(n=>n.category===`freezeDry`&&(n.active!==!1||!t&&n.id===e?.bagTypeId)),r=await Ts(),i=t?!0:e.active!==!1;Gs(`
+차감된 봉투 재고가 복원됩니다.`,confirmText:`삭제`,danger:!0}))return;let n=t.dataset.logid,r=await A(k(P,`frozenLogs`,n));if(!r.exists()){alert(`입고 로그를 찾을 수 없습니다.`);return}let i=r.data();if(!await L(i.date)){if(i.ledgerId){let e=await A(k(P,`stockLedger`,i.ledgerId));if(e.exists()&&e.data().status===`active`){let t=e.data().items||[];for(let e of t){let t=await A(k(P,e.collection,e.docId));if(!t.exists())continue;let n=t.data()[e.field]||0;if(n!==e.after&&!await wa({title:`재고 변동 감지`,message:`동결제품 입고 이후 ${e.label} 재고가 변경된 이력이 있습니다.\n입고 당시 차감분만 복원됩니다.\n\n강제 복원하시겠습니까?`,confirmText:`강제 복원`,danger:!0}))continue;let r=n-e.delta;await E(k(P,e.collection,e.docId),{[e.field]:r,updatedAt:new Date}),e.collection===`bagTypes`&&await M(j(P,`bagLogs`),{date:I(),timestamp:new Date,bagTypeId:e.docId,bagNameSnapshot:t.data().name||``,type:`autoDeductReverse`,qty:-e.delta,before:n,after:r,staffName:i.staffName||``,note:`동결제품 입고 삭제 복원 - ${i.productNameSnapshot||``}`})}await E(k(P,`stockLedger`,i.ledgerId),{status:`rolledBack`,rolledBackAt:new Date})}}else if(i.bagTypeId&&(i.deductedBagQty||0)>0){let e=await A(k(P,`bagTypes`,i.bagTypeId));if(e.exists()){let t=e.data().currentQty||0;await E(k(P,`bagTypes`,i.bagTypeId),{currentQty:t+i.deductedBagQty,updatedAt:new Date})}}await E(k(P,`frozenLogs`,n),{status:`deleted`}),await Fs(e),alert(`삭제 완료!`)}})})}function Is(){Rs(null)}function Ls(e){Rs(e)}async function Rs(e){let t=!e,n=(await C(T(j(P,`bagTypes`),se(`sortOrder`)))).docs.map(e=>({id:e.id,...e.data()})).filter(n=>n.category===`freezeDry`&&(n.active!==!1||!t&&n.id===e?.bagTypeId)),r=await Ts();Gs(`
     <h3 class="modal-title">${t?`동결제품 추가`:`동결제품 수정`}</h3>
     <div class="form-group">
       <label>제품명 *</label>
@@ -1128,20 +1129,11 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
         <option value="true" ${e?.requiresSeparation?`selected`:``}>예</option>
       </select>
     </div>
-    ${t?``:`
-      <div class="form-group">
-        <label>\uD65C\uC131 \uC0C1\uD0DC</label>
-        <label class="toggle-switch" title="${i?`활성`:`비활성`}">
-          <input type="checkbox" id="m_productActive" ${i?`checked`:``}>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-    `}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn-primary" id="btnSaveProduct">${t?`추가`:`저장`}</button>
     </div>
-  `),document.getElementById(`btnSaveProduct`).addEventListener(`click`,async()=>{if(F!==`admin`&&F!==`office`){alert(`동결제품 등록/수정은 대표/사무실 계정만 가능합니다.`);return}let n=document.getElementById(`m_name`).value.trim(),r=n,i=document.getElementById(`m_bagType`).value,a=document.getElementById(`m_separation`).value===`true`,o=t?!0:document.getElementById(`m_productActive`).checked,s=t?!0:e.active!==!1;if(!n||!i){alert(`제품명과 연결 봉투는 필수입니다.`);return}let c={name:n,recipeTitleRef:r,bagTypeId:i,requiresSeparation:a,active:o,sortOrder:t?Ds.length:e.sortOrder,updatedAt:new Date};t?(c.createdAt=new Date,await M(j(P,`frozenProducts`),c)):(await E(k(P,`frozenProducts`,e.id),c),s!==o&&await io({action:`frozenProduct`,subAction:`activeToggle`,date:I(),staff:Ws(),message:`Frozen product ${o?`active`:`inactive`} — ${n}`,details:{productId:e.id,productName:n,active:o}})),Ds=await As(),closeModal(),Ms(),alert(t?`추가 완료!`:`수정 완료!`)})}function zs(e,t){Gs(`
+  `),document.getElementById(`btnSaveProduct`).addEventListener(`click`,async()=>{if(F!==`admin`&&F!==`office`){alert(`동결제품 등록/수정은 대표/사무실 계정만 가능합니다.`);return}let n=document.getElementById(`m_name`).value.trim(),r=n,i=document.getElementById(`m_bagType`).value,a=document.getElementById(`m_separation`).value===`true`,o=t?!0:e.active!==!1;if(!n||!i){alert(`제품명과 연결 봉투는 필수입니다.`);return}let s={name:n,recipeTitleRef:r,bagTypeId:i,requiresSeparation:a,active:o,sortOrder:t?Ds.length:e.sortOrder,updatedAt:new Date};t?(s.createdAt=new Date,await M(j(P,`frozenProducts`),s)):await E(k(P,`frozenProducts`,e.id),s),Ds=await As(),closeModal(),Ms(),alert(t?`추가 완료!`:`수정 완료!`)})}function zs(e,t){Gs(`
     <h3 class="modal-title">입고 수정 — ${e.name}</h3>
     <div class="form-row">
       <div class="form-group">
