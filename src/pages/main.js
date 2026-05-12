@@ -160,7 +160,7 @@ function renderMainLayout() {
           </div>
         </div>
 
-        <!-- [묶음 6C-1] 3번 화면 = 차단 영역 + 생산 로그 + 사무 로그 -->
+        <!-- 3번 화면 = 차단 영역 + 생산 로그 + 사무 로그 -->
         <div class="main-panel-3">
           ${renderBlockerArea()}
           ${renderLogSection('production')}
@@ -830,7 +830,7 @@ function renderLogSection(category) {
   const hasUnackGeneral = sectionLogs.some(l => l.acknowledged !== true && !logRequiresAck(l));
 
   const rowsHtml = sectionLogs.length === 0
-    ? `<div class="log-empty">${category === 'production' ? '6C-2/3에서 발행 추가 예정' : '오늘 사무 로그 없음'}</div>`
+    ? `<div class="log-empty">${category === 'production' ? '오늘 생산 로그 없음' : '오늘 사무 로그 없음'}</div>`
     : sectionLogs.map(log => renderLogRow(log)).join('');
 
   return `
