@@ -2,31 +2,11 @@ import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import {
   PRESERVE_COLLECTIONS,
+  WIPE_COLLECTIONS,
   parseArgs,
 } from './firestoreConfig.mjs';
 
-const ADMIN_WIPE_COLLECTIONS = [
-  'productionCompletion',
-  'meatLogs',
-  'meatStocks',
-  'meatTypes',
-  'bagLogs',
-  'bagTypes',
-  'eggLogs',
-  'eggStock',
-  'frozenLogs',
-  'frozenProducts',
-  'frozenPanStock',
-  'frozenPanLogs',
-  'frozenPanLots',
-  'frozenSeparation',
-  'frozenSeparationLogs',
-  'schedules',
-  'events',
-  'holidays',
-  'activityLogs',
-  'stockLedger',
-];
+const ADMIN_WIPE_COLLECTIONS = WIPE_COLLECTIONS;
 
 const DATABASE = '(default)';
 const BATCH_LIMIT = 450;

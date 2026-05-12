@@ -27,6 +27,7 @@ export const PRESERVE_COLLECTIONS = [
 export const WIPE_COLLECTIONS = [
   'productions',
   'productionCompletion',
+  'closings',
   'meatLogs',
   'meatStocks',
   'meatTypes',
@@ -39,6 +40,8 @@ export const WIPE_COLLECTIONS = [
   'frozenPanStock',
   'frozenPanLogs',
   'frozenPanLots',
+  'breadPanLogs',
+  'breadPanLots',
   'frozenSeparation',
   'frozenSeparationLogs',
   'schedules',
