@@ -13,6 +13,17 @@ let productions = [];
 let selectedDate = getToday();
 let selectedProductionId = null;
 
+function isTenderFreezeDry(item) {
+  return item?.category === 'freezeDry' && item.requiresSeparation === false;
+}
+
+function renderFreezeDryQtyLine(item) {
+  const parts = [`${item.freezeDryBagQty || 0}봉`];
+  if (!isTenderFreezeDry(item)) parts.push(`${item.breadPanQty || 0}빵판`);
+  parts.push(`${item.freezePanQty || 0}동결판`);
+  return parts.join(' / ');
+}
+
 export async function renderProduction() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>생산 입력 로딩 중...</p></div>`;
@@ -188,7 +199,7 @@ function renderProductionCards() {
       <div class="card-title">${p.recipeName}${getRoundBadgeHtml(p)}</div>
       <div class="card-info">${p.productionUnitQty} ${p.productionUnitName}</div>
       ${p.category === 'raw' ? `<div class="card-sub">${p.rawBoxQty || 0}박스</div>` : ''}
-      ${p.category === 'freezeDry' ? `<div class="card-sub">${p.freezeDryBagQty || 0}봉 / ${p.breadPanQty || 0}빵판 / ${p.freezePanQty || 0}동결판</div>` : ''}
+      ${p.category === 'freezeDry' ? `<div class="card-sub">${renderFreezeDryQtyLine(p)}</div>` : ''}
       ${canManageProduction ? `<button class="card-del" data-id="${p.id}">✕</button>` : ''}
     </div>
   `).join('');
@@ -314,7 +325,10 @@ const ingHtml = (recipe.ingredients || []).map(ing => {
       const boxes = Math.ceil(totalG / recipe.packWeightG / 20);
       refs = `📦 박스수: ${boxes}박스`;
     } else if (recipe.category === 'freezeDry') {
-      refs = `봉지: ${(recipe.freezeDryBagCountPerUnit || 0) * qty} / 빵판: ${(recipe.breadPanCountPerUnit || 0) * qty} / 동결판: ${(recipe.freezePanCountPerUnit || 0) * qty}`;
+      const parts = [`봉지: ${(recipe.freezeDryBagCountPerUnit || 0) * qty}`];
+      if (!isTenderFreezeDry(recipe)) parts.push(`빵판: ${(recipe.breadPanCountPerUnit || 0) * qty}`);
+      parts.push(`동결판: ${(recipe.freezePanCountPerUnit || 0) * qty}`);
+      refs = parts.join(' / ');
     }
     document.getElementById('pf_refs').textContent = refs;
   }
@@ -360,6 +374,7 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
       recipeId,
       recipeName: displayName,
       category: recipe.category,
+      requiresSeparation: recipe.requiresSeparation === true,
       target: recipe.target,
       color: recipe.color || '#4A7C59',
       round,
@@ -389,7 +404,7 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
     }
     if (recipe.category === 'freezeDry') {
       data.freezeDryBagQty = (recipe.freezeDryBagCountPerUnit || 0) * qty;
-      data.breadPanQty = (recipe.breadPanCountPerUnit || 0) * qty;
+      data.breadPanQty = isTenderFreezeDry(recipe) ? 0 : (recipe.breadPanCountPerUnit || 0) * qty;
       data.freezePanQty = (recipe.freezePanCountPerUnit || 0) * qty;
     }
 
@@ -542,7 +557,7 @@ function showBigViewModal() {
             <div style="font-size:13px;font-weight:600;margin-bottom:6px;">${p.recipeName}${getRoundBadgeHtml(p)}</div>
             <div style="font-size:12px;color:#555;">${p.productionUnitQty} ${p.productionUnitName}</div>
             ${p.category === 'raw' ? `<div style="font-size:11px;color:#888;">${p.rawBoxQty || 0}박스</div>` : ''}
-            ${p.category === 'freezeDry' ? `<div style="font-size:11px;color:#888;">${p.freezeDryBagQty || 0}봉 / ${p.breadPanQty || 0}빵판</div>` : ''}
+            ${p.category === 'freezeDry' ? `<div style="font-size:11px;color:#888;">${renderFreezeDryQtyLine(p)}</div>` : ''}
           </div>
         `).join('')}
     </div>

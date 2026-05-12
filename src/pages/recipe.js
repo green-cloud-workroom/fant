@@ -194,7 +194,7 @@ function showRecipeDetail(recipe) {
               <label>생산단위 1당 봉지수</label>
               <input type="number" id="freezeDryBagCount" value="${recipe?.freezeDryBagCountPerUnit || ''}" />
             </div>
-            <div class="form-group">
+            <div class="form-group" id="breadPanCountGroup" style="${recipe?.requiresSeparation === false ? 'display:none' : ''}">
               <label>생산단위 1당 빵판수</label>
               <input type="number" id="breadPanCount" value="${recipe?.breadPanCountPerUnit || ''}" />
             </div>
@@ -243,12 +243,19 @@ function showRecipeDetail(recipe) {
     </div>
   `;
 
-  // 카테고리 변경 시 필드 표시/숨김
-  document.getElementById('recipeCategory').addEventListener('change', (e) => {
-    const val = e.target.value;
-    document.getElementById('rawFields').style.display = val === 'raw' ? '' : 'none';
-    document.getElementById('freezeDryFields').style.display = val === 'freezeDry' ? '' : 'none';
-  });
+  const updateFieldVisibility = () => {
+    const category = document.getElementById('recipeCategory').value;
+    const requiresSeparation = document.getElementById('requiresSeparation')?.value === 'true';
+    document.getElementById('rawFields').style.display = category === 'raw' ? '' : 'none';
+    document.getElementById('freezeDryFields').style.display = category === 'freezeDry' ? '' : 'none';
+    const breadPanGroup = document.getElementById('breadPanCountGroup');
+    if (breadPanGroup) {
+      breadPanGroup.style.display = category === 'freezeDry' && requiresSeparation ? '' : 'none';
+    }
+  };
+  document.getElementById('recipeCategory').addEventListener('change', updateFieldVisibility);
+  document.getElementById('requiresSeparation')?.addEventListener('change', updateFieldVisibility);
+  updateFieldVisibility();
 
   // 행 추가
   document.getElementById('btnAddIngredient').addEventListener('click', () => {
@@ -430,10 +437,11 @@ async function saveRecipe(id) {
   }
 
   if (category === 'freezeDry') {
+    const requiresSeparation = document.getElementById('requiresSeparation').value === 'true';
     data.freezeDryBagCountPerUnit = parseFloat(document.getElementById('freezeDryBagCount').value) || null;
-    data.breadPanCountPerUnit = parseFloat(document.getElementById('breadPanCount').value) || null;
+    data.breadPanCountPerUnit = requiresSeparation ? (parseFloat(document.getElementById('breadPanCount').value) || null) : 0;
     data.freezePanCountPerUnit = parseFloat(document.getElementById('freezePanCount').value) || null;
-    data.requiresSeparation = document.getElementById('requiresSeparation').value === 'true';
+    data.requiresSeparation = requiresSeparation;
   }
 
   if (id) {

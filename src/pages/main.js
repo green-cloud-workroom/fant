@@ -31,6 +31,17 @@ let calendarWeekOffset = 0;  // 0=오늘 포함 주, +1=한 주 앞으로, -1=�
 let selectedProductionDate = null;
 let selectedDateProductions = [];
 
+function isTenderFreezeDryProduction(item) {
+  return item?.category === 'freezeDry' && item.requiresSeparation === false;
+}
+
+function renderFreezeDryProductionMeta(item) {
+  const parts = [`<span>${item.freezeDryBagQty || 0}봉</span>`];
+  if (!isTenderFreezeDryProduction(item)) parts.push(`<span>${item.breadPanQty || 0}빵판</span>`);
+  parts.push(`<span>${item.freezePanQty || 0}동결판</span>`);
+  return parts.join('');
+}
+
 // [묶음 6C-1] 로그 패널 데이터 — 당일 전체 + 어제 이전 미확인(확인 필수)만
 let combinedLogs = [];
 
@@ -1661,7 +1672,7 @@ function renderProductionTableCard(p) {
       </table>
       <div class="main-production-meta">
         ${p.category === 'raw' ? `<span>${p.rawBoxQty || 0}박스</span>` : ''}
-        ${p.category === 'freezeDry' ? `<span>${p.freezeDryBagQty || 0}봉</span><span>${p.breadPanQty || 0}빵판</span><span>${p.freezePanQty || 0}동결판</span>` : ''}
+        ${p.category === 'freezeDry' ? renderFreezeDryProductionMeta(p) : ''}
       </div>
     </div>
   `;
