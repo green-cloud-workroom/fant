@@ -1,6 +1,6 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc
+  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc
 } from 'firebase/firestore';
 import { getTodayKST as getToday, addMonthsKST } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
@@ -63,19 +63,22 @@ function renderFrozenProductLayout() {
 }
 
 function renderProductList() {
-  if (frozenProducts.length === 0) return '<div class="list-empty">등록된 제품 없음</div>';
+  if (frozenProducts.length === 0) return '<div class="list-empty">\uB4F1\uB85D\uB41C \uC81C\uD488 \uC5C6\uC74C</div>';
   return frozenProducts
-    .filter(p => p.active !== false)
-    .map(p => `
-      <div class="recipe-list-item ${selectedProductId === p.id ? 'active' : ''}" data-id="${p.id}">
+    .map(p => {
+      const active = p.active !== false;
+      return `
+      <div class="recipe-list-item ${selectedProductId === p.id ? 'active' : ''} ${active ? '' : 'inactive-master'}" data-id="${p.id}">
         <div class="recipe-list-info">
           <span class="recipe-name">${p.name}</span>
           <div class="recipe-tags">
             <span style="font-size:11px;color:#888">${p.recipeTitleRef || '-'}</span>
+            ${active ? '' : '<span class="tag tag-inactive">\uBE44\uD65C\uC131</span>'}
           </div>
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 function bindProductListEvents() {
@@ -94,6 +97,7 @@ async function showProductDetail(product) {
   const detail = document.getElementById('productDetail');
   const logs = await loadFrozenLogs(product.id);
   const canManageFrozenProduct = currentUserRole === 'admin' || currentUserRole === 'office';
+  const productActive = product.active !== false;
 
   // 연결 봉투 정보
   let bagName = '-';
@@ -107,7 +111,7 @@ async function showProductDetail(product) {
       <span class="detail-title">${product.name}</span>
       <div class="detail-actions">
         ${canManageFrozenProduct ? '<button class="btn-secondary" id="btnEditProduct">수정</button>' : ''}
-        <button class="btn-primary" id="btnAddIncoming">+ 입고 등록</button>
+        ${productActive ? '<button class="btn-primary" id="btnAddIncoming">+ \uC785\uACE0 \uB4F1\uB85D</button>' : '<button class="btn-secondary" disabled>\uBE44\uD65C\uC131</button>'}
       </div>
     </div>
     <div class="detail-body">
@@ -172,7 +176,7 @@ async function showProductDetail(product) {
     </div>
   `;
 
-  document.getElementById('btnAddIncoming').addEventListener('click', () => showIncomingModal(product));
+  document.getElementById('btnAddIncoming')?.addEventListener('click', () => showIncomingModal(product));
   document.getElementById('btnEditProduct')?.addEventListener('click', () => showEditProductModal(product));
 
   document.querySelectorAll('.btn-edit-row').forEach(btn => {
@@ -288,8 +292,11 @@ async function showProductModal(product) {
 
   // 봉투 목록 로드
   const bagSnap = await getDocs(query(collection(db, 'bagTypes'), orderBy('sortOrder')));
-  const bags = bagSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(b => b.category === 'freezeDry');
+  const bags = bagSnap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(b => b.category === 'freezeDry' && (b.active !== false || (!isNew && b.id === product?.bagTypeId)));
   const recipes = await getActiveFreezeDryRecipes();
+  const active = isNew ? true : product.active !== false;
 
   showModal(`
     <h3 class="modal-title">${isNew ? '동결제품 추가' : '동결제품 수정'}</h3>
@@ -303,7 +310,7 @@ async function showProductModal(product) {
       <label>연결 봉투 *</label>
       <select id="m_bagType">
         <option value="">선택</option>
-        ${bags.map(b => `<option value="${b.id}" ${product?.bagTypeId === b.id ? 'selected' : ''}>${b.name}</option>`).join('')}
+        ${bags.map(b => `<option value="${b.id}" ${product?.bagTypeId === b.id ? 'selected' : ''}>${b.name}${b.active === false ? ' (\uBE44\uD65C\uC131)' : ''}</option>`).join('')}
       </select>
     </div>
     <div class="form-group">
@@ -313,6 +320,15 @@ async function showProductModal(product) {
         <option value="true" ${product?.requiresSeparation ? 'selected' : ''}>예</option>
       </select>
     </div>
+    ${!isNew ? `
+      <div class="form-group">
+        <label>\uD65C\uC131 \uC0C1\uD0DC</label>
+        <label class="toggle-switch" title="${active ? '\uD65C\uC131' : '\uBE44\uD65C\uC131'}">
+          <input type="checkbox" id="m_productActive" ${active ? 'checked' : ''}>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    ` : ''}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn-primary" id="btnSaveProduct">${isNew ? '추가' : '저장'}</button>
@@ -328,6 +344,8 @@ async function showProductModal(product) {
     const recipeRef = name;
     const bagTypeId = document.getElementById('m_bagType').value;
     const requiresSeparation = document.getElementById('m_separation').value === 'true';
+    const nextActive = isNew ? true : document.getElementById('m_productActive').checked;
+    const previousActive = isNew ? true : product.active !== false;
 
     if (!name || !bagTypeId) { alert('제품명과 연결 봉투는 필수입니다.'); return; }
 
@@ -336,7 +354,7 @@ async function showProductModal(product) {
       recipeTitleRef: recipeRef,
       bagTypeId,
       requiresSeparation,
-      active: true,
+      active: nextActive,
       sortOrder: isNew ? frozenProducts.length : product.sortOrder,
       updatedAt: new Date(),
     };
@@ -346,6 +364,20 @@ async function showProductModal(product) {
       await addDoc(collection(db, 'frozenProducts'), data);
     } else {
       await updateDoc(doc(db, 'frozenProducts', product.id), data);
+      if (previousActive !== nextActive) {
+        await recordActivity({
+          action: 'frozenProduct',
+          subAction: 'activeToggle',
+          date: getToday(),
+          staff: getRoleStaffLabel(),
+          message: `Frozen product ${nextActive ? 'active' : 'inactive'} — ${name}`,
+          details: {
+            productId: product.id,
+            productName: name,
+            active: nextActive,
+          },
+        });
+      }
     }
 
     frozenProducts = await loadFrozenProducts();
@@ -717,6 +749,13 @@ function getStaffOptions(groups) {
     });
   }
   return options;
+}
+
+function getRoleStaffLabel() {
+  if (currentUserRole === 'admin') return '\uB300\uD45C';
+  if (currentUserRole === 'office') return '\uC0AC\uBB34\uC2E4';
+  if (currentUserRole === 'production') return '\uC0DD\uC0B0\uC2E4';
+  return '\uC2DC\uC2A4\uD15C';
 }
 
 function showModal(html) {

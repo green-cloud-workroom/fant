@@ -1,13 +1,12 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, setDoc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc, where
+  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, where
 } from 'firebase/firestore';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { recordMeatLog } from '../services/meatLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
-import { showConfirmModal } from '../utils/modal.js';
 
 let meatTypes = [];
 let currentTab = 'frozen';
@@ -24,6 +23,10 @@ async function loadMeatTypes() {
   const q = query(collection(db, 'meatTypes'), orderBy('sortOrder'));
   const snap = await getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+function getActiveMeatTypes() {
+  return meatTypes.filter(m => m.active !== false);
 }
 
 async function loadMeatLogs(stage) {
@@ -371,7 +374,7 @@ function showAddFrozenModal() {
       <label>원육 종류 *</label>
       <select id="m_meatType">
         <option value="">선택</option>
-        ${meatTypes.map(m => `<option value="${m.id}" data-weight="${m.defaultUnitWeightG}">${m.name}</option>`).join('')}
+        ${getActiveMeatTypes().map(m => `<option value="${m.id}" data-weight="${m.defaultUnitWeightG}">${m.name}</option>`).join('')}
       </select>
     </div>
     <div class="form-row">
@@ -489,7 +492,7 @@ function showAddProcessedModal() {
       <label>원육 종류 *</label>
       <select id="m_meatType">
         <option value="">선택</option>
-        ${meatTypes.map(m => `<option value="${m.id}" data-weight="${m.defaultUnitWeightG}">${m.name}</option>`).join('')}
+        ${getActiveMeatTypes().map(m => `<option value="${m.id}" data-weight="${m.defaultUnitWeightG}">${m.name}</option>`).join('')}
       </select>
     </div>
     <div class="form-row">
@@ -647,7 +650,7 @@ function showAddRepackedModal() {
       <label>원육 종류 *</label>
       <select id="m_meatType">
         <option value="">선택</option>
-        ${meatTypes.map(m => `<option value="${m.id}" data-weight="${m.defaultUnitWeightG}">${m.name}</option>`).join('')}
+        ${getActiveMeatTypes().map(m => `<option value="${m.id}" data-weight="${m.defaultUnitWeightG}">${m.name}</option>`).join('')}
       </select>
     </div>
     <div class="form-row">
@@ -919,24 +922,33 @@ function showMeatTypesModal() {
             <th>기본 단위중량(g)</th>
             <th>최소재고(kg)</th>
             <th>통계 표시</th>
-            <th></th>
+            <th>\uD65C\uC131</th>
           </tr>
         </thead>
         <tbody id="meatTypesList">
           ${meatTypes.map(m => {
             const showInStats = m.showInStats !== false;
+            const active = m.active !== false;
             return `
-              <tr>
-                <td>${m.name}</td>
+              <tr class="${active ? '' : 'inactive-master'}">
+                <td>
+                  ${m.name}
+                  ${active ? '' : '<span class="tag tag-inactive" style="margin-left:6px;">\uBE44\uD65C\uC131</span>'}
+                </td>
                 <td>${m.defaultUnitWeightG}g</td>
-                <td>${(m.minimumQtyG / 1000).toFixed(1)}kg</td>
+                <td>${((m.minimumQtyG || 0) / 1000).toFixed(1)}kg</td>
                 <td>
                   <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;">
                     <input type="checkbox" class="m-show-in-stats" data-id="${m.id}" ${showInStats ? 'checked' : ''}>
                     <span>통계에 표시</span>
                   </label>
                 </td>
-                <td><button class="btn-del-row" data-id="${m.id}">삭제</button></td>
+                <td>
+                  <label class="toggle-switch" title="${active ? '\uD65C\uC131' : '\uBE44\uD65C\uC131'}">
+                    <input type="checkbox" class="m-active-toggle" data-id="${m.id}" ${active ? 'checked' : ''}>
+                    <span class="toggle-slider"></span>
+                  </label>
+                </td>
               </tr>
             `;
           }).join('')}
@@ -966,16 +978,6 @@ function showMeatTypesModal() {
     </div>
   `);
 
-  document.querySelectorAll('.btn-del-row').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const __c = await showConfirmModal({ title:'삭제 확인', message:'정말 삭제하시겠습니까?', confirmText:'삭제', danger:true }); if (!__c) return;
-      await deleteDoc(doc(db, 'meatTypes', btn.dataset.id));
-      meatTypes = await loadMeatTypes();
-      closeModal();
-      showMeatTypesModal();
-    });
-  });
-
   document.querySelectorAll('.m-show-in-stats').forEach(cb => {
     cb.addEventListener('change', async (e) => {
       const id = e.target.dataset.id;
@@ -991,6 +993,42 @@ function showMeatTypesModal() {
         console.error('[meat] showInStats 저장 실패:', err);
         alert('저장 실패: ' + (err.message || err));
         e.target.checked = !showInStats;
+      }
+    });
+  });
+
+  document.querySelectorAll('.m-active-toggle').forEach(cb => {
+    cb.addEventListener('change', async (e) => {
+      const id = e.target.dataset.id;
+      const active = e.target.checked;
+      const target = meatTypes.find(m => m.id === id);
+      const previousActive = target?.active !== false;
+      try {
+        await updateDoc(doc(db, 'meatTypes', id), {
+          active,
+          updatedAt: new Date(),
+        });
+        if (target) target.active = active;
+        if (previousActive !== active) {
+          await recordActivity({
+            action: 'meat',
+            subAction: 'activeToggle',
+            date: getToday(),
+            staff: getRoleStaffLabel(),
+            message: `Meat type ${active ? 'active' : 'inactive'} — ${target?.name || id}`,
+            details: {
+              meatTypeId: id,
+              meatName: target?.name || '',
+              active,
+            },
+          });
+        }
+        closeModal();
+        showMeatTypesModal();
+      } catch (err) {
+        console.error('[meat] active save failed:', err);
+        alert('Save failed: ' + (err.message || err));
+        e.target.checked = !active;
       }
     });
   });
@@ -1033,6 +1071,13 @@ async function loadStaffCache() {
     const snap = await getDoc(doc(db, 'staffGroups', key));
     if (snap.exists()) staffCache[key] = snap.data().members || [];
   }
+}
+
+function getRoleStaffLabel() {
+  if (currentUserRole === 'admin') return '\uB300\uD45C';
+  if (currentUserRole === 'office') return '\uC0AC\uBB34\uC2E4';
+  if (currentUserRole === 'production') return '\uC0DD\uC0B0\uC2E4';
+  return '\uC2DC\uC2A4\uD15C';
 }
 
 function getStaffOptions(groups) {

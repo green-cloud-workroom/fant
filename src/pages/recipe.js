@@ -19,7 +19,7 @@ async function loadMeatTypes() {
 async function loadBagTypes() {
   const q = query(collection(db, 'bagTypes'), orderBy('sortOrder'));
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(b => b.active !== false);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
 export async function renderRecipe() {
@@ -175,7 +175,10 @@ function showRecipeDetail(recipe) {
             <label>사용 봉투 *</label>
             <select id="recipeBagType">
               <option value="">선택</option>
-              ${bagTypes.map(b => `<option value="${b.id}" ${recipe?.bagTypeId === b.id ? 'selected' : ''}>${b.name}</option>`).join('')}
+              ${bagTypes
+                .filter(b => b.active !== false || recipe?.bagTypeId === b.id)
+                .map(b => `<option value="${b.id}" ${recipe?.bagTypeId === b.id ? 'selected' : ''}>${b.name}${b.active === false ? ' (비활성)' : ''}</option>`)
+                .join('')}
             </select>
           </div>
         </div>
@@ -275,6 +278,7 @@ function renderIngredientRow(ing, idx) {
   // 기본값: 신규 행은 재고연동 ON, 기존 행은 저장된 값 유지
   const isLinked = ing.linkedToInventory === undefined ? true : ing.linkedToInventory;
   const meatOptions = meatTypes
+    .filter(m => m.active !== false || ing.meatTypeId === m.id)
     .map(m => `<option value="${m.id}" ${ing.meatTypeId === m.id ? 'selected' : ''}>${m.name}</option>`)
     .join('');
 
@@ -338,7 +342,7 @@ function handleIngredientPaste(e) {
     const weight = cols[1]?.trim() || '';
 
     // 원육명 매칭 → 재고연동 자동 ON + meatTypeId 세팅
-    const matchedMeat = meatTypes.find(m => m.name === name);
+    const matchedMeat = meatTypes.find(m => m.active !== false && m.name === name);
     const linkedToInventory = !!matchedMeat;
     const meatTypeId = matchedMeat?.id || null;
 

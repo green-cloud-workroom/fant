@@ -208,6 +208,13 @@ function isMinimumStockAlertLog(log) {
   return log.action === 'minStock' && log.subAction === 'alert';
 }
 
+function summarizeClosingLog(log) {
+  const action = log.action || 'unknown';
+  const subAction = log.subAction || '-';
+  const message = log.message || log.title || log.text || '(메시지 없음)';
+  return `${action}:${subAction} — ${message}`;
+}
+
 /**
  * 5. 생산 로그 미확인 항목 있음
  */
@@ -225,7 +232,8 @@ export function judgeProductionLogsAcknowledged(activityLogs, dateStr) {
     reason: pending.length > 0
       ? `생산 로그 미확인 항목 ${pending.length}건 있습니다`
       : '',
-    count: pending.length
+    count: pending.length,
+    details: pending.map(summarizeClosingLog)
   };
 }
 
@@ -245,7 +253,8 @@ export function judgeOfficeLogsAcknowledged(activityLogs, dateStr) {
     reason: pending.length > 0
       ? `사무 로그 미확인 항목 ${pending.length}건 있습니다`
       : '',
-    count: pending.length
+    count: pending.length,
+    details: pending.map(summarizeClosingLog)
   };
 }
 
@@ -371,6 +380,7 @@ export function aggregateBlockingItems(results = {}, flags = DEFAULT_CLOSING_FLA
         label: BLOCKING_ITEM_META[id].label,
         reason: result.reason || '',
         count: result.count || 0,
+        details: result.details || [],
         jumpMenu: BLOCKING_ITEM_META[id].jumpMenu
       });
     }

@@ -299,7 +299,8 @@ async function showScheduleModal(editingSchedule = null) {
     wrap.style.display = '';
     select.innerHTML = '<option value="">선택</option>';
 
-    const items = type === 'meat' ? meatTypes : bagTypes;
+    const allItems = type === 'meat' ? meatTypes : bagTypes;
+    const items = allItems.filter(item => item.active !== false || (isEdit && editingSchedule?.itemId === item.id));
     items.forEach(item => {
       select.innerHTML += `<option value="${item.id}" data-name="${item.name}">${item.name}</option>`;
     });

@@ -237,38 +237,62 @@ function showBlockingModal() {
   if (existing) existing.remove();
 
   const dateLabel = formatKstDateWithDay(data.date);
+  const today = getTodayKST();
+  const isPastTarget = data.date < today;
+  const modalTitle = isPastTarget
+    ? '⚠️ 지난 영업일 마감이 처리되지 않았습니다'
+    : '⚠️ 오늘 마감을 진행할 수 없습니다';
+  const blockedIntro = isPastTarget
+    ? `${dateLabel} 마감이 완료되지 않아 다음 작업들이 차단됩니다:`
+    : '아래 항목을 처리한 후 다시 시도해주세요.';
+
+  const escapeModalText = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 
   let bodyHtml;
   if (data.totalBlocked === 0) {
     bodyHtml = `
       <p class="blocking-modal-desc">
-        ${dateLabel} 마감이 완료되지 않아 신규 등록이 차단됩니다.
+        ${isPastTarget ? `${dateLabel} 마감이 완료되지 않아 신규 등록이 차단됩니다.` : '처리할 차단 항목은 없습니다.'}
       </p>
       <p class="blocking-modal-desc">
-        처리할 차단 항목은 없으니, QC 계정에서 마감 버튼만 누르면 해제됩니다.
+        마감 버튼을 다시 누르면 진행할 수 있습니다.
       </p>
     `;
   } else {
-    const numerals = ['①', '②', '③', '④', '⑤', '⑥', '⑦'];
-    const itemsHtml = data.items.map((it, i) => {
-      const num = numerals[i] || `${i + 1}.`;
+    const numerals = ['', '①', '②', '③', '④', '⑤', '⑥', '⑦'];
+    const itemsHtml = data.items.map((it) => {
+      const num = numerals[it.id] || `${it.id}.`;
+      const countText = it.count ? ` ${it.count}건` : '';
+      const detailHtml = (it.details || []).length > 0
+        ? `<ul class="blocking-modal-details">
+            ${(it.details || []).map(d => `<li>${escapeModalText(d)}</li>`).join('')}
+          </ul>`
+        : (it.reason ? `<div class="blocking-modal-reason">${escapeModalText(it.reason)}</div>` : '');
       return `
         <div class="blocking-modal-item">
           <span class="blocking-modal-item-num">${num}</span>
-          <span class="blocking-modal-item-label">${it.label}</span>
+          <span class="blocking-modal-item-label">${escapeModalText(it.label)}${countText}</span>
           <button class="btn-primary blocking-modal-jump" data-jump="${it.jumpMenu}">처리하러 가기</button>
+          ${detailHtml}
         </div>
       `;
     }).join('');
 
     bodyHtml = `
       <p class="blocking-modal-desc">
-        ${dateLabel} 마감이 완료되지 않아 다음 작업들이 차단됩니다:
+        ${blockedIntro}
       </p>
-      <ul class="blocking-modal-blocked">
-        <li>모든 페이지의 신규 등록 (생산 추가, 입고 등록, 발주 추가 등)</li>
-        <li>마감 버튼 (아래 항목 처리 후 가능)</li>
-      </ul>
+      ${isPastTarget ? `
+        <ul class="blocking-modal-blocked">
+          <li>모든 페이지의 신규 등록 (생산 추가, 입고 등록, 발주 추가 등)</li>
+          <li>마감 버튼 (아래 항목 처리 후 가능)</li>
+        </ul>
+      ` : ''}
       <p class="blocking-modal-desc-strong">
         마감을 위해 처리해야 할 항목:
       </p>
@@ -276,7 +300,7 @@ function showBlockingModal() {
         ${itemsHtml}
       </div>
       <p class="blocking-modal-foot">
-        위 항목 처리 후 QC 계정에서 마감 버튼을 눌러주세요.
+        위 항목 처리 후 마감 버튼을 눌러주세요.
       </p>
     `;
   }
@@ -284,7 +308,7 @@ function showBlockingModal() {
   const html = `
     <div class="modal-overlay" id="blockingModalOverlay">
       <div class="modal-box modal-blocking">
-        <h3 class="blocking-modal-title">⚠️ 지난 영업일 마감이 처리되지 않았습니다</h3>
+        <h3 class="blocking-modal-title">${modalTitle}</h3>
         ${bodyHtml}
         <div class="modal-actions">
           <button class="btn-secondary" id="blockingModalClose">닫기</button>

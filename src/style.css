@@ -305,6 +305,15 @@
   background: #eef4f0;
 }
 
+.recipe-list-item.inactive-master {
+  background: #fafafa;
+  opacity: 0.62;
+}
+
+.recipe-list-item.inactive-master:hover {
+  background: #f0f0f0;
+}
+
 .recipe-list-info {
   flex: 1;
 }
@@ -319,6 +328,8 @@
 .recipe-tags {
   display: flex;
   gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 .tag {
@@ -333,6 +344,12 @@
 .tag-cat { background: #fef0e8; color: #8a4a2d; }
 .tag-dog { background: #f0e8fe; color: #5a2d8a; }
 .tag-common { background: #f0f0f0; color: #666; }
+.tag-inactive { background: #eeeeee; color: #777; }
+
+tr.inactive-master {
+  color: #777;
+  background: #fafafa;
+}
 
 /* 토글 스위치 */
 .toggle-switch {
@@ -1159,7 +1176,8 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
 }
 
 .blocking-modal-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
   align-items: center;
   gap: 10px;
   padding: 8px 0;
@@ -1180,7 +1198,6 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
 }
 
 .blocking-modal-item-label {
-  flex: 1;
   font-size: 14px;
   color: #333;
 }
@@ -1188,7 +1205,19 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
 .blocking-modal-jump {
   font-size: 12px;
   padding: 6px 14px;
-  flex-shrink: 0;
+}
+
+.blocking-modal-reason,
+.blocking-modal-details {
+  grid-column: 2 / 4;
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #666;
+  line-height: 1.5;
+}
+
+.blocking-modal-details {
+  padding-left: 18px;
 }
 
 .blocking-modal-foot {

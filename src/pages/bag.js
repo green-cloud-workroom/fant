@@ -1,6 +1,6 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, setDoc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc
+  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
@@ -12,7 +12,10 @@ let bagTypes = [];
 export async function renderBag() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>봉투 재고 로딩 중...</p></div>`;
-  bagTypes = await loadBagTypes();
+  [bagTypes] = await Promise.all([
+    loadBagTypes(),
+    loadStaffCache(),
+  ]);
   renderBagLayout();
 }
 
@@ -71,12 +74,14 @@ function renderBagList() {
 
 function renderBagItem(b) {
   const isLow = b.currentQty < (b.minimumQty || 0);
+  const inactive = b.active === false;
   return `
-    <div class="recipe-list-item ${selectedBagId === b.id ? 'active' : ''}" data-id="${b.id}">
+    <div class="recipe-list-item ${selectedBagId === b.id ? 'active' : ''} ${inactive ? 'inactive-master' : ''}" data-id="${b.id}">
       <div class="recipe-list-info">
-        <span class="recipe-name" style="color:${isLow ? '#e53e3e' : '#1a1a1a'}">${b.name}</span>
+        <span class="recipe-name" style="color:${inactive ? '#999' : isLow ? '#e53e3e' : '#1a1a1a'}">${b.name}</span>
         <div class="recipe-tags">
           <span class="tag tag-${b.category}">${b.category === 'raw' ? '생식' : '동결'}</span>
+          ${inactive ? '<span class="tag tag-inactive">비활성</span>' : ''}
           <span style="font-size:11px;color:${isLow ? '#e53e3e' : '#888'}">
             ${Math.floor((b.currentQty || 0) / (b.piecesPerBox || 1))}박스 (${b.currentQty || 0}장)
           </span>
@@ -214,6 +219,17 @@ function showBagModal(bag) {
         <input type="number" id="m_minBox" value="${bag?.minimumBoxQty || ''}" placeholder="박스" />
       </div>
     </div>
+    ${!isNew ? `
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <span>활성 상태</span>
+          <span class="toggle-switch">
+            <input type="checkbox" id="m_bagActive" ${bag.active !== false ? 'checked' : ''}>
+            <span class="toggle-slider"></span>
+          </span>
+        </label>
+      </div>
+    ` : ''}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn-primary" id="btnSaveBag">${isNew ? '추가' : '저장'}</button>
@@ -239,9 +255,10 @@ function showBagModal(bag) {
       minimumBoxQty: minBox,
       minimumQty: minBox * piecesPerBox,
       sortOrder: isNew ? bagTypes.length : bag.sortOrder,
-      active: true,
+      active: isNew ? true : document.getElementById('m_bagActive')?.checked !== false,
       updatedAt: new Date(),
     };
+    const previousActive = isNew ? true : bag.active !== false;
 
     if (isNew) {
       data.currentQty = 0;
@@ -249,6 +266,20 @@ function showBagModal(bag) {
       await addDoc(collection(db, 'bagTypes'), data);
     } else {
       await updateDoc(doc(db, 'bagTypes', bag.id), data);
+      if (previousActive !== data.active) {
+        await recordActivity({
+          action: 'bag',
+          subAction: 'activeToggle',
+          date: getToday(),
+          staff: getRoleStaffLabel(),
+          message: `봉투 종류 ${data.active ? '활성' : '비활성'} — ${name}`,
+          details: {
+            bagTypeId: bag.id,
+            bagName: name,
+            active: data.active,
+          },
+        });
+      }
     }
 
     bagTypes = await loadBagTypes();
@@ -494,8 +525,13 @@ function showModal(html) {
   overlay.addEventListener('click', (e) => {
     // 외부 클릭 닫힘 비활성화 (묶음 1F: 모달 사라짐 이슈 우회)
   });
+}
 
-  loadStaffCache();
+function getRoleStaffLabel() {
+  if (currentUserRole === 'admin') return '대표';
+  if (currentUserRole === 'office') return '사무실';
+  if (currentUserRole === 'production') return '생산실';
+  return '시스템';
 }
 
 window.closeModal = function() {
