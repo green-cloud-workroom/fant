@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 backup_pre_wipe_*/
+*adminsdk*.json
+*service-account*.json
+fantapet-*-key.json
+fantapet-temp-key.json
 
 # Editor directories and files
 .vscode/*

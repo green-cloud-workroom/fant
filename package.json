@@ -10,7 +10,9 @@
     "deploy": "vite build && gh-pages -d dist",
     "backup:prewipe": "node scripts/backupFirestorePreWipe.mjs",
     "wipe:dry-run": "node scripts/wipeFirestoreOperationalData.mjs --dry-run",
-    "wipe:execute": "node scripts/wipeFirestoreOperationalData.mjs --execute"
+    "wipe:execute": "node scripts/wipeFirestoreOperationalData.mjs --execute",
+    "wipe:dry-run:admin": "node scripts/wipeFirestoreOperationalDataAdmin.mjs --dry-run",
+    "wipe:execute:admin": "node scripts/wipeFirestoreOperationalDataAdmin.mjs --execute"
   },
   "devDependencies": {
     "gh-pages": "^6.3.0",
