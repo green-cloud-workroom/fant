@@ -264,7 +264,6 @@ function renderFrozenPanTab(rows, lotSummary, frozenPanLogs) {
     <div class="page-header" style="margin-bottom:12px;">
       <span style="font-size:14px;color:#555;font-weight:600;">동결판 lot 잔량</span>
       <div style="display:flex;gap:8px;">
-        <button class="btn-secondary" id="btnFrozenPanAdjust">+ 수동 조정</button>
         <button class="btn-secondary" id="btnAddOrderRow">+ 발주 행 추가</button>
         <button class="btn-primary" id="btnTenderIn">+ 텐더동결 입고</button>
       </div>
@@ -386,11 +385,6 @@ function bindBreadPanTabEvents(rows, lots) {
 function bindFrozenPanTabEvents(rows, lots) {
   const btnTender = document.getElementById('btnTenderIn');
   if (btnTender) btnTender.addEventListener('click', () => showTenderInModal());
-
-  const btnAdjust = document.getElementById('btnFrozenPanAdjust');
-  if (btnAdjust) btnAdjust.addEventListener('click', () => {
-    alert('동결판 수동 조정 기능은 추후 추가 예정입니다.');
-  });
 
   const btnOrderRow = document.getElementById('btnAddOrderRow');
   if (btnOrderRow) btnOrderRow.addEventListener('click', () => showOrderRowModal(rows, lots));
