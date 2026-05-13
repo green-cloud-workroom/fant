@@ -1,6 +1,6 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, getDoc, where, writeBatch,
+  collection, getDocs, doc, updateDoc, query, orderBy, getDoc, where, writeBatch,
   runTransaction, serverTimestamp
 } from 'firebase/firestore';
 import { getTodayKST as getToday, getHolidaysCache } from '../utils/date.js';
@@ -43,6 +43,44 @@ function getSupplementSaveErrorMessage(code, supplementName) {
     return `${supplementName || '영양제'} 재고가 부족합니다. 영양제 재고를 먼저 입고해주세요.`;
   }
   return '저장 중 오류가 발생했습니다. 다시 시도해주세요.';
+}
+
+function getSupplementTypeError(code, supplementName) {
+  const err = new Error(code);
+  if (supplementName) err.supplementName = supplementName;
+  return err;
+}
+
+async function calculateSupplementRefunds(productionId) {
+  const logQuery = query(
+    collection(db, 'supplementLogs'),
+    where('relatedProductionId', '==', productionId)
+  );
+  const snap = await getDocs(logQuery);
+  const skuNet = new Map();
+
+  snap.docs.forEach(logDoc => {
+    const data = logDoc.data();
+    if (data.type !== 'autoDeduct') return;
+    const supplementTypeId = data.supplementTypeId;
+    if (!supplementTypeId) return;
+    const nextQty = (skuNet.get(supplementTypeId) || 0) + Number(data.qty || 0);
+    skuNet.set(supplementTypeId, nextQty);
+  });
+
+  const refunds = [];
+  for (const [supplementTypeId, netQty] of skuNet.entries()) {
+    if (netQty > 0) {
+      const err = new Error('INVALID_SUPPLEMENT_LOG_STATE');
+      err.supplementTypeId = supplementTypeId;
+      err.netQty = netQty;
+      throw err;
+    }
+    if (netQty < 0) {
+      refunds.push({ supplementTypeId, qty: -netQty });
+    }
+  }
+  return refunds;
 }
 
 export async function renderProduction() {
@@ -248,7 +286,53 @@ function bindCardEvents() {
       const __c = await showConfirmModal({ title:'삭제 확인', message:'정말 삭제하시겠습니까?', confirmText:'삭제', danger:true }); if (!__c) return;
       if (await blockIfClosed(selectedDate)) return;
       const deletedId = btn.dataset.id;
-      await updateDoc(doc(db, 'productions', deletedId), { status: 'deleted' });
+      const targetProduction = productions.find(p => p.id === deletedId);
+      let refunds = [];
+      try {
+        refunds = await calculateSupplementRefunds(deletedId);
+      } catch (err) {
+        if (err.message === 'INVALID_SUPPLEMENT_LOG_STATE') {
+          console.error('[production] invalid supplement log state:', err);
+          alert('영양제 로그 상태가 비정상입니다. 관리자에게 문의해주세요.');
+          return;
+        }
+        throw err;
+      }
+
+      await runTransaction(db, async (transaction) => {
+        for (const refund of refunds) {
+          const stockRef = doc(db, 'supplementStock', refund.supplementTypeId);
+          const stockSnap = await transaction.get(stockRef);
+          if (!stockSnap.exists()) {
+            console.warn('[production] supplement stock missing during delete refund:', refund.supplementTypeId);
+            continue;
+          }
+
+          const before = Number(stockSnap.data().currentQty || 0);
+          const after = before + refund.qty;
+          transaction.update(stockRef, {
+            currentQty: after,
+            updatedAt: serverTimestamp(),
+          });
+          transaction.set(doc(collection(db, 'supplementLogs')), {
+            date: selectedDate,
+            timestamp: serverTimestamp(),
+            supplementTypeId: refund.supplementTypeId,
+            type: 'autoDeduct',
+            qty: refund.qty,
+            before,
+            after,
+            staffName: targetProduction?.staffName || 'system',
+            reason: 'production deleted',
+            relatedProductionId: deletedId,
+          });
+        }
+
+        transaction.update(doc(db, 'productions', deletedId), {
+          status: 'deleted',
+          updatedAt: serverTimestamp(),
+        });
+      });
       // [묶음 4A] 삭제 후 회차/차수 재정렬
       await applyRoundsAndBatches(selectedDate);
       document.getElementById('productionCards').innerHTML = renderProductionCards();
@@ -605,7 +689,87 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
         return;
       }
     } else {
-      await updateDoc(doc(db, 'productions', production.id), data);
+      const prevSupplementTypeId = makeSupplementId(production.recipeId, production.productionUnitQty);
+      const nextSupplementTypeId = makeSupplementId(recipeId, qty);
+      const productionRef = doc(db, 'productions', production.id);
+
+      if (prevSupplementTypeId === nextSupplementTypeId) {
+        await updateDoc(productionRef, data);
+      } else {
+        const prevStockRef = doc(db, 'supplementStock', prevSupplementTypeId);
+        const nextTypeRef = doc(db, 'supplementTypes', nextSupplementTypeId);
+        const nextStockRef = doc(db, 'supplementStock', nextSupplementTypeId);
+
+        try {
+          await runTransaction(db, async (transaction) => {
+            const nextTypeSnap = await transaction.get(nextTypeRef);
+            const nextStockSnap = await transaction.get(nextStockRef);
+            const prevStockSnap = await transaction.get(prevStockRef);
+
+            if (!nextTypeSnap.exists()) {
+              throw new Error('SKU_NOT_FOUND');
+            }
+
+            const nextType = nextTypeSnap.data();
+            if (nextType.active === false) {
+              throw new Error('SKU_INACTIVE');
+            }
+
+            if (!nextStockSnap.exists()) {
+              throw getSupplementTypeError('STOCK_INSUFFICIENT', nextType.name);
+            }
+
+            const nextBefore = Number(nextStockSnap.data().currentQty || 0);
+            if (nextBefore < 1) {
+              throw getSupplementTypeError('STOCK_INSUFFICIENT', nextType.name);
+            }
+
+            if (prevStockSnap.exists()) {
+              const prevBefore = Number(prevStockSnap.data().currentQty || 0);
+              transaction.update(prevStockRef, {
+                currentQty: prevBefore + 1,
+                updatedAt: serverTimestamp(),
+              });
+              transaction.set(doc(collection(db, 'supplementLogs')), {
+                date: selectedDate,
+                timestamp: serverTimestamp(),
+                supplementTypeId: prevSupplementTypeId,
+                type: 'autoDeduct',
+                qty: 1,
+                before: prevBefore,
+                after: prevBefore + 1,
+                staffName: staff,
+                reason: 'production edited',
+                relatedProductionId: production.id,
+              });
+            } else {
+              console.warn('[production] previous supplement stock missing during edit refund:', prevSupplementTypeId);
+            }
+
+            transaction.update(nextStockRef, {
+              currentQty: nextBefore - 1,
+              updatedAt: serverTimestamp(),
+            });
+            transaction.set(doc(collection(db, 'supplementLogs')), {
+              date: selectedDate,
+              timestamp: serverTimestamp(),
+              supplementTypeId: nextSupplementTypeId,
+              type: 'autoDeduct',
+              qty: -1,
+              before: nextBefore,
+              after: nextBefore - 1,
+              staffName: staff,
+              relatedProductionId: production.id,
+            });
+
+            transaction.update(productionRef, data);
+          });
+        } catch (err) {
+          console.error('[production] edit with supplement refund/rededuct failed:', err);
+          alert(getSupplementSaveErrorMessage(err.message, err.supplementName));
+          return;
+        }
+      }
     }
 
     // [묶음 4A] 저장 후 같은 날 productions의 round/batchNo 일괄 재계산
