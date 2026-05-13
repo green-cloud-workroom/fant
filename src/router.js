@@ -2,6 +2,7 @@ import { renderSettings } from './pages/settings.js';
 import { renderRecipe } from './pages/recipe.js';
 import { renderMeat } from './pages/meat.js';
 import { renderBag } from './pages/bag.js';
+import { renderSupplement } from './pages/supplement.js';
 import { renderEgg } from './pages/egg.js';
 import { renderFrozenProduct } from './pages/frozenProduct.js';
 import { renderFrozenPan } from './pages/frozenPan.js';
@@ -30,6 +31,9 @@ export async function renderPage(menuId) {
       break;
     case 'bag':
       await renderBag();
+      break;
+    case 'supplement':
+      await renderSupplement();
       break;
     case 'egg':
       await renderEgg();
@@ -69,6 +73,7 @@ function getMenuLabel(menuId) {
     meat: '원육 재고',
     egg: '계란',
     bag: '봉투 재고',
+    supplement: '영양제 재고',
     frozenProduct: '동결제품 입고',
     frozenPan: '동결판 재고',
     frozenSep: '동결 분리작업',

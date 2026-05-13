@@ -23,6 +23,7 @@ export const MENUS = [
   { id: 'meat', label: '원육 재고', roles: ['admin', 'office', 'production'] },
   { id: 'egg', label: '계란', roles: ['admin', 'office', 'production'] },
   { id: 'bag', label: '봉투 재고', roles: ['admin', 'office', 'production'] },
+  { id: 'supplement', label: '영양제 재고', roles: ['admin', 'office', 'production', 'qc'] },
   { id: 'frozenProduct', label: '동결제품 입고', roles: ['admin', 'office', 'production'] },
   { id: 'frozenPan', label: '동결판 재고', roles: ['admin', 'office', 'production'] },
   { id: 'frozenSep', label: '동결 분리작업', roles: ['admin', 'office', 'production'] },
