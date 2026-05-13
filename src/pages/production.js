@@ -1,12 +1,12 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, deleteDoc, query, orderBy, getDoc, where, writeBatch
+  collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, getDoc, where, writeBatch,
+  runTransaction, serverTimestamp
 } from 'firebase/firestore';
 import { getTodayKST as getToday, getHolidaysCache } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
-import { currentUserRole } from '../app.js';
+import { currentUser, currentUserRole } from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
-import { recordActivity } from '../services/activityLogs.js';
 
 let recipes = [];
 let productions = [];
@@ -26,6 +26,23 @@ function renderFreezeDryQtyLine(item) {
 
 function getUnitPresets(recipe) {
   return Array.isArray(recipe?.unitPresets) ? recipe.unitPresets : [];
+}
+
+function makeSupplementId(recipeId, unit) {
+  return `${recipeId}_${unit}`;
+}
+
+function getSupplementSaveErrorMessage(code, supplementName) {
+  if (code === 'SKU_NOT_FOUND') {
+    return '이 (레시피, 생산단위) 조합의 영양제가 등록되어 있지 않습니다. 레시피 관리에서 프리셋을 확인해주세요.';
+  }
+  if (code === 'SKU_INACTIVE') {
+    return '이 영양제는 비활성 상태입니다.';
+  }
+  if (code === 'STOCK_INSUFFICIENT') {
+    return `${supplementName || '영양제'} 재고가 부족합니다. 영양제 재고를 먼저 입고해주세요.`;
+  }
+  return '저장 중 오류가 발생했습니다. 다시 시도해주세요.';
 }
 
 export async function renderProduction() {
@@ -434,6 +451,7 @@ const ingHtml = (recipe.ingredients || []).map(ing => {
     const staff = document.getElementById('pf_staff').value;
 
     if (!recipeId) { alert('레시피와 생산단위는 필수입니다.'); return; }
+    if (!staff) { alert('생산 담당자는 필수입니다.'); return; }
     if (isNew && recipe && getUnitPresets(recipe).length === 0) {
       alert('레시피 관리에서 생산단위 프리셋을 먼저 설정해주세요.');
       return;
@@ -504,25 +522,88 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
 
     if (isNew) {
       data.createdAt = new Date();
-      await addDoc(collection(db, 'productions'), data);
+      const supplementTypeId = makeSupplementId(recipeId, qty);
+      const productionRef = doc(collection(db, 'productions'));
+      const supplementTypeRef = doc(db, 'supplementTypes', supplementTypeId);
+      const supplementStockRef = doc(db, 'supplementStock', supplementTypeId);
+      const supplementLogRef = doc(collection(db, 'supplementLogs'));
+      const activityLogRef = doc(collection(db, 'activityLogs'));
 
-      // [묶음 6C-2] 생산 추가 발행 — 운영자 결정 ③ B (추가만 발행, 수정/삭제는 묶음 9 검토)
-      // 메인 화면 생산 로그 패널에 누가 언제 등록했는지 추적
-      await recordActivity({
-        action: 'production',
-        subAction: 'create',
-        date: selectedDate,
-        staff,
-        message: `생산 추가 — ${displayName} ${qty}${unitName} / 담당: ${staff}`,
-        details: {
-          recipeId,
-          recipeName: displayName,
-          category: recipe.category,
-          target: recipe.target,
-          productionUnitQty: qty,
-          productionUnitName: unitName,
-        },
-      });
+      try {
+        await runTransaction(db, async (transaction) => {
+          const supplementTypeSnap = await transaction.get(supplementTypeRef);
+          const supplementStockSnap = await transaction.get(supplementStockRef);
+
+          if (!supplementTypeSnap.exists()) {
+            throw new Error('SKU_NOT_FOUND');
+          }
+
+          const supplementType = supplementTypeSnap.data();
+          if (supplementType.active === false) {
+            throw new Error('SKU_INACTIVE');
+          }
+
+          if (!supplementStockSnap.exists()) {
+            const err = new Error('STOCK_INSUFFICIENT');
+            err.supplementName = supplementType.name;
+            throw err;
+          }
+
+          const before = Number(supplementStockSnap.data().currentQty || 0);
+          if (before < 1) {
+            const err = new Error('STOCK_INSUFFICIENT');
+            err.supplementName = supplementType.name;
+            throw err;
+          }
+
+          const after = before - 1;
+          transaction.set(productionRef, data);
+          transaction.update(supplementStockRef, {
+            currentQty: after,
+            updatedAt: serverTimestamp(),
+          });
+          transaction.set(supplementLogRef, {
+            date: selectedDate,
+            timestamp: serverTimestamp(),
+            supplementTypeId,
+            type: 'autoDeduct',
+            qty: -1,
+            before,
+            after,
+            staffName: staff,
+            relatedProductionId: productionRef.id,
+          });
+
+          // [묶음 6C-2] 생산 추가 발행 — 추가만 발행, 수정/삭제는 단위 9 검토.
+          transaction.set(activityLogRef, {
+            action: 'production',
+            subAction: 'create',
+            date: selectedDate,
+            staff,
+            uid: currentUser?.uid || null,
+            timestamp: serverTimestamp(),
+            message: `생산 추가 — ${displayName} ${qty}${unitName} / 담당: ${staff}`,
+            details: {
+              productionId: productionRef.id,
+              recipeId,
+              recipeName: displayName,
+              category: recipe.category,
+              target: recipe.target,
+              productionUnitQty: qty,
+              productionUnitName: unitName,
+            },
+            read: false,
+            acknowledged: false,
+            acknowledgedAt: null,
+            acknowledgedBy: null,
+            acknowledgedByUid: null,
+          });
+        });
+      } catch (err) {
+        console.error('[production] save with supplement deduct failed:', err);
+        alert(getSupplementSaveErrorMessage(err.message, err.supplementName));
+        return;
+      }
     } else {
       await updateDoc(doc(db, 'productions', production.id), data);
     }
