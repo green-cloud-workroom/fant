@@ -655,6 +655,24 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   line-height: 26px;
 }
 
+.production-unit-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.production-unit-control select,
+.production-unit-control input {
+  flex: 1;
+  min-width: 0;
+}
+
+.production-unit-message {
+  color: #b45309;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .list-empty {
   text-align: center;
   color: #aaa;

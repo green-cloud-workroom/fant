@@ -24,6 +24,10 @@ function renderFreezeDryQtyLine(item) {
   return parts.join(' / ');
 }
 
+function getUnitPresets(recipe) {
+  return Array.isArray(recipe?.unitPresets) ? recipe.unitPresets : [];
+}
+
 export async function renderProduction() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>생산 입력 로딩 중...</p></div>`;
@@ -271,10 +275,14 @@ function showProductionForm(production) {
       </div>
       <div class="form-group" style="margin-bottom:12px;">
         <label>생산단위 *</label>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <input type="number" id="pf_qty" value="${production?.productionUnitQty || ''}" placeholder="수량" style="flex:1" />
+        <div class="production-unit-control">
+          <select id="pf_qty_select" disabled>
+            <option value="">레시피 선택</option>
+          </select>
+          <input type="number" id="pf_qty_direct" value="" placeholder="직접 입력" style="display:none;" />
           <span id="pf_unitName" style="font-size:12px;color:#888;min-width:30px;">${production?.productionUnitName || ''}</span>
         </div>
+        <div class="production-unit-message" id="pf_qty_message" style="display:none;"></div>
       </div>
 
       <!-- 원료 목록 -->
@@ -289,12 +297,83 @@ function showProductionForm(production) {
 
   // 레시피 선택 시 원료 자동 계산
   const recipeSelect = document.getElementById('pf_recipe');
-  const qtyInput = document.getElementById('pf_qty');
+  const qtySelect = document.getElementById('pf_qty_select');
+  const qtyDirectInput = document.getElementById('pf_qty_direct');
+  const qtyMessage = document.getElementById('pf_qty_message');
+  const saveButton = document.getElementById('btnSaveProduction');
+
+  function getSelectedQty() {
+    if (!qtySelect || qtySelect.disabled) return 0;
+    if (qtySelect.value === 'custom') {
+      return parseFloat(qtyDirectInput.value) || 0;
+    }
+    return parseFloat(qtySelect.value) || 0;
+  }
+
+  function renderProductionUnitControl(recipe) {
+    const presets = getUnitPresets(recipe);
+    const currentQty = production?.productionUnitQty;
+    const hasCurrentQty = currentQty !== undefined && currentQty !== null && currentQty !== '';
+    const allowLegacyEdit = !isNew && hasCurrentQty;
+    const unitName = recipe?.ingredients?.find(i => i.isProductionUnit)?.unitName || '';
+
+    document.getElementById('pf_unitName').textContent = unitName;
+    qtyDirectInput.value = '';
+    qtyDirectInput.style.display = 'none';
+    qtyMessage.style.display = 'none';
+    qtyMessage.textContent = '';
+
+    if (!recipe) {
+      qtySelect.innerHTML = '<option value="">레시피 선택</option>';
+      qtySelect.disabled = true;
+      if (saveButton) saveButton.disabled = false;
+      return;
+    }
+
+    if (presets.length === 0 && !allowLegacyEdit) {
+      qtySelect.innerHTML = '<option value="">선택 불가</option>';
+      qtySelect.disabled = true;
+      qtyMessage.textContent = '⚠ 레시피 관리에서 생산단위 프리셋을 먼저 설정해주세요.';
+      qtyMessage.style.display = '';
+      if (saveButton) saveButton.disabled = true;
+      return;
+    }
+
+    const options = presets.map(unit => `<option value="${unit}">${unit}</option>`).join('');
+    qtySelect.innerHTML = `${options}<option value="custom">직접 입력...</option>`;
+    qtySelect.disabled = false;
+    if (saveButton) saveButton.disabled = false;
+
+    if (allowLegacyEdit && !presets.includes(Number(currentQty))) {
+      qtySelect.value = 'custom';
+      qtyDirectInput.value = currentQty;
+      qtyDirectInput.style.display = '';
+      return;
+    }
+
+    if (hasCurrentQty && presets.includes(Number(currentQty))) {
+      qtySelect.value = String(currentQty);
+      return;
+    }
+
+    qtySelect.value = presets.length > 0 ? String(presets[0]) : 'custom';
+    if (qtySelect.value === 'custom') {
+      qtyDirectInput.style.display = '';
+    }
+  }
+
+  function handleQtyModeChange() {
+    qtyDirectInput.style.display = qtySelect.value === 'custom' ? '' : 'none';
+    if (qtySelect.value !== 'custom') {
+      qtyDirectInput.value = '';
+    }
+    updateIngredients();
+  }
 
   function updateIngredients() {
     const recipeId = recipeSelect.value;
     const recipe = recipes.find(r => r.id === recipeId);
-    const qty = parseFloat(qtyInput.value) || 0;
+    const qty = getSelectedQty();
     if (!recipe || !qty) {
       document.getElementById('pf_ingredients').innerHTML = '';
       document.getElementById('pf_refs').innerHTML = '';
@@ -333,10 +412,16 @@ const ingHtml = (recipe.ingredients || []).map(ing => {
     document.getElementById('pf_refs').textContent = refs;
   }
 
-  recipeSelect.addEventListener('change', updateIngredients);
-  qtyInput.addEventListener('input', updateIngredients);
+  recipeSelect.addEventListener('change', () => {
+    const recipe = recipes.find(r => r.id === recipeSelect.value);
+    renderProductionUnitControl(recipe);
+    updateIngredients();
+  });
+  qtySelect.addEventListener('change', handleQtyModeChange);
+  qtyDirectInput.addEventListener('input', updateIngredients);
 
-  if (production) updateIngredients();
+  renderProductionUnitControl(recipes.find(r => r.id === recipeSelect.value));
+  updateIngredients();
 
   document.getElementById('btnSaveProduction')?.addEventListener('click', async () => {
     if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
@@ -344,13 +429,22 @@ const ingHtml = (recipe.ingredients || []).map(ing => {
       return;
     }
     const recipeId = recipeSelect.value;
-    const qty = parseFloat(qtyInput.value);
+    const recipe = recipes.find(r => r.id === recipeId);
+    const qty = getSelectedQty();
     const staff = document.getElementById('pf_staff').value;
 
-    if (!recipeId || !qty) { alert('레시피와 생산단위는 필수입니다.'); return; }
+    if (!recipeId) { alert('레시피와 생산단위는 필수입니다.'); return; }
+    if (isNew && recipe && getUnitPresets(recipe).length === 0) {
+      alert('레시피 관리에서 생산단위 프리셋을 먼저 설정해주세요.');
+      return;
+    }
+    if (qtySelect.value === 'custom' && (!qty || qty <= 0)) {
+      alert('0보다 큰 생산단위를 입력해주세요.');
+      return;
+    }
+    if (!qty || qty <= 0) { alert('레시피와 생산단위는 필수입니다.'); return; }
     if (await blockIfClosed(selectedDate)) return;
 
-    const recipe = recipes.find(r => r.id === recipeId);
     const unitName = recipe.ingredients?.find(i => i.isProductionUnit)?.unitName || '';
     const displayName = getRecipeDisplayName(recipe);
     const productionUnitIng = recipe.ingredients?.find(i => i.isProductionUnit);
