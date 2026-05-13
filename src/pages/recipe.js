@@ -1,8 +1,8 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, setDoc, updateDoc, addDoc, query, orderBy
+  collection, getDocs, getDoc, doc, updateDoc, query, orderBy, where, writeBatch
 } from 'firebase/firestore';
-import { currentUserRole } from '../app.js';
+import { currentUser, currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
 
@@ -104,6 +104,91 @@ function getRoleStaffLabel() {
   return '시스템';
 }
 
+function makeSupplementId(recipeId, unit) {
+  return `${recipeId}_${unit}`;
+}
+
+function makeSupplementName(recipeName, unit) {
+  return `${recipeName} ${unit}용 영양제`;
+}
+
+function makeSupplementSortOrder(recipeSortOrder, unitIndex) {
+  return (recipeSortOrder || 0) * 100 + unitIndex;
+}
+
+function getSupplementBaseDoc(recipeId, recipeData, unit, unitIndex) {
+  const recipeName = recipeData.displayName || getDisplayName(recipeData);
+  return {
+    recipeId,
+    recipeName,
+    unit,
+    name: makeSupplementName(recipeName, unit),
+    active: recipeData.active !== false,
+    sortOrder: makeSupplementSortOrder(recipeData.sortOrder, unitIndex),
+    updatedAt: new Date(),
+    updatedBy: currentUser?.uid || null,
+  };
+}
+
+async function loadSupplementDeleteSummaries(recipe, removedUnits) {
+  const summaries = [];
+  for (const unit of removedUnits) {
+    const supplementTypeId = makeSupplementId(recipe.id, unit);
+    const stockSnap = await getDoc(doc(db, 'supplementStock', supplementTypeId));
+    const logSnap = await getDocs(query(
+      collection(db, 'supplementLogs'),
+      where('supplementTypeId', '==', supplementTypeId)
+    ));
+    const stockQty = Number(stockSnap.data()?.currentQty || 0);
+    summaries.push({
+      unit,
+      supplementTypeId,
+      name: makeSupplementName(getDisplayName(recipe), unit),
+      stockQty,
+      logCount: logSnap.size,
+      logDocs: logSnap.docs,
+    });
+  }
+  return summaries;
+}
+
+async function confirmSupplementPresetDeletion(recipe, removedUnits) {
+  if (removedUnits.length === 0) return true;
+
+  const summaries = await loadSupplementDeleteSummaries(recipe, removedUnits);
+  const hasStock = summaries.some(s => s.stockQty > 0);
+
+  if (hasStock && typeof window.openBlockingModal === 'function') {
+    const ok = await window.openBlockingModal({
+      variant: 'warning',
+      data: {
+        date: getToday(),
+        warnings: summaries.map(s => ({
+          reason: s.stockQty > 0
+            ? `영양제 ${s.name} ${s.stockQty}봉이 있는데 정말 삭제하시겠습니까?`
+            : `영양제 ${s.name}을 삭제합니다.`,
+          details: [
+            `생산단위: ${s.unit}`,
+            `현재 재고: ${s.stockQty}봉`,
+            `차감 이력: ${s.logCount}건`,
+            '영양제 SKU, 재고, 이력이 함께 삭제됩니다.',
+          ],
+        })),
+      },
+    });
+    return ok ? summaries : false;
+  }
+
+  const hasLogs = summaries.some(s => s.logCount > 0);
+  const message = hasLogs
+    ? summaries.map(s => s.logCount > 0
+      ? `생산단위 ${s.unit}의 차감 이력이 ${s.logCount}건 있습니다. 삭제 시 이력도 함께 삭제됩니다.`
+      : `생산단위 ${s.unit}을 프리셋에서 삭제합니다. 영양제 SKU도 함께 삭제됩니다.`
+    ).join('\n')
+    : summaries.map(s => `생산단위 ${s.unit}을 프리셋에서 삭제합니다. 영양제 SKU도 함께 삭제됩니다.`).join('\n');
+  return window.confirm(`${message}\n진행하시겠습니까?`) ? summaries : false;
+}
+
 function bindRecipeListEvents() {
   document.querySelectorAll('.recipe-list-item').forEach(item => {
     item.addEventListener('click', (e) => {
@@ -124,10 +209,23 @@ function bindRecipeListEvents() {
       const recipe = recipes.find(r => r.id === id);
       const previousActive = recipe?.active !== false;
       try {
-        await updateDoc(doc(db, 'recipes', id), {
+        const batch = writeBatch(db);
+        batch.update(doc(db, 'recipes', id), {
           active,
           updatedAt: new Date(),
         });
+        const skuSnap = await getDocs(query(
+          collection(db, 'supplementTypes'),
+          where('recipeId', '==', id)
+        ));
+        skuSnap.docs.forEach(skuDoc => {
+          batch.update(doc(db, 'supplementTypes', skuDoc.id), {
+            active,
+            updatedAt: new Date(),
+            updatedBy: currentUser?.uid || null,
+          });
+        });
+        await batch.commit();
         if (recipe) recipe.active = active;
         if (previousActive !== active) {
           await recordActivity({
@@ -519,6 +617,8 @@ async function saveRecipe(id) {
   const name = document.getElementById('recipeName').value.trim();
   const category = document.getElementById('recipeCategory').value;
   const target = document.getElementById('recipeTarget').value;
+  const existingRecipe = id ? recipes.find(r => r.id === id) : null;
+  const previousUnitPresets = Array.isArray(existingRecipe?.unitPresets) ? existingRecipe.unitPresets : [];
 
   if (!name || !category || !target) {
     alert('레시피명, 카테고리, 대상은 필수입니다.');
@@ -533,8 +633,8 @@ async function saveRecipe(id) {
     target,
     color: document.getElementById('recipeColor').value,
     note: document.getElementById('recipeNote').value.trim(),
-    active: true,
-    sortOrder: id ? recipes.find(r => r.id === id)?.sortOrder ?? recipes.length : recipes.length,
+    active: id ? existingRecipe?.active !== false : true,
+    sortOrder: id ? existingRecipe?.sortOrder ?? recipes.length : recipes.length,
     ingredients: getIngredients(),
     unitPresets: [...currentUnitPresets],
     version: 1,
@@ -560,12 +660,96 @@ async function saveRecipe(id) {
     data.requiresSeparation = requiresSeparation;
   }
 
-  if (id) {
-    await updateDoc(doc(db, 'recipes', id), data);
-  } else {
-    data.createdAt = new Date();
-    const ref = await addDoc(collection(db, 'recipes'), data);
-    selectedRecipeId = ref.id;
+  try {
+    if (id) {
+      const removedUnits = previousUnitPresets.filter(unit => !data.unitPresets.includes(unit));
+      const deleteSummaries = await confirmSupplementPresetDeletion({ id, ...existingRecipe }, removedUnits);
+      if (deleteSummaries === false) {
+        currentUnitPresets = [...previousUnitPresets];
+        refreshUnitPresetChips();
+        return;
+      }
+
+      const existingSkuStates = await Promise.all(data.unitPresets.map(async (unit) => {
+        const supplementTypeId = makeSupplementId(id, unit);
+        const [typeSnap, stockSnap] = await Promise.all([
+          getDoc(doc(db, 'supplementTypes', supplementTypeId)),
+          getDoc(doc(db, 'supplementStock', supplementTypeId)),
+        ]);
+        return { unit, supplementTypeId, hasType: typeSnap.exists(), hasStock: stockSnap.exists() };
+      }));
+      const existingSkuStateMap = new Map(existingSkuStates.map(s => [s.unit, s]));
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'recipes', id), data);
+
+      const deleteSummaryMap = new Map((Array.isArray(deleteSummaries) ? deleteSummaries : []).map(s => [s.unit, s]));
+      data.unitPresets.forEach((unit, idx) => {
+        const supplementTypeId = makeSupplementId(id, unit);
+        const baseDoc = getSupplementBaseDoc(id, data, unit, idx);
+        const skuState = existingSkuStateMap.get(unit);
+        if (previousUnitPresets.includes(unit) && skuState?.hasType) {
+          batch.update(doc(db, 'supplementTypes', supplementTypeId), baseDoc);
+        } else {
+          batch.set(doc(db, 'supplementTypes', supplementTypeId), {
+            id: supplementTypeId,
+            ...baseDoc,
+            createdAt: new Date(),
+            createdBy: currentUser?.uid || null,
+          });
+        }
+        if (!previousUnitPresets.includes(unit) || !skuState?.hasStock) {
+          batch.set(doc(db, 'supplementStock', supplementTypeId), {
+            id: supplementTypeId,
+            supplementTypeId,
+            currentQty: 0,
+            updatedAt: new Date(),
+          });
+        }
+      });
+
+      removedUnits.forEach(unit => {
+        const summary = deleteSummaryMap.get(unit);
+        const supplementTypeId = makeSupplementId(id, unit);
+        batch.delete(doc(db, 'supplementTypes', supplementTypeId));
+        batch.delete(doc(db, 'supplementStock', supplementTypeId));
+        (summary?.logDocs || []).forEach(logDoc => {
+          batch.delete(doc(db, 'supplementLogs', logDoc.id));
+        });
+      });
+
+      await batch.commit();
+      selectedRecipeId = id;
+    } else {
+      data.createdAt = new Date();
+      data.createdBy = currentUser?.uid || null;
+      data.updatedBy = currentUser?.uid || null;
+      const ref = doc(collection(db, 'recipes'));
+      const batch = writeBatch(db);
+      batch.set(ref, data);
+      data.unitPresets.forEach((unit, idx) => {
+        const supplementTypeId = makeSupplementId(ref.id, unit);
+        const baseDoc = getSupplementBaseDoc(ref.id, data, unit, idx);
+        batch.set(doc(db, 'supplementTypes', supplementTypeId), {
+          id: supplementTypeId,
+          ...baseDoc,
+          createdAt: new Date(),
+          createdBy: currentUser?.uid || null,
+        });
+        batch.set(doc(db, 'supplementStock', supplementTypeId), {
+          id: supplementTypeId,
+          supplementTypeId,
+          currentQty: 0,
+          updatedAt: new Date(),
+        });
+      });
+      await batch.commit();
+      selectedRecipeId = ref.id;
+    }
+  } catch (err) {
+    console.error('[recipe] save failed:', err);
+    alert('레시피 저장 중 오류가 발생했습니다.');
+    return;
   }
 
   recipes = await loadRecipes();
