@@ -2291,6 +2291,15 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
 .stats-table tbody tr:hover {
   background: #fafafa;
 }
+.stats-table tfoot th {
+  padding: 7px 8px;
+  border-top: 1px solid #d8dde0;
+  background: #f7f9f8;
+  color: #333;
+}
+.stats-row-muted {
+  opacity: 0.55;
+}
 .stats-color-dot {
   display: inline-block;
   width: 10px;

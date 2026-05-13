@@ -30,6 +30,8 @@ let visibleMeatIds = new Set();
 let knownMeatIds = new Set();
 let visibleBagIds = new Set();
 let knownBagIds = new Set();
+let visibleSupplementIds = new Set();
+let knownSupplementIds = new Set();
 
 let lastProductionAgg = null;
 let lastProductionCount = 0;
@@ -37,6 +39,8 @@ let lastMeatAgg = null;
 let lastBagAgg = null;
 let lastEggAgg = null;
 let lastDailyItems = null;
+let lastSupplementAgg = null;
+let includeInactiveSupplements = false;
 
 let bagPiecesPerBoxMap = {};
 let meatTypeAutoDeductMap = {};
@@ -61,6 +65,7 @@ const TABS = [
   { id: 'bag', label: '봉투 소모량' },
   { id: 'egg', label: '계란 사용량' },
   { id: 'daily', label: '일별 생산 현황' },
+  { id: 'supplement', label: '영양제' },
 ];
 
 export async function renderStats() {
@@ -78,12 +83,16 @@ export async function renderStats() {
   knownMeatIds = new Set();
   visibleBagIds = new Set();
   knownBagIds = new Set();
+  visibleSupplementIds = new Set();
+  knownSupplementIds = new Set();
   lastProductionAgg = null;
   lastProductionCount = 0;
   lastMeatAgg = null;
   lastBagAgg = null;
   lastEggAgg = null;
   lastDailyItems = null;
+  lastSupplementAgg = null;
+  includeInactiveSupplements = false;
   bagPiecesPerBoxMap = {};
   meatTypeAutoDeductMap = {};
   meatTypeShowInStatsMap = {};
@@ -245,6 +254,22 @@ async function loadFrozenLogsInRange() {
   const q = query(collection(db, 'frozenLogs'), where('date', '>=', startDate), where('date', '<=', endDate));
   const snap = await getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(l => l.status === 'active');
+}
+
+async function loadSupplementLogsInRange() {
+  const q = query(collection(db, 'supplementLogs'), where('date', '>=', startDate), where('date', '<=', endDate));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+async function loadSupplementTypes() {
+  const snap = await getDocs(collection(db, 'supplementTypes'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+async function loadSupplementStocks() {
+  const snap = await getDocs(collection(db, 'supplementStock'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
 async function loadBagPiecesPerBoxMap() {
@@ -424,6 +449,44 @@ function aggregateEggsFromLogs(eggLogs, agg) {
   return { byPeriod, total };
 }
 
+function aggregateSupplements(supplementTypes, supplementStocks, supplementLogs) {
+  const stockMap = new Map((supplementStocks || []).map(s => [s.id, Number(s.currentQty || 0)]));
+  const logAgg = new Map();
+  for (const log of supplementLogs || []) {
+    const skuId = log.supplementTypeId;
+    if (!skuId) continue;
+    if (!logAgg.has(skuId)) logAgg.set(skuId, { in: 0, used: 0, adjust: 0 });
+    const row = logAgg.get(skuId);
+    const qty = Number(log.qty || 0);
+    if (log.type === 'in') row.in += qty;
+    else if (log.type === 'autoDeduct') row.used += -qty;
+    else if (log.type === 'adjust') row.adjust += qty;
+  }
+
+  const rows = (supplementTypes || []).map(type => {
+    const a = logAgg.get(type.id) || { in: 0, used: 0, adjust: 0 };
+    return {
+      skuId: type.id,
+      name: type.name || type.id,
+      active: type.active !== false,
+      sortOrder: Number(type.sortOrder ?? 999999),
+      in: a.in,
+      used: a.used,
+      adjust: a.adjust,
+      currentQty: stockMap.get(type.id) || 0,
+    };
+  }).sort((a, b) => (a.sortOrder - b.sortOrder) || a.name.localeCompare(b.name, 'ko'));
+
+  const totals = rows.reduce((sum, row) => ({
+    in: sum.in + row.in,
+    used: sum.used + row.used,
+    adjust: sum.adjust + row.adjust,
+    currentQty: sum.currentQty + row.currentQty,
+  }), { in: 0, used: 0, adjust: 0, currentQty: 0 });
+
+  return { rows, totals };
+}
+
 function aggregateDailyView(productions, frozenLogs) {
   const map = new Map();
   function add(date, type, name, qty, unit) {
@@ -485,6 +548,13 @@ async function refreshStats() {
       const items = aggregateDailyView(productions, frozenLogs);
       lastDailyItems = items;
       renderDailyTab(items);
+    } else if (activeTab === 'supplement') {
+      const [types, stocks, logs] = await Promise.all([loadSupplementTypes(), loadSupplementStocks(), loadSupplementLogsInRange()]);
+      if (myToken !== queryToken) return;
+      const agg = aggregateSupplements(types, stocks, logs);
+      lastSupplementAgg = agg;
+      registerNewSupplements(agg.rows);
+      renderSupplementTab(agg);
     }
   } catch (err) {
     console.error('[stats] 로드 실패:', err);
@@ -502,6 +572,9 @@ function registerNewMeats(byMeat) {
 }
 function registerNewBags(byBag) {
   for (const id of Object.keys(byBag)) if (!knownBagIds.has(id)) { knownBagIds.add(id); visibleBagIds.add(id); }
+}
+function registerNewSupplements(rows) {
+  for (const row of rows) if (!knownSupplementIds.has(row.skuId)) { knownSupplementIds.add(row.skuId); visibleSupplementIds.add(row.skuId); }
 }
 
 function formatBagQty(piecesQty, piecesPerBox) {
@@ -778,6 +851,70 @@ function renderDailyTab(items) {
   detail.innerHTML = `<div class="stats-detail-title">일별 생산 현황 (날짜 내림차순, 같은 날+같은 제품 합산)</div><div class="stats-detail-note">생식: productions.status='active' / 동결건조: frozenLogs.status='active'</div><table class="stats-table"><thead><tr><th>날짜</th><th>구분</th><th>제품명</th><th style="text-align:right">수량</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+function getVisibleSupplementRows(agg = lastSupplementAgg) {
+  if (!agg) return [];
+  return agg.rows.filter(row => row.active || includeInactiveSupplements);
+}
+
+function renderSupplementTab(agg) {
+  const summary = document.getElementById('statsSummary');
+  const chartArea = document.getElementById('statsChartArea');
+  const detail = document.getElementById('statsDetailArea');
+  destroyAllCharts();
+  if (chartArea) {
+    chartArea.innerHTML = `
+      <div class="stats-recipe-toggles">
+        <label class="stats-recipe-chip" style="--recipe-color:#4A7C59">
+          <input type="checkbox" id="statsSupplementInactiveToggle" ${includeInactiveSupplements ? 'checked' : ''}>
+          <span class="stats-recipe-chip-dot"></span>
+          <span class="stats-recipe-chip-label">비활성 포함</span>
+        </label>
+      </div>
+    `;
+  }
+
+  const rows = getVisibleSupplementRows(agg);
+  const totals = rows.reduce((sum, row) => ({
+    in: sum.in + row.in,
+    used: sum.used + row.used,
+    adjust: sum.adjust + row.adjust,
+    currentQty: sum.currentQty + row.currentQty,
+  }), { in: 0, used: 0, adjust: 0, currentQty: 0 });
+
+  if (summary) {
+    const inactiveCount = agg.rows.filter(row => !row.active).length;
+    summary.innerHTML = `<div class="stats-summary-row"><span>표시 SKU: <b>${formatNumber(rows.length)}</b></span><span>입고 <b>${formatNumber(totals.in)}봉</b></span><span>사용 <b>${formatNumber(totals.used)}봉</b></span><span>수동조정 <b>${formatNumber(totals.adjust)}봉</b></span><span>현재재고 <b>${formatNumber(totals.currentQty)}봉</b></span>${inactiveCount ? `<span>비활성 ${formatNumber(inactiveCount)}개</span>` : ''}</div>`;
+  }
+
+  if (rows.length === 0) {
+    if (detail) detail.innerHTML = `<div class="stats-placeholder">데이터 없음</div>`;
+  } else if (detail) {
+    const bodyRows = rows.map(row => `
+      <tr class="${row.active ? '' : 'stats-row-muted'}">
+        <td>${escapeHtml(row.name)}${row.active ? '' : ' <span class="stats-tag">비활성</span>'}</td>
+        <td style="text-align:right">${formatNumber(row.in)}</td>
+        <td style="text-align:right">${formatNumber(row.used)}</td>
+        <td style="text-align:right">${formatNumber(row.adjust)}</td>
+        <td style="text-align:right"><b>${formatNumber(row.currentQty)}</b></td>
+      </tr>
+    `).join('');
+    detail.innerHTML = `
+      <div class="stats-detail-title">영양제 통계 (기간 합계)</div>
+      <div class="stats-detail-note">사용 = supplementLogs autoDeduct qty의 net(-sum). 환불은 사용량에서 차감되어 음수도 표시될 수 있음.</div>
+      <table class="stats-table">
+        <thead><tr><th>SKU명</th><th style="text-align:right">입고</th><th style="text-align:right">사용</th><th style="text-align:right">수동조정</th><th style="text-align:right">현재재고</th></tr></thead>
+        <tbody>${bodyRows}</tbody>
+        <tfoot><tr><th>총계</th><th style="text-align:right">${formatNumber(totals.in)}</th><th style="text-align:right">${formatNumber(totals.used)}</th><th style="text-align:right">${formatNumber(totals.adjust)}</th><th style="text-align:right">${formatNumber(totals.currentQty)}</th></tr></tfoot>
+      </table>
+    `;
+  }
+
+  document.getElementById('statsSupplementInactiveToggle')?.addEventListener('change', e => {
+    includeInactiveSupplements = e.target.checked;
+    renderSupplementTab(lastSupplementAgg || agg);
+  });
+}
+
 function chartLineOptions(labelCallback) {
   return {
     responsive: true,
@@ -811,6 +948,9 @@ function handleExcelDownload() {
   } else if (activeTab === 'daily') {
     if (!lastDailyItems || lastDailyItems.length === 0) { alert('다운로드할 데이터가 없습니다.'); return; }
     rows = buildSheetDailyRows(lastDailyItems);
+  } else if (activeTab === 'supplement') {
+    if (!lastSupplementAgg || getVisibleSupplementRows().length === 0) { alert('다운로드할 데이터가 없습니다.'); return; }
+    rows = buildSheetSupplementRows(lastSupplementAgg);
   }
   if (!rows) return;
   const wb = XLSX.utils.book_new();
@@ -825,13 +965,16 @@ async function handleExcelDownloadAll() {
   dlBtn.disabled = true;
   dlBtn.textContent = '⏳ 데이터 로딩 중...';
   try {
-    const [productions, bagLogs, eggLogs, frozenLogs, showInStatsMap, bagMap] = await Promise.all([
+    const [productions, bagLogs, eggLogs, frozenLogs, showInStatsMap, bagMap, supplementTypes, supplementStocks, supplementLogs] = await Promise.all([
       loadProductionsInRange(),
       loadBagLogsInRange(),
       loadEggLogsInRange(),
       loadFrozenLogsInRange(),
       loadMeatTypeShowInStatsMap(),
       loadBagPiecesPerBoxMap(),
+      loadSupplementTypes(),
+      loadSupplementStocks(),
+      loadSupplementLogsInRange(),
     ]);
     bagPiecesPerBoxMap = bagMap;
     meatTypeShowInStatsMap = showInStatsMap;
@@ -841,12 +984,14 @@ async function handleExcelDownloadAll() {
     const bagAgg = aggregateBagsFromLogs(bagLogs, aggregation);
     const eggAgg = aggregateEggsFromLogs(eggLogs, aggregation);
     const dailyItems = aggregateDailyView(productions, frozenLogs);
+    const supplementAgg = aggregateSupplements(supplementTypes, supplementStocks, supplementLogs);
     const wb = XLSX.utils.book_new();
     appendStatsSheet(wb, '생산량', productions.length === 0 ? [['데이터 없음']] : buildSheetProductionRows(prodAgg, productions.length));
     appendStatsSheet(wb, '원료 소모량', meatAgg.totalG === 0 ? [['데이터 없음']] : buildSheetMeatRows(meatAgg));
     appendStatsSheet(wb, '봉투 소모량', bagAgg.total === 0 ? [['데이터 없음']] : buildSheetBagRows(bagAgg));
     appendStatsSheet(wb, '계란 사용량', eggAgg.total === 0 ? [['데이터 없음']] : buildSheetEggRows(eggAgg));
     appendStatsSheet(wb, '일별 생산 현황', dailyItems.length === 0 ? [['데이터 없음']] : buildSheetDailyRows(dailyItems));
+    appendStatsSheet(wb, '영양제', supplementAgg.rows.length === 0 ? [['데이터 없음']] : buildSheetSupplementRows(supplementAgg));
     XLSX.writeFile(wb, `Fantapet_통계_${startDate}~${endDate}.xlsx`);
   } catch (err) {
     console.error('[stats] 일괄 다운로드 실패:', err);
@@ -921,6 +1066,20 @@ function buildSheetDailyRows(items) {
   const freezeCount = items.filter(i => i.type === '동결건조').length;
   const rows = [[`생식 ${rawCount} 행`, `동결건조 ${freezeCount} 행`, `총 ${items.length} 행 (같은 날 같은 제품 합산)`], [], ['날짜', '구분', '제품명', '수량', '단위']];
   for (const item of items) rows.push([item.date, item.type, item.name || '', item.qty, item.unit || '']);
+  return rows;
+}
+
+function buildSheetSupplementRows(agg) {
+  const rowsData = getVisibleSupplementRows(agg);
+  const totals = rowsData.reduce((sum, row) => ({
+    in: sum.in + row.in,
+    used: sum.used + row.used,
+    adjust: sum.adjust + row.adjust,
+    currentQty: sum.currentQty + row.currentQty,
+  }), { in: 0, used: 0, adjust: 0, currentQty: 0 });
+  const rows = [[`표시 SKU: ${rowsData.length}`, `입고 ${totals.in}봉`, `사용 ${totals.used}봉`, `수동조정 ${totals.adjust}봉`, `현재재고 ${totals.currentQty}봉`], [], ['SKU명', '입고', '사용', '수동조정', '현재재고']];
+  for (const row of rowsData) rows.push([`${row.name}${row.active ? '' : ' (비활성)'}`, row.in, row.used, row.adjust, row.currentQty]);
+  rows.push(['총계', totals.in, totals.used, totals.adjust, totals.currentQty]);
   return rows;
 }
 
