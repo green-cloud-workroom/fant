@@ -7,6 +7,7 @@ import { getTodayKST as getToday, getHolidaysCache } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUser, currentUserRole } from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
+import { makeSupplementId } from '../utils/supplement.js';
 
 let recipes = [];
 let productions = [];
@@ -26,10 +27,6 @@ function renderFreezeDryQtyLine(item) {
 
 function getUnitPresets(recipe) {
   return Array.isArray(recipe?.unitPresets) ? recipe.unitPresets : [];
-}
-
-function makeSupplementId(recipeId, unit) {
-  return `${recipeId}_${unit}`;
 }
 
 function getSupplementSaveErrorMessage(code, supplementName) {

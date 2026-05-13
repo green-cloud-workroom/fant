@@ -5,6 +5,7 @@ import {
 import { currentUser, currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
+import { makeSupplementId, makeSupplementName, makeSupplementSortOrder } from '../utils/supplement.js';
 
 let recipes = [];
 let selectedRecipeId = null;
@@ -102,18 +103,6 @@ function getRoleStaffLabel() {
   if (currentUserRole === 'office') return '사무실';
   if (currentUserRole === 'production') return '생산실';
   return '시스템';
-}
-
-function makeSupplementId(recipeId, unit) {
-  return `${recipeId}_${unit}`;
-}
-
-function makeSupplementName(recipeName, unit) {
-  return `${recipeName} ${unit}용 영양제`;
-}
-
-function makeSupplementSortOrder(recipeSortOrder, unitIndex) {
-  return (recipeSortOrder || 0) * 100 + unitIndex;
 }
 
 function getSupplementBaseDoc(recipeId, recipeData, unit, unitIndex) {
