@@ -2,6 +2,9 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, setDoc, updateDoc, addDoc, query, orderBy
 } from 'firebase/firestore';
+import { currentUserRole } from '../app.js';
+import { recordActivity } from '../services/activityLogs.js';
+import { getTodayKST as getToday } from '../utils/date.js';
 
 let recipes = [];
 let selectedRecipeId = null;
@@ -94,6 +97,13 @@ function getTargetLabel(target) {
   return target === 'cat' ? '고양이' : target === 'dog' ? '강아지' : '공용';
 }
 
+function getRoleStaffLabel() {
+  if (currentUserRole === 'admin') return '대표';
+  if (currentUserRole === 'office') return '사무실';
+  if (currentUserRole === 'production') return '생산실';
+  return '시스템';
+}
+
 function bindRecipeListEvents() {
   document.querySelectorAll('.recipe-list-item').forEach(item => {
     item.addEventListener('click', (e) => {
@@ -111,9 +121,33 @@ function bindRecipeListEvents() {
     toggle.addEventListener('change', async (e) => {
       const id = e.target.dataset.id;
       const active = e.target.checked;
-      await updateDoc(doc(db, 'recipes', id), { active });
       const recipe = recipes.find(r => r.id === id);
-      if (recipe) recipe.active = active;
+      const previousActive = recipe?.active !== false;
+      try {
+        await updateDoc(doc(db, 'recipes', id), {
+          active,
+          updatedAt: new Date(),
+        });
+        if (recipe) recipe.active = active;
+        if (previousActive !== active) {
+          await recordActivity({
+            action: 'recipe',
+            subAction: 'activeToggle',
+            date: getToday(),
+            staff: getRoleStaffLabel(),
+            message: `Recipe ${active ? 'active' : 'inactive'} — ${recipe ? getDisplayName(recipe) : id}`,
+            details: {
+              recipeId: id,
+              recipeName: recipe ? getDisplayName(recipe) : null,
+              active,
+            },
+          });
+        }
+      } catch (err) {
+        console.error('[recipe] active save failed:', err);
+        alert('활성 상태 저장 중 오류가 발생했습니다.');
+        e.target.checked = !active;
+      }
     });
   });
 }
