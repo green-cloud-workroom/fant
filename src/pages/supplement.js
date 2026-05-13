@@ -3,12 +3,15 @@ import {
   collection, doc, getDoc, getDocs, limit, orderBy, query, runTransaction,
   serverTimestamp,
 } from 'firebase/firestore';
+import { currentUser } from '../app.js';
 import { getTodayKST } from '../utils/date.js';
 
 const SUPPLEMENT_THRESHOLD_WARNING = 10;
 const SUPPLEMENT_THRESHOLD_DANGER = 5;
 const SUPPLEMENT_IN_GROUP_KEY = 'senior';
 const SUPPLEMENT_IN_GROUP_NAME = '선임';
+const SUPPLEMENT_ADJUST_GROUP_KEY = 'office';
+const SUPPLEMENT_ADJUST_GROUP_NAME = '사무';
 
 let supplementTypes = [];
 let supplementStocks = [];
@@ -189,9 +192,7 @@ function renderLogTypeTag(type) {
 
 function bindSupplementEvents() {
   document.getElementById('btnSupplementIncoming')?.addEventListener('click', showSupplementIncomingModal);
-  document.getElementById('btnSupplementAdjust')?.addEventListener('click', () => {
-    alert('수동 조정은 단위 7에서 구현됩니다');
-  });
+  document.getElementById('btnSupplementAdjust')?.addEventListener('click', showSupplementAdjustModal);
   document.getElementById('btnSupplementRefresh')?.addEventListener('click', async () => {
     await renderSupplement();
   });
@@ -312,6 +313,167 @@ async function saveSupplementIncoming() {
   }
 }
 
+function showSupplementAdjustModal() {
+  const activeTypes = supplementTypes
+    .filter(type => type.active !== false)
+    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
+  const staffMembers = supplementStaffCache[SUPPLEMENT_ADJUST_GROUP_KEY] || [];
+  const today = getTodayKST();
+
+  showModal(`
+    <h3 class="modal-title">영양제 수동 조정</h3>
+    ${activeTypes.length === 0 ? `
+      <div class="list-empty supplement-log-empty">
+        등록된 영양제가 없습니다. 레시피 관리에서 생산단위 프리셋을 설정해주세요.
+      </div>
+    ` : `
+      <div class="form-group">
+        <label>영양제 SKU *</label>
+        <select id="m_adjustSupplementType">
+          <option value="">선택</option>
+          ${activeTypes.map(type => `<option value="${escapeHtml(type.id)}">${escapeHtml(type.name || type.id)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>조정 유형 *</label>
+          <select id="m_adjustType">
+            <option value="">선택</option>
+            <option value="plus">+ 증가</option>
+            <option value="minus">- 감소</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>수량 (봉) *</label>
+          <input type="number" id="m_adjustQty" min="1" step="1" placeholder="조정 수량" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label>사유 *</label>
+        <input type="text" id="m_adjustReason" maxlength="200" placeholder="조정 사유" />
+      </div>
+      <div class="form-group">
+        <label>담당자 (${SUPPLEMENT_ADJUST_GROUP_NAME}) *</label>
+        <select id="m_adjustStaff">
+          <option value="">선택</option>
+          ${staffMembers.map(member => `<option value="${escapeHtml(member.name)}">${escapeHtml(member.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>비고</label>
+        <textarea id="m_adjustNote" maxlength="500" placeholder="비고" rows="3"></textarea>
+      </div>
+      <input type="hidden" id="m_adjustDate" value="${today}" />
+    `}
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">취소</button>
+      <button class="btn-primary" id="btnSaveSupplementAdjust" ${activeTypes.length === 0 ? 'disabled' : ''}>저장</button>
+    </div>
+  `);
+
+  document.getElementById('btnSaveSupplementAdjust')?.addEventListener('click', saveSupplementAdjust);
+}
+
+async function saveSupplementAdjust() {
+  const supplementTypeId = document.getElementById('m_adjustSupplementType')?.value || '';
+  const adjustType = document.getElementById('m_adjustType')?.value || '';
+  const qtyRaw = document.getElementById('m_adjustQty')?.value || '';
+  const reason = document.getElementById('m_adjustReason')?.value.trim() || '';
+  const staffName = document.getElementById('m_adjustStaff')?.value || '';
+  const note = document.getElementById('m_adjustNote')?.value.trim() || '';
+  const date = document.getElementById('m_adjustDate')?.value || getTodayKST();
+  const qty = Number(qtyRaw);
+
+  if (!supplementTypeId) { alert('영양제 SKU를 선택해주세요.'); return; }
+  if (!adjustType) { alert('조정 유형을 선택해주세요.'); return; }
+  if (!qtyRaw || !Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) {
+    alert('수량은 1 이상의 정수로 입력해주세요.');
+    return;
+  }
+  if (!reason) { alert('사유를 입력해주세요.'); return; }
+  if (!staffName) { alert('담당자를 선택해주세요.'); return; }
+
+  const saveButton = document.getElementById('btnSaveSupplementAdjust');
+  saveButton.disabled = true;
+
+  try {
+    const signedQty = adjustType === 'minus' ? -qty : qty;
+    const stockRef = doc(db, 'supplementStock', supplementTypeId);
+    const logRef = doc(collection(db, 'supplementLogs'));
+    const activityRef = doc(collection(db, 'activityLogs'));
+    const supplement = supplementTypes.find(type => type.id === supplementTypeId);
+    const supplementName = supplement?.name || supplementTypeId;
+    const sign = signedQty > 0 ? '+' : '';
+
+    await runTransaction(db, async (transaction) => {
+      const stockSnap = await transaction.get(stockRef);
+      const before = Number(stockSnap.exists() ? stockSnap.data().currentQty || 0 : 0);
+      const after = before + signedQty;
+
+      if (after < 0) {
+        throw new Error('NEGATIVE_SUPPLEMENT_STOCK');
+      }
+
+      transaction.set(stockRef, {
+        id: supplementTypeId,
+        supplementTypeId,
+        currentQty: after,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+
+      const logData = {
+        date,
+        timestamp: serverTimestamp(),
+        supplementTypeId,
+        type: 'adjust',
+        qty: signedQty,
+        before,
+        after,
+        staffName,
+        reason,
+      };
+      if (note) logData.note = note;
+      transaction.set(logRef, logData);
+
+      transaction.set(activityRef, {
+        action: 'supplementStock',
+        subAction: 'manualAdjust',
+        date,
+        staff: staffName,
+        uid: currentUser?.uid || null,
+        timestamp: serverTimestamp(),
+        message: `영양제 수동조정 — ${supplementName} ${sign}${signedQty}봉 / 사유: ${reason} / 담당: ${staffName}`,
+        details: {
+          supplementTypeId,
+          supplementName,
+          signedQty,
+          before,
+          after,
+          reason,
+          note: note || null,
+        },
+        read: false,
+        acknowledged: false,
+        acknowledgedAt: null,
+        acknowledgedBy: null,
+        acknowledgedByUid: null,
+      });
+    });
+
+    closeModal();
+    await renderSupplement();
+    alert('수동 조정 완료');
+  } catch (err) {
+    console.error('[supplement] adjust save failed:', err);
+    if (err.message === 'NEGATIVE_SUPPLEMENT_STOCK') {
+      alert('재고가 마이너스가 됩니다. 조정 수량을 확인해주세요.');
+    } else {
+      alert(`수동 조정 중 오류가 발생했습니다: ${err.message || err}`);
+    }
+    saveButton.disabled = false;
+  }
+}
+
 async function showAllSupplementLogsModal() {
   const snap = await getDocs(query(collection(db, 'supplementLogs'), orderBy('timestamp', 'desc'), limit(200)));
   const logs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -346,9 +508,14 @@ window.closeModal = function() {
 };
 
 async function loadSupplementStaffCache() {
-  if (supplementStaffCache[SUPPLEMENT_IN_GROUP_KEY]) return;
-  const snap = await getDoc(doc(db, 'staffGroups', SUPPLEMENT_IN_GROUP_KEY));
-  supplementStaffCache[SUPPLEMENT_IN_GROUP_KEY] = snap.exists() ? snap.data().members || [] : [];
+  const groupKeys = [SUPPLEMENT_IN_GROUP_KEY, SUPPLEMENT_ADJUST_GROUP_KEY];
+  const missingKeys = groupKeys.filter(key => !supplementStaffCache[key]);
+  if (missingKeys.length === 0) return;
+
+  await Promise.all(missingKeys.map(async (key) => {
+    const snap = await getDoc(doc(db, 'staffGroups', key));
+    supplementStaffCache[key] = snap.exists() ? snap.data().members || [] : [];
+  }));
 }
 
 function formatSignedQty(value) {
