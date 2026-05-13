@@ -1619,6 +1619,37 @@ async function triggerMinStockLogs(today) {
         });
       }
     }
+
+    const supplementTypesSnap = await getDocs(query(
+      collection(db, 'supplementTypes'),
+      where('active', '==', true),
+    ));
+    const supplementStockSnap = await getDocs(collection(db, 'supplementStock'));
+    const supplementStockMap = new Map(
+      supplementStockSnap.docs.map(d => [d.id, { id: d.id, ...d.data() }])
+    );
+    const supplementMinQty = 5;
+
+    for (const typeDoc of supplementTypesSnap.docs) {
+      const type = { id: typeDoc.id, ...typeDoc.data() };
+      const stock = supplementStockMap.get(type.id);
+      const currentQty = stock ? Number(stock.currentQty || 0) : 0;
+      if (currentQty >= supplementMinQty) continue;
+      await ensureAutoLog({
+        action: 'minStock',
+        subAction: 'alert',
+        date: today,
+        message: `⚠️ ${type.name || '영양제'} 부족 — 현재 ${currentQty}봉 / 최소 ${supplementMinQty}봉`,
+        details: {
+          kind: 'supplement',
+          supplementTypeId: type.id,
+          name: type.name,
+          current: currentQty,
+          minimum: supplementMinQty,
+        },
+        dedupKey: `supplementMin:alert:${type.id}`,
+      });
+    }
   } catch (err) {
     console.error('[6C-3] 최소재고 자동 발행 실패:', err);
   }
