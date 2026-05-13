@@ -332,6 +332,92 @@ timestamp: Timestamp,
 
 ---
 
+## supplementTypes/{recipeId_unit} (신규 — spec_v24 §3-2)
+
+영양제 SKU 마스터. `recipe.unitPresets`에서 자동 생성/삭제.
+
+**문서 ID**: 결정적 ID `${recipeId}_${unit}` (예: `yEhV7xTxX8giuDtSnFmQ_10`)
+
+**필드**:
+
+```js
+{
+  id: `${recipeId}_${unit}`,  // 결정적 doc id
+  recipeId: string,
+  recipeName: string,         // 스냅샷
+  unit: number,
+  name: string,               // `${recipeName} ${unit}용 영양제` 자동 생성
+  active: boolean,            // 레시피 active 따름
+  sortOrder: number,          // recipes.sortOrder * 100 + unit index
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
+  createdBy: string,
+  updatedBy: string,
+}
+```
+
+**주의**:
+- 운영자가 직접 등록/삭제하지 않음. `recipe.unitPresets` 변경 시 자동 생성/삭제 (단위 4).
+- `active`는 레시피 active 토글을 따라감. SKU 자체 활성 토글 UI 없음.
+- 삭제는 운영자가 프리셋에서 명시적으로 unit을 제거할 때만 수행. 재고가 있으면 경고 모달 표시.
+
+---
+
+## supplementStock/{recipeId_unit} (신규 — spec_v24 §3-2)
+
+영양제 현재 재고. `supplementTypes`와 1:1.
+
+**문서 ID**: `supplementTypes`와 동일한 결정적 ID
+
+**필드**:
+
+```js
+{
+  id: same as supplementTypes.id,
+  supplementTypeId: string,
+  currentQty: number,         // 봉, 정수, 0 이상
+  updatedAt: Timestamp,
+}
+```
+
+**주의**:
+- 마이너스 비허용. 생산 저장/수정 차감 및 수동조정에서 0 미만이 되면 차단.
+- SKU 생성 시 `currentQty: 0`으로 초기화.
+
+---
+
+## supplementLogs/{auto-id} (신규 — spec_v24 §3-2)
+
+영양제 입고/차감/조정 이력.
+
+**문서 ID**: Firestore 자동 생성
+
+**필드**:
+
+```js
+{
+  date: string,               // YYYY-MM-DD (KST)
+  timestamp: Timestamp,       // UTC
+  supplementTypeId: string,
+  type: 'in' | 'autoDeduct' | 'adjust',
+  qty: number,                // 부호 포함
+  before: number,
+  after: number,
+  staffName: string,
+  reason?: string,            // adjust 필수
+  note?: string,
+  relatedProductionId?: string,  // autoDeduct 시 필수
+}
+```
+
+**주의**:
+- `type: 'autoDeduct'`는 생산 카드 저장 시 자동 차감(`qty: -1`) 또는 환불(`qty: +1`).
+- `relatedProductionId`는 생산 카드 삭제/수정 시 역추적용. 환불 발행 시에도 동일 productionId 사용.
+- `type: 'in'`은 입고 등록 시 사용. activityLogs 발행 안 함 (봉투/원육 입고 패턴).
+- `type: 'adjust'`는 수동조정. activityLogs 발행 (사무 로그).
+
+---
+
 ## frozenPanLogs/{auto-id} (신규 — 묶음 3)
 
 동결판 입고/차감/조정 이력 (불변). 묶음 3 이전에는 ledger만 있고 통합 logs 없었음 — 묶음 3에서 신규 도입.

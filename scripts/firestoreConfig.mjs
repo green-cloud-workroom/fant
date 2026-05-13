@@ -47,6 +47,9 @@ export const WIPE_COLLECTIONS = [
   'schedules',
   'events',
   'holidays',
+  'supplementTypes',
+  'supplementStock',
+  'supplementLogs',
   'activityLogs',
   'stockLedger',
 ];
