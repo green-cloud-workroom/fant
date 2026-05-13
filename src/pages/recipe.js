@@ -9,6 +9,7 @@ let selectedRecipeId = null;
 let meatTypes = [];
 // [봉투 연동] raw 카테고리에서 선택 가능한 봉투 목록
 let bagTypes = [];
+let currentUnitPresets = [];
 
 async function loadMeatTypes() {
   const q = query(collection(db, 'meatTypes'), orderBy('sortOrder'));
@@ -126,6 +127,7 @@ function showNewRecipeForm() {
 function showRecipeDetail(recipe) {
   const detail = document.getElementById('recipeDetail');
   const isNew = !recipe;
+  currentUnitPresets = Array.isArray(recipe?.unitPresets) ? [...recipe.unitPresets] : [];
 
   detail.innerHTML = `
     <div class="detail-header">
@@ -211,6 +213,18 @@ function showRecipeDetail(recipe) {
             </div>
           </div>
         </div>
+        <div class="form-row">
+          <div class="form-group unit-preset-group">
+            <label>생산단위 프리셋</label>
+            <div class="unit-preset-input-row">
+              <input type="text" id="unitPresetInput" inputmode="decimal" placeholder="예: 10" />
+              <button type="button" class="btn-secondary" id="btnAddUnitPreset">+ 추가</button>
+            </div>
+            <div class="unit-preset-chip-list" id="unitPresetChipList">
+              ${renderUnitPresetChips()}
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- 원료 테이블 -->
@@ -256,6 +270,7 @@ function showRecipeDetail(recipe) {
   document.getElementById('recipeCategory').addEventListener('change', updateFieldVisibility);
   document.getElementById('requiresSeparation')?.addEventListener('change', updateFieldVisibility);
   updateFieldVisibility();
+  bindUnitPresetEvents();
 
   // 행 추가
   document.getElementById('btnAddIngredient').addEventListener('click', () => {
@@ -274,6 +289,72 @@ function showRecipeDetail(recipe) {
   document.getElementById('btnSaveRecipe').addEventListener('click', () => saveRecipe(recipe?.id));
 
   // 삭제
+}
+
+function renderUnitPresetChips() {
+  if (!currentUnitPresets.length) {
+    return '<div class="unit-preset-empty">등록된 프리셋 없음</div>';
+  }
+
+  return currentUnitPresets.map((unit, idx) => `
+    <span class="unit-preset-chip">
+      <span>${unit}</span>
+      <button type="button" class="unit-preset-remove" data-idx="${idx}" aria-label="${unit} 삭제">×</button>
+    </span>
+  `).join('');
+}
+
+function refreshUnitPresetChips() {
+  const list = document.getElementById('unitPresetChipList');
+  if (list) {
+    list.innerHTML = renderUnitPresetChips();
+  }
+}
+
+function addUnitPresetFromInput() {
+  const input = document.getElementById('unitPresetInput');
+  if (!input) return;
+
+  const rawValue = input.value.trim();
+  if (!rawValue) return;
+
+  const unit = Number(rawValue);
+  if (Number.isNaN(unit)) {
+    alert('숫자만 입력 가능합니다');
+    return;
+  }
+  if (unit <= 0) {
+    alert('0보다 큰 숫자를 입력해주세요');
+    return;
+  }
+  if (currentUnitPresets.includes(unit)) {
+    alert('이미 추가된 생산단위입니다');
+    return;
+  }
+
+  currentUnitPresets.push(unit);
+  input.value = '';
+  refreshUnitPresetChips();
+}
+
+function bindUnitPresetEvents() {
+  const addButton = document.getElementById('btnAddUnitPreset');
+  const input = document.getElementById('unitPresetInput');
+  const chipList = document.getElementById('unitPresetChipList');
+
+  addButton?.addEventListener('click', addUnitPresetFromInput);
+  input?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addUnitPresetFromInput();
+    }
+  });
+  chipList?.addEventListener('click', (e) => {
+    const button = e.target.closest('.unit-preset-remove');
+    if (!button) return;
+    currentUnitPresets.splice(Number(button.dataset.idx), 1);
+    refreshUnitPresetChips();
+  });
 }
 
 function renderIngredientRows(ingredients) {
@@ -421,6 +502,7 @@ async function saveRecipe(id) {
     active: true,
     sortOrder: id ? recipes.find(r => r.id === id)?.sortOrder ?? recipes.length : recipes.length,
     ingredients: getIngredients(),
+    unitPresets: [...currentUnitPresets],
     version: 1,
     updatedAt: new Date(),
   };
