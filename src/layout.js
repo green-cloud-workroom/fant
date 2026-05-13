@@ -228,9 +228,13 @@ function updateMenuWarnings() {
  * 차단 항목 0개와 1개 이상 두 가지 본문 분기.
  * 점프 버튼 클릭 시 메뉴 전환 + 모달 닫기.
  */
-function showBlockingModal() {
-  const data = window.__blockingItems;
-  if (!data) return;
+function showBlockingModal(options = {}) {
+  const variant = options.variant || 'block';
+  const data = options.data || window.__blockingItems;
+  if (!data) return Promise.resolve(false);
+
+  const isWarning = variant === 'warning';
+  const items = isWarning ? (data.warnings || []) : (data.items || []);
 
   // 기존 모달 제거 (idempotent)
   const existing = document.getElementById('blockingModalOverlay');
@@ -239,12 +243,17 @@ function showBlockingModal() {
   const dateLabel = formatKstDateWithDay(data.date);
   const today = getTodayKST();
   const isPastTarget = data.date < today;
-  const modalTitle = isPastTarget
+  const modalTitle = isWarning
+    ? `${dateLabel} 마감 경고`
+    : isPastTarget
     ? '⚠️ 지난 영업일 마감이 처리되지 않았습니다'
     : '⚠️ 오늘 마감을 진행할 수 없습니다';
   const blockedIntro = isPastTarget
     ? `${dateLabel} 마감이 완료되지 않아 다음 작업들이 차단됩니다:`
     : '아래 항목을 처리한 후 다시 시도해주세요.';
+  const introText = isWarning
+    ? '아래 경고 항목이 있습니다. 마감은 가능하지만 확인 후 진행해주세요.'
+    : blockedIntro;
 
   const escapeModalText = (value) => String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -254,30 +263,33 @@ function showBlockingModal() {
     .replace(/'/g, '&#39;');
 
   let bodyHtml;
-  if (data.totalBlocked === 0) {
+  if (items.length === 0) {
     bodyHtml = `
       <p class="blocking-modal-desc">
-        ${isPastTarget ? `${dateLabel} 마감이 완료되지 않아 신규 등록이 차단됩니다.` : '처리할 차단 항목은 없습니다.'}
+        ${isWarning ? '표시할 경고 항목은 없습니다.' : isPastTarget ? `${dateLabel} 마감이 완료되지 않아 신규 등록이 차단됩니다.` : '처리할 차단 항목은 없습니다.'}
       </p>
-      <p class="blocking-modal-desc">
+      ${isWarning ? '' : `<p class="blocking-modal-desc">
         마감 버튼을 다시 누르면 진행할 수 있습니다.
-      </p>
+      </p>`}
     `;
   } else {
     const numerals = ['', '①', '②', '③', '④', '⑤', '⑥', '⑦'];
-    const itemsHtml = data.items.map((it) => {
-      const num = numerals[it.id] || `${it.id}.`;
+    const itemsHtml = items.map((it, idx) => {
+      const num = isWarning ? (numerals[idx + 1] || `${idx + 1}.`) : (numerals[it.id] || `${it.id}.`);
       const countText = it.count ? ` ${it.count}건` : '';
       const detailHtml = (it.details || []).length > 0
         ? `<ul class="blocking-modal-details">
             ${(it.details || []).map(d => `<li>${escapeModalText(d)}</li>`).join('')}
           </ul>`
         : (it.reason ? `<div class="blocking-modal-reason">${escapeModalText(it.reason)}</div>` : '');
+      const jumpButtonHtml = isWarning
+        ? ''
+        : `<button class="btn-primary blocking-modal-jump" data-jump="${it.jumpMenu}">처리하러 가기</button>`;
       return `
         <div class="blocking-modal-item">
           <span class="blocking-modal-item-num">${num}</span>
-          <span class="blocking-modal-item-label">${escapeModalText(it.label)}${countText}</span>
-          <button class="btn-primary blocking-modal-jump" data-jump="${it.jumpMenu}">처리하러 가기</button>
+          <span class="blocking-modal-item-label">${escapeModalText(isWarning ? (it.reason || it.label) : it.label)}${isWarning ? '' : countText}</span>
+          ${jumpButtonHtml}
           ${detailHtml}
         </div>
       `;
@@ -285,33 +297,35 @@ function showBlockingModal() {
 
     bodyHtml = `
       <p class="blocking-modal-desc">
-        ${blockedIntro}
+        ${introText}
       </p>
-      ${isPastTarget ? `
+      ${!isWarning && isPastTarget ? `
         <ul class="blocking-modal-blocked">
           <li>모든 페이지의 신규 등록 (생산 추가, 입고 등록, 발주 추가 등)</li>
           <li>마감 버튼 (아래 항목 처리 후 가능)</li>
         </ul>
       ` : ''}
       <p class="blocking-modal-desc-strong">
-        마감을 위해 처리해야 할 항목:
+        ${isWarning ? '확인할 경고 항목:' : '마감을 위해 처리해야 할 항목:'}
       </p>
       <div class="blocking-modal-items">
         ${itemsHtml}
       </div>
       <p class="blocking-modal-foot">
-        위 항목 처리 후 마감 버튼을 눌러주세요.
+        ${isWarning ? '경고 내용을 확인한 뒤 마감 여부를 선택해주세요.' : '위 항목 처리 후 마감 버튼을 눌러주세요.'}
       </p>
     `;
   }
 
   const html = `
     <div class="modal-overlay" id="blockingModalOverlay">
-      <div class="modal-box modal-blocking">
+      <div class="modal-box modal-blocking${isWarning ? ' modal-blocking--warning' : ''}">
         <h3 class="blocking-modal-title">${modalTitle}</h3>
         ${bodyHtml}
         <div class="modal-actions">
-          <button class="btn-secondary" id="blockingModalClose">닫기</button>
+          ${isWarning
+            ? '<button class="btn-secondary" id="blockingModalCancel">취소</button><button class="btn-primary" id="blockingModalConfirm">그래도 마감</button>'
+            : '<button class="btn-secondary" id="blockingModalClose">닫기</button>'}
         </div>
       </div>
     </div>
@@ -321,24 +335,34 @@ function showBlockingModal() {
 
   const overlay = document.getElementById('blockingModalOverlay');
 
-  // 닫기 버튼
-  document.getElementById('blockingModalClose').addEventListener('click', () => {
-    overlay.remove();
-  });
-
-  // 오버레이 바깥 클릭 시 닫기
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) overlay.remove();
-  });
-
-  // 점프 버튼들 — 메뉴 전환 + 모달 닫기
-  overlay.querySelectorAll('.blocking-modal-jump').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const menuId = btn.dataset.jump;
+  return new Promise((resolve) => {
+    const close = (value) => {
       overlay.remove();
-      setCurrentMenu(menuId);
-      renderLayout();
-      renderPage(menuId);
+      resolve(value);
+    };
+
+    if (isWarning) {
+      document.getElementById('blockingModalCancel').addEventListener('click', () => close(false));
+      document.getElementById('blockingModalConfirm').addEventListener('click', () => close(true));
+    } else {
+      document.getElementById('blockingModalClose').addEventListener('click', () => close(false));
+
+      // 점프 버튼들 — 메뉴 전환 + 모달 닫기
+      overlay.querySelectorAll('.blocking-modal-jump').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const menuId = btn.dataset.jump;
+          overlay.remove();
+          setCurrentMenu(menuId);
+          renderLayout();
+          renderPage(menuId);
+          resolve(false);
+        });
+      });
+    }
+
+    // 오버레이 바깥 클릭 시 닫기
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close(false);
     });
   });
 }
@@ -420,7 +444,7 @@ async function handleClosingClick() {
     }
 
     if (result.totalWarnings > 0) {
-      const ok = await showClosingWarningsConfirm(result, targetDate);
+      const ok = await showBlockingModal({ variant: 'warning', data: result });
       if (!ok) return;
     }
 
@@ -432,21 +456,6 @@ async function handleClosingClick() {
   }
 }
 
-async function showClosingWarningsConfirm(result, targetDate) {
-  const dateLabel = formatKstDateWithDay(targetDate);
-  const lines = (result.warnings || []).map((w, i) => {
-    const num = ['①', '②', '③'][i] || `${i + 1}.`;
-    const detailLines = (w.details || []).map(d => `   - ${d}`);
-    return [`${num} ${w.reason || w.label}`, ...detailLines].join('\n');
-  });
-
-  return showConfirmModal({
-    title: `${dateLabel} 마감 경고`,
-    message: `아래 경고 항목이 있습니다.\n마감은 가능하지만 확인 후 진행해주세요.\n\n${lines.join('\n')}\n\n그래도 마감하시겠습니까?`,
-    confirmText: '그래도 마감',
-    danger: false,
-  });
-}
 /**
  * [Phase 4d]
  * 로그아웃 버튼 클릭 핸들러.
