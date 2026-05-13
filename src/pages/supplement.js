@@ -1,21 +1,29 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, query, orderBy, limit,
+  collection, doc, getDoc, getDocs, limit, orderBy, query, runTransaction,
+  serverTimestamp,
 } from 'firebase/firestore';
+import { getTodayKST } from '../utils/date.js';
 
 const SUPPLEMENT_THRESHOLD_WARNING = 10;
 const SUPPLEMENT_THRESHOLD_DANGER = 5;
+const SUPPLEMENT_IN_GROUP_KEY = 'senior';
+const SUPPLEMENT_IN_GROUP_NAME = '선임';
 
 let supplementTypes = [];
 let supplementStocks = [];
 let supplementLogs = [];
 let supplementFilter = 'all';
+let supplementStaffCache = {};
 
 export async function renderSupplement() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>영양제 재고 로딩 중...</p></div>`;
 
-  await loadSupplementData();
+  await Promise.all([
+    loadSupplementData(),
+    loadSupplementStaffCache(),
+  ]);
   renderSupplementLayout();
 }
 
@@ -180,9 +188,7 @@ function renderLogTypeTag(type) {
 }
 
 function bindSupplementEvents() {
-  document.getElementById('btnSupplementIncoming')?.addEventListener('click', () => {
-    alert('입고 등록은 단위 6에서 구현됩니다');
-  });
+  document.getElementById('btnSupplementIncoming')?.addEventListener('click', showSupplementIncomingModal);
   document.getElementById('btnSupplementAdjust')?.addEventListener('click', () => {
     alert('수동 조정은 단위 7에서 구현됩니다');
   });
@@ -195,6 +201,115 @@ function bindSupplementEvents() {
     if (list) list.innerHTML = renderSupplementList();
   });
   document.getElementById('btnSupplementAllLogs')?.addEventListener('click', showAllSupplementLogsModal);
+}
+
+function showSupplementIncomingModal() {
+  const activeTypes = supplementTypes
+    .filter(type => type.active !== false)
+    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
+  const staffMembers = supplementStaffCache[SUPPLEMENT_IN_GROUP_KEY] || [];
+  const today = getTodayKST();
+
+  showModal(`
+    <h3 class="modal-title">영양제 입고 등록</h3>
+    ${activeTypes.length === 0 ? `
+      <div class="list-empty supplement-log-empty">
+        등록된 영양제가 없습니다. 레시피 관리에서 생산단위 프리셋을 설정해주세요.
+      </div>
+    ` : `
+      <div class="form-group">
+        <label>영양제 SKU *</label>
+        <select id="m_supplementType">
+          <option value="">선택</option>
+          ${activeTypes.map(type => `<option value="${escapeHtml(type.id)}">${escapeHtml(type.name || type.id)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>수량 (봉) *</label>
+        <input type="number" id="m_qty" min="1" step="1" placeholder="입고 수량" />
+      </div>
+      <div class="form-group">
+        <label>입고일 *</label>
+        <input type="date" id="m_date" value="${today}" />
+      </div>
+      <div class="form-group">
+        <label>담당자 (${SUPPLEMENT_IN_GROUP_NAME}) *</label>
+        <select id="m_staff">
+          <option value="">선택</option>
+          ${staffMembers.map(member => `<option value="${escapeHtml(member.name)}">${escapeHtml(member.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>비고</label>
+        <textarea id="m_note" maxlength="500" placeholder="비고" rows="3"></textarea>
+      </div>
+    `}
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">취소</button>
+      <button class="btn-primary" id="btnSaveSupplementIncoming" ${activeTypes.length === 0 ? 'disabled' : ''}>저장</button>
+    </div>
+  `);
+
+  document.getElementById('btnSaveSupplementIncoming')?.addEventListener('click', saveSupplementIncoming);
+}
+
+async function saveSupplementIncoming() {
+  const supplementTypeId = document.getElementById('m_supplementType')?.value || '';
+  const qtyRaw = document.getElementById('m_qty')?.value || '';
+  const date = document.getElementById('m_date')?.value || '';
+  const staffName = document.getElementById('m_staff')?.value || '';
+  const note = document.getElementById('m_note')?.value.trim() || '';
+  const qty = Number(qtyRaw);
+
+  if (!supplementTypeId) { alert('영양제 SKU를 선택해주세요.'); return; }
+  if (!qtyRaw || !Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) {
+    alert('수량은 1 이상의 정수로 입력해주세요.');
+    return;
+  }
+  if (!date) { alert('입고일을 선택해주세요.'); return; }
+  if (!staffName) { alert('담당자를 선택해주세요.'); return; }
+
+  const saveButton = document.getElementById('btnSaveSupplementIncoming');
+  saveButton.disabled = true;
+
+  try {
+    const stockRef = doc(db, 'supplementStock', supplementTypeId);
+    const logRef = doc(collection(db, 'supplementLogs'));
+
+    await runTransaction(db, async (transaction) => {
+      const stockSnap = await transaction.get(stockRef);
+      const before = Number(stockSnap.exists() ? stockSnap.data().currentQty || 0 : 0);
+      const after = before + qty;
+
+      transaction.set(stockRef, {
+        id: supplementTypeId,
+        supplementTypeId,
+        currentQty: after,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+
+      const logData = {
+        date,
+        timestamp: serverTimestamp(),
+        supplementTypeId,
+        type: 'in',
+        qty,
+        before,
+        after,
+        staffName,
+      };
+      if (note) logData.note = note;
+      transaction.set(logRef, logData);
+    });
+
+    closeModal();
+    await renderSupplement();
+    alert('입고 등록 완료');
+  } catch (err) {
+    console.error('[supplement] incoming save failed:', err);
+    alert(`입고 등록 중 오류가 발생했습니다: ${err.message || err}`);
+    saveButton.disabled = false;
+  }
 }
 
 async function showAllSupplementLogsModal() {
@@ -229,6 +344,12 @@ function showModal(html, extraClass = '') {
 window.closeModal = function() {
   document.querySelector('.modal-overlay')?.remove();
 };
+
+async function loadSupplementStaffCache() {
+  if (supplementStaffCache[SUPPLEMENT_IN_GROUP_KEY]) return;
+  const snap = await getDoc(doc(db, 'staffGroups', SUPPLEMENT_IN_GROUP_KEY));
+  supplementStaffCache[SUPPLEMENT_IN_GROUP_KEY] = snap.exists() ? snap.data().members || [] : [];
+}
 
 function formatSignedQty(value) {
   const qty = Number(value || 0);
