@@ -15,6 +15,7 @@ export const DEFAULT_CLOSING_FLAGS = {
   warnNoTomorrowProd: true,
   warnBagMin: true,
   warnMeatMin: true,
+  warnSupplementMin: true,
 };
 
 /**
@@ -327,6 +328,32 @@ export function judgeMeatMinimumStock(meatTypes, meatStocks) {
   };
 }
 
+export function judgeSupplementMinimumStock(supplementTypes, supplementStocks, minQty = 5) {
+  const stockMap = new Map((supplementStocks || []).map(s => [s.id, s]));
+  const lowItems = (supplementTypes || [])
+    .filter(type => type.active !== false)
+    .map(type => {
+      const stock = stockMap.get(type.id);
+      return {
+        ...type,
+        currentQty: stock ? Number(stock.currentQty || 0) : 0,
+        minQty,
+      };
+    })
+    .filter(type => type.currentQty < minQty);
+
+  return {
+    warned: lowItems.length > 0,
+    reason: lowItems.length > 0
+      ? `영양제 5봉 미만 ${lowItems.length}건 있습니다`
+      : '',
+    count: lowItems.length,
+    details: lowItems.map(s =>
+      `${s.name || s.id || '영양제'}: 현재 ${s.currentQty}봉 / 최소 ${s.minQty}봉`
+    )
+  };
+}
+
 /**
  * [Phase 3a 신규]
  * 차단 항목 메타데이터 — V1 차단 항목 1, 2, 3, 7번.
@@ -352,6 +379,7 @@ export const WARNING_ITEM_META = {
   1: { label: '내일 생산 입력 없음', jumpMenu: 'production' },
   2: { label: '봉투 최소재고 미달', jumpMenu: 'bag' },
   3: { label: '원육 최소재고 미달', jumpMenu: 'meat' },
+  4: { label: '영양제 5봉 미만', jumpMenu: 'supplement' },
 };
 
 /**
@@ -385,6 +413,7 @@ export function aggregateBlockingItems(results = {}, flags = DEFAULT_CLOSING_FLA
     1: { result: results.warn1, flag: 'warnNoTomorrowProd' },
     2: { result: results.warn2, flag: 'warnBagMin' },
     3: { result: results.warn3, flag: 'warnMeatMin' },
+    4: { result: results.warn4, flag: 'warnSupplementMin' },
   };
   const items = [];
   const warnings = [];
@@ -404,7 +433,7 @@ export function aggregateBlockingItems(results = {}, flags = DEFAULT_CLOSING_FLA
     }
   }
 
-  for (const id of [1, 2, 3]) {
+  for (const id of [1, 2, 3, 4]) {
     const entry = warningMap[id];
     const result = entry?.result;
     if (mergedFlags[entry.flag] && result && result.warned) {

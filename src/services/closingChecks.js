@@ -20,6 +20,7 @@ import {
   judgeNoTomorrowProduction,
   judgeBagMinimumStock,
   judgeMeatMinimumStock,
+  judgeSupplementMinimumStock,
   aggregateBlockingItems
 } from './closingChecksLogic.js';
 
@@ -103,6 +104,19 @@ export async function checkMeatMinimumStock() {
   return judgeMeatMinimumStock(meatTypes, meatStocks);
 }
 
+export async function checkSupplementMinimumStock() {
+  const typesSnap = await getDocs(query(
+    collection(db, 'supplementTypes'),
+    where('active', '==', true)
+  ));
+  const supplementTypes = typesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  const stockSnap = await getDocs(collection(db, 'supplementStock'));
+  const supplementStocks = stockSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  return judgeSupplementMinimumStock(supplementTypes, supplementStocks);
+}
+
 async function loadNextDayProductions(dateStr) {
   const nextBizDay = getNextBusinessDay(dateStr);
   const prodSnap = await getDocs(collection(db, 'productions'));
@@ -162,6 +176,7 @@ export async function getAllBlockingItems(dateStr) {
     warn1,
     warn2,
     warn3,
+    warn4,
     flags
   ] = await Promise.all([
     checkTomorrowProductionLoaded(dateStr),
@@ -174,6 +189,7 @@ export async function getAllBlockingItems(dateStr) {
     checkNoTomorrowProduction(dateStr),
     checkBagMinimumStock(),
     checkMeatMinimumStock(),
+    checkSupplementMinimumStock(),
     loadClosingFlags()
   ]);
 
@@ -188,6 +204,7 @@ export async function getAllBlockingItems(dateStr) {
     warn1,
     warn2,
     warn3,
+    warn4,
   }, flags);
 
   return {
