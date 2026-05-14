@@ -25,6 +25,7 @@ let supplementMenuStaffGroups = null;
 // 상단 고정 담당자 select 현재 선택값. 표 다시 그려도 유지.
 let selectedInStaff = '';
 let selectedAdjustStaff = '';
+let selectedAdjustReason = '';
 
 export async function renderSupplement() {
   const content = document.getElementById('mainContent');
@@ -112,6 +113,15 @@ function renderSupplementLayout() {
               <option value="">선택</option>
               ${adjustStaffMembers.map(m => `<option value="${escapeHtml(m.name)}" ${selectedAdjustStaff === m.name ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('')}
             </select>
+            <label class="supplement-staff-label">수동조정 사유</label>
+            <input
+              type="text"
+              id="supplementAdjustReason"
+              class="supplement-reason-input"
+              value="${escapeHtml(selectedAdjustReason)}"
+              maxlength="200"
+              placeholder="사유"
+            />
           ` : ''}
           <select id="supplementFilter" class="supplement-filter-select" aria-label="영양제 재고 필터">
             <option value="all" ${supplementFilter === 'all' ? 'selected' : ''}>전체</option>
@@ -370,6 +380,9 @@ function bindSupplementEvents() {
   document.getElementById('supplementAdjustStaff')?.addEventListener('change', (e) => {
     selectedAdjustStaff = e.target.value;
   });
+  document.getElementById('supplementAdjustReason')?.addEventListener('input', (e) => {
+    selectedAdjustReason = e.target.value;
+  });
 
   bindSupplementCellEvents();
 }
@@ -481,18 +494,9 @@ async function handleAdjustCellBlur(input) {
     return;
   }
 
-  // 사유 = 열 헤더 1개 공통. 기존 사유가 있으면 디폴트로 제시, 없으면 입력받음.
-  const existingReason = getAdjustReasonForColumn(date);
-  const reason = prompt(
-    `수동조정 사유를 입력해주세요. (${formatColumnDate(date)} 열 전체 공통)`,
-    existingReason || ''
-  );
-  if (reason === null) { // 취소
-    input.value = '';
-    return;
-  }
-  if (!reason.trim()) {
-    alert('사유를 입력해야 합니다.');
+  const reason = selectedAdjustReason.trim();
+  if (!reason) {
+    alert('수동조정 사유를 입력해주세요.');
     input.value = '';
     return;
   }
@@ -507,7 +511,7 @@ async function handleAdjustCellBlur(input) {
 
   input.disabled = true;
   try {
-    await saveAdjustCell(typeId, date, signedQty, reason.trim(), staffName);
+    await saveAdjustCell(typeId, date, signedQty, reason, staffName);
     await renderSupplement();
   } catch (err) {
     console.error('[supplement] adjust cell save failed:', err);
