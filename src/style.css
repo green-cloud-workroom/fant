@@ -47,6 +47,63 @@
   margin-top: 2px;
 }
 
+/* 시스템 설정값 (D-3) */
+.system-value-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.system-value-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.system-value-input {
+  width: 90px;
+  height: 32px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 0 8px;
+  font-size: 13px;
+  font-family: 'Noto Sans KR', sans-serif;
+  text-align: right;
+  outline: none;
+}
+
+.system-value-input:focus {
+  border-color: #4A7C59;
+  background: white;
+}
+
+.system-value-input:disabled {
+  background: #f0f0f0;
+  color: #999;
+}
+
+.system-value-unit {
+  font-size: 12px;
+  color: #888;
+  min-width: 20px;
+}
+
+.system-value-fraction {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.system-value-input-frac {
+  width: 56px;
+  text-align: center;
+}
+
+.system-value-frac-sep {
+  font-size: 14px;
+  color: #666;
+}
+
 /* 네비게이션 바 */
 .navbar {
   display: flex;

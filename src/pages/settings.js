@@ -6,6 +6,7 @@ import {
 import { currentUser, currentUserRole } from '../app.js';
 import { getTodayKST, loadHolidaysCache } from '../utils/date.js';
 import { DEFAULT_CLOSING_FLAGS } from '../services/closingChecksLogic.js';
+import { loadSystemValues, SYSTEM_VALUE_FIELDS } from '../services/systemValues.js';
 
 const CLOSING_FLAG_BLOCKS = [
   { key: 'blockTomorrowProd', label: '내일생산불러오기 미완료 시 마감 차단', desc: '다음 영업일 생산이 있는데 내일생산불러오기를 안 했으면 차단' },
@@ -36,6 +37,7 @@ export async function renderSettings() {
   const staffGroups = await loadStaffGroups();
   const holidays = await loadHolidays();
   const closingFlags = await loadClosingFlags();
+  const systemValues = await loadSystemValues();
   const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
 
   content.innerHTML = `
@@ -73,11 +75,22 @@ export async function renderSettings() {
         <p class="settings-section-desc">토/일은 자동 처리됩니다. 추가 공휴일만 등록하세요.</p>
         ${renderHolidaysSection(holidays)}
       </div>
+
+      <div class="settings-section">
+        <h3 class="settings-section-title">시스템 설정값</h3>
+        <p class="settings-section-desc">
+          생산/재고 계산에 쓰이는 기준값입니다. 변경 시 이후 계산부터 적용됩니다.
+        </p>
+        <div class="system-value-list">
+          ${SYSTEM_VALUE_FIELDS.map(field => renderSystemValueRow(field, systemValues[field.key], isWriter)).join('')}
+        </div>
+      </div>
     </div>
   `;
 
   if (isWriter) bindStaffEvents(staffGroups);
   if (isWriter) bindClosingFlagEvents(closingFlags);
+  if (isWriter) bindSystemValueEvents(systemValues);
   bindHolidayEvents();
 }
 
@@ -140,6 +153,147 @@ function bindClosingFlagEvents(initialFlags) {
         e.target.checked = before;
       }
     });
+  });
+}
+
+function renderSystemValueRow(field, value, isWriter) {
+  const disabled = isWriter ? '' : 'disabled';
+  let inputHtml;
+
+  if (field.type === 'fraction') {
+    const v = value || { numerator: 0, denominator: 1 };
+    inputHtml = `
+      <div class="system-value-fraction">
+        <input type="number" class="system-value-input system-value-input-frac"
+          data-value-key="${field.key}" data-frac-part="numerator"
+          value="${v.numerator}" step="1" min="0" ${disabled}>
+        <span class="system-value-frac-sep">/</span>
+        <input type="number" class="system-value-input system-value-input-frac"
+          data-value-key="${field.key}" data-frac-part="denominator"
+          value="${v.denominator}" step="1" min="1" ${disabled}>
+      </div>
+    `;
+  } else {
+    const step = field.type === 'decimal' ? '0.1' : '1';
+    inputHtml = `
+      <div class="system-value-input-wrap">
+        <input type="number" class="system-value-input"
+          data-value-key="${field.key}"
+          value="${value}" step="${step}" min="0" ${disabled}>
+        ${field.unit ? `<span class="system-value-unit">${field.unit}</span>` : ''}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="closing-flag-row">
+      <div class="closing-flag-meta">
+        <div class="closing-flag-label">${field.label}</div>
+        <div class="closing-flag-desc">${field.desc}</div>
+      </div>
+      ${inputHtml}
+    </div>
+  `;
+}
+
+function bindSystemValueEvents(initialValues) {
+  document.querySelectorAll('.system-value-input').forEach(input => {
+    input.addEventListener('blur', async (e) => {
+      const valueKey = e.target.dataset.valueKey;
+      const field = SYSTEM_VALUE_FIELDS.find(f => f.key === valueKey);
+      if (!field) return;
+
+      if (field.type === 'fraction') {
+        await handleFractionBlur(e.target, field, initialValues);
+      } else {
+        await handleNumberBlur(e.target, field, initialValues);
+      }
+    });
+  });
+}
+
+async function handleNumberBlur(input, field, initialValues) {
+  const valueKey = field.key;
+  const before = initialValues[valueKey];
+  const after = field.type === 'decimal'
+    ? parseFloat(input.value)
+    : parseInt(input.value, 10);
+
+  if (isNaN(after) || after < 0) {
+    alert('0 이상의 숫자를 입력해주세요.');
+    input.value = before;
+    return;
+  }
+  if (after === before) return;
+
+  try {
+    await setDoc(
+      doc(db, 'settings', 'systemValues'),
+      { [valueKey]: after },
+      { merge: true }
+    );
+    initialValues[valueKey] = after;
+    await logSystemValueChange(valueKey, before, after);
+  } catch (err) {
+    console.error('[settings] systemValue save failed:', err);
+    alert('저장 실패: ' + err.message);
+    input.value = before;
+  }
+}
+
+async function handleFractionBlur(input, field, initialValues) {
+  const valueKey = field.key;
+  const before = initialValues[valueKey] || { numerator: 0, denominator: 1 };
+
+  const numInput = document.querySelector(
+    `.system-value-input[data-value-key="${valueKey}"][data-frac-part="numerator"]`
+  );
+  const denInput = document.querySelector(
+    `.system-value-input[data-value-key="${valueKey}"][data-frac-part="denominator"]`
+  );
+
+  const numerator = parseInt(numInput.value, 10);
+  const denominator = parseInt(denInput.value, 10);
+
+  if (isNaN(numerator) || numerator < 0) {
+    alert('분자는 0 이상의 정수여야 합니다.');
+    numInput.value = before.numerator;
+    return;
+  }
+  if (isNaN(denominator) || denominator < 1) {
+    alert('분모는 1 이상의 정수여야 합니다.');
+    denInput.value = before.denominator;
+    return;
+  }
+
+  const after = { numerator, denominator };
+  if (after.numerator === before.numerator && after.denominator === before.denominator) return;
+
+  try {
+    await setDoc(
+      doc(db, 'settings', 'systemValues'),
+      { [valueKey]: after },
+      { merge: true }
+    );
+    initialValues[valueKey] = after;
+    await logSystemValueChange(valueKey, before, after);
+  } catch (err) {
+    console.error('[settings] systemValue save failed:', err);
+    alert('저장 실패: ' + err.message);
+    numInput.value = before.numerator;
+    denInput.value = before.denominator;
+  }
+}
+
+async function logSystemValueChange(valueKey, before, after) {
+  await addDoc(collection(db, 'activityLogs'), {
+    date: getTodayKST(),
+    timestamp: serverTimestamp(),
+    action: 'settings',
+    subAction: 'systemValueChange',
+    details: { valueKey, before, after },
+    staffName: currentUser?.email || currentUser?.uid || '',
+    acknowledged: false,
   });
 }
 
