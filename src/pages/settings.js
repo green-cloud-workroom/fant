@@ -7,6 +7,9 @@ import { currentUser, currentUserRole } from '../app.js';
 import { getTodayKST, loadHolidaysCache } from '../utils/date.js';
 import { DEFAULT_CLOSING_FLAGS } from '../services/closingChecksLogic.js';
 import { loadSystemValues, SYSTEM_VALUE_FIELDS } from '../services/systemValues.js';
+import {
+  loadMenuStaffGroups, MENU_STAFF_GROUP_FIELDS, STAFF_GROUP_KEYS, STAFF_GROUP_LABELS
+} from '../services/menuStaffGroups.js';
 
 const CLOSING_FLAG_BLOCKS = [
   { key: 'blockTomorrowProd', label: '내일생산불러오기 미완료 시 마감 차단', desc: '다음 영업일 생산이 있는데 내일생산불러오기를 안 했으면 차단' },
@@ -38,6 +41,7 @@ export async function renderSettings() {
   const holidays = await loadHolidays();
   const closingFlags = await loadClosingFlags();
   const systemValues = await loadSystemValues();
+  const menuStaffGroups = await loadMenuStaffGroups();
   const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
 
   content.innerHTML = `
@@ -50,6 +54,18 @@ export async function renderSettings() {
           ${renderStaffGroup('senior', '선임', staffGroups.senior, isWriter)}
           ${renderStaffGroup('lead', '주임', staffGroups.lead, isWriter)}
           ${renderStaffGroup('office', '사무', staffGroups.office, isWriter)}
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3 class="settings-section-title">메뉴별 담당자 그룹</h3>
+        <p class="settings-section-desc">
+          각 메뉴의 담당자 선택에 어떤 그룹을 노출할지 설정합니다. 최소 1개 그룹을 선택해야 합니다.
+        </p>
+        <div class="menu-staff-group-list">
+          ${MENU_STAFF_GROUP_FIELDS.map(field =>
+            renderMenuStaffGroupRow(field, menuStaffGroups[field.key], isWriter)
+          ).join('')}
         </div>
       </div>
 
@@ -91,6 +107,7 @@ export async function renderSettings() {
   if (isWriter) bindStaffEvents(staffGroups);
   if (isWriter) bindClosingFlagEvents(closingFlags);
   if (isWriter) bindSystemValueEvents(systemValues);
+  if (isWriter) bindMenuStaffGroupEvents(menuStaffGroups);
   bindHolidayEvents();
 }
 
@@ -295,6 +312,87 @@ async function logSystemValueChange(valueKey, before, after) {
     staffName: currentUser?.email || currentUser?.uid || '',
     acknowledged: false,
   });
+}
+
+function renderMenuStaffGroupRow(field, groupKeys = [], isWriter) {
+  const disabled = isWriter ? '' : 'disabled';
+  const selected = Array.isArray(groupKeys) ? groupKeys : [];
+
+  return `
+    <div class="closing-flag-row menu-staff-group-row">
+      <div class="closing-flag-meta">
+        <div class="closing-flag-label">${field.label}</div>
+        <div class="closing-flag-desc">담당자 드롭다운에 표시할 그룹</div>
+      </div>
+      <div class="menu-staff-group-options" data-menu-key="${field.key}">
+        ${STAFF_GROUP_KEYS.map(groupKey => `
+          <label class="menu-staff-group-option">
+            <input
+              type="checkbox"
+              class="menu-staff-group-checkbox"
+              data-menu-key="${field.key}"
+              data-group-key="${groupKey}"
+              ${selected.includes(groupKey) ? 'checked' : ''}
+              ${disabled}
+            >
+            <span>${STAFF_GROUP_LABELS[groupKey]}</span>
+          </label>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function bindMenuStaffGroupEvents(initialGroups) {
+  document.querySelectorAll('.menu-staff-group-checkbox').forEach(cb => {
+    cb.addEventListener('change', async (e) => {
+      const menuKey = e.target.dataset.menuKey;
+      const groupKey = e.target.dataset.groupKey;
+      const before = Array.isArray(initialGroups[menuKey]) ? [...initialGroups[menuKey]] : [];
+      const nextSet = new Set(before);
+
+      if (e.target.checked) {
+        nextSet.add(groupKey);
+      } else {
+        nextSet.delete(groupKey);
+      }
+
+      const after = STAFF_GROUP_KEYS.filter(key => nextSet.has(key));
+      if (after.length === 0) {
+        alert('담당자 그룹은 최소 1개 이상 선택해야 합니다.');
+        e.target.checked = true;
+        return;
+      }
+      if (arraysEqual(before, after)) return;
+
+      try {
+        await setDoc(
+          doc(db, 'settings', 'menuStaffGroups'),
+          { [menuKey]: after },
+          { merge: true }
+        );
+        initialGroups[menuKey] = after;
+
+        await addDoc(collection(db, 'activityLogs'), {
+          date: getTodayKST(),
+          timestamp: serverTimestamp(),
+          action: 'settings',
+          subAction: 'menuStaffGroupChange',
+          details: { menuKey, before, after },
+          staffName: currentUser?.email || currentUser?.uid || '',
+          acknowledged: false,
+        });
+      } catch (err) {
+        console.error('[settings] menuStaffGroups save failed:', err);
+        alert('저장 실패: ' + err.message);
+        e.target.checked = before.includes(groupKey);
+      }
+    });
+  });
+}
+
+function arraysEqual(a, b) {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 async function loadStaffGroups() {

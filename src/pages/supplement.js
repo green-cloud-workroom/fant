@@ -5,19 +5,17 @@ import {
 } from 'firebase/firestore';
 import { currentUser } from '../app.js';
 import { getTodayKST } from '../utils/date.js';
+import { loadMenuStaffGroups, STAFF_GROUP_LABELS } from '../services/menuStaffGroups.js';
 
 const SUPPLEMENT_THRESHOLD_WARNING = 10;
 const SUPPLEMENT_THRESHOLD_DANGER = 5;
-const SUPPLEMENT_IN_GROUP_KEY = 'senior';
-const SUPPLEMENT_IN_GROUP_NAME = '선임';
-const SUPPLEMENT_ADJUST_GROUP_KEY = 'office';
-const SUPPLEMENT_ADJUST_GROUP_NAME = '사무';
 
 let supplementTypes = [];
 let supplementStocks = [];
 let supplementLogs = [];
 let supplementFilter = 'all';
 let supplementStaffCache = {};
+let supplementMenuStaffGroups = null;
 
 export async function renderSupplement() {
   const content = document.getElementById('mainContent');
@@ -25,8 +23,9 @@ export async function renderSupplement() {
 
   await Promise.all([
     loadSupplementData(),
-    loadSupplementStaffCache(),
+    loadSupplementMenuStaffGroups(),
   ]);
+  await loadSupplementStaffCache();
   renderSupplementLayout();
 }
 
@@ -208,7 +207,9 @@ function showSupplementIncomingModal() {
   const activeTypes = supplementTypes
     .filter(type => type.active !== false)
     .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
-  const staffMembers = supplementStaffCache[SUPPLEMENT_IN_GROUP_KEY] || [];
+  const staffGroupKeys = getSupplementStaffGroupKeys('supplementStockIn');
+  const staffMembers = getSupplementStaffMembers(staffGroupKeys);
+  const staffGroupLabel = getSupplementStaffGroupLabel(staffGroupKeys);
   const today = getTodayKST();
 
   showModal(`
@@ -234,7 +235,7 @@ function showSupplementIncomingModal() {
         <input type="date" id="m_date" value="${today}" />
       </div>
       <div class="form-group">
-        <label>담당자 (${SUPPLEMENT_IN_GROUP_NAME}) *</label>
+        <label>담당자 (${staffGroupLabel}) *</label>
         <select id="m_staff">
           <option value="">선택</option>
           ${staffMembers.map(member => `<option value="${escapeHtml(member.name)}">${escapeHtml(member.name)}</option>`).join('')}
@@ -317,7 +318,9 @@ function showSupplementAdjustModal() {
   const activeTypes = supplementTypes
     .filter(type => type.active !== false)
     .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
-  const staffMembers = supplementStaffCache[SUPPLEMENT_ADJUST_GROUP_KEY] || [];
+  const staffGroupKeys = getSupplementStaffGroupKeys('supplementAdjust');
+  const staffMembers = getSupplementStaffMembers(staffGroupKeys);
+  const staffGroupLabel = getSupplementStaffGroupLabel(staffGroupKeys);
   const today = getTodayKST();
 
   showModal(`
@@ -353,7 +356,7 @@ function showSupplementAdjustModal() {
         <input type="text" id="m_adjustReason" maxlength="200" placeholder="조정 사유" />
       </div>
       <div class="form-group">
-        <label>담당자 (${SUPPLEMENT_ADJUST_GROUP_NAME}) *</label>
+        <label>담당자 (${staffGroupLabel}) *</label>
         <select id="m_adjustStaff">
           <option value="">선택</option>
           ${staffMembers.map(member => `<option value="${escapeHtml(member.name)}">${escapeHtml(member.name)}</option>`).join('')}
@@ -507,8 +510,19 @@ window.closeModal = function() {
   document.querySelector('.modal-overlay')?.remove();
 };
 
+async function loadSupplementMenuStaffGroups() {
+  supplementMenuStaffGroups = await loadMenuStaffGroups();
+}
+
 async function loadSupplementStaffCache() {
-  const groupKeys = [SUPPLEMENT_IN_GROUP_KEY, SUPPLEMENT_ADJUST_GROUP_KEY];
+  if (!supplementMenuStaffGroups) {
+    await loadSupplementMenuStaffGroups();
+  }
+
+  const groupKeys = [
+    ...getSupplementStaffGroupKeys('supplementStockIn'),
+    ...getSupplementStaffGroupKeys('supplementAdjust'),
+  ].filter((key, index, list) => list.indexOf(key) === index);
   const missingKeys = groupKeys.filter(key => !supplementStaffCache[key]);
   if (missingKeys.length === 0) return;
 
@@ -516,6 +530,27 @@ async function loadSupplementStaffCache() {
     const snap = await getDoc(doc(db, 'staffGroups', key));
     supplementStaffCache[key] = snap.exists() ? snap.data().members || [] : [];
   }));
+}
+
+function getSupplementStaffGroupKeys(menuKey) {
+  const groups = supplementMenuStaffGroups?.[menuKey];
+  return Array.isArray(groups) && groups.length > 0 ? groups : [];
+}
+
+function getSupplementStaffMembers(groupKeys) {
+  const byName = new Map();
+  groupKeys.forEach(groupKey => {
+    (supplementStaffCache[groupKey] || []).forEach(member => {
+      if (member?.name && !byName.has(member.name)) {
+        byName.set(member.name, member);
+      }
+    });
+  });
+  return Array.from(byName.values());
+}
+
+function getSupplementStaffGroupLabel(groupKeys) {
+  return groupKeys.map(key => STAFF_GROUP_LABELS[key] || key).join('+');
 }
 
 function formatSignedQty(value) {
