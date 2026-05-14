@@ -704,7 +704,7 @@ function refreshCalendarUI() {
 // ============================================================
 
 // 사무 로그 카테고리 — 현재 발행 중인 8개 action
-const OFFICE_LOG_ACTIONS = ['bag', 'egg', 'meat', 'frozenProduct', 'frozenSep', 'schedule', 'frozenPan', 'closing', 'supplementStock', 'recipe'];
+const OFFICE_LOG_ACTIONS = ['bag', 'egg', 'meat', 'frozenProduct', 'frozenSep', 'schedule', 'frozenPan', 'closing', 'supplementStock', 'recipe', 'settings'];
 
 // 생산 로그 카테고리 — production은 6C-2 신규, 나머지는 6C-3 자동 발행 예정
 const PRODUCTION_LOG_ACTIONS = ['production', 'repackaging', 'pretreat', 'event', 'scheduleDue', 'autoRepack', 'minStock', 'frozenStockLow'];

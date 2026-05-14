@@ -6,6 +6,47 @@
   overflow: hidden;
 }
 
+.closing-flag-subtitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: #555;
+  margin: 16px 0 8px;
+}
+
+.closing-flag-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.closing-flag-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: #fafafa;
+  border-radius: 6px;
+  gap: 16px;
+}
+
+.closing-flag-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.closing-flag-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #222;
+}
+
+.closing-flag-desc {
+  font-size: 11px;
+  color: #888;
+  margin-top: 2px;
+}
+
 /* 네비게이션 바 */
 .navbar {
   display: flex;

@@ -1,15 +1,32 @@
 import { showPromptModal, showConfirmModal } from '../utils/modal.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc
+  collection, getDocs, doc, getDoc, setDoc, deleteDoc, addDoc, serverTimestamp
 } from 'firebase/firestore';
 import { currentUser, currentUserRole } from '../app.js';
-import { loadHolidaysCache } from '../utils/date.js';
+import { getTodayKST, loadHolidaysCache } from '../utils/date.js';
+import { DEFAULT_CLOSING_FLAGS } from '../services/closingChecksLogic.js';
 
-// 설정 페이지 렌더
+const CLOSING_FLAG_BLOCKS = [
+  { key: 'blockTomorrowProd', label: '내일생산불러오기 미완료 시 마감 차단', desc: '다음 영업일 생산이 있는데 내일생산불러오기를 안 했으면 차단' },
+  { key: 'blockFrozenOrder', label: '동결건조 발주 미확인 시 마감 차단', desc: '오늘 등록된 발주 행이 확인/취소되지 않으면 차단' },
+  { key: 'blockScheduleDue', label: '입고예정 미처리 시 마감 차단', desc: '오늘 도착 예정 입고가 완료/취소 처리되지 않으면 차단' },
+  { key: 'blockAutoRepack', label: '자동 재포장 미확인 시 마감 차단', desc: '자동 재포장 trigger/diff 로그가 확인되지 않으면 차단' },
+  { key: 'blockProdLog', label: '생산 로그 미확인 시 마감 차단', desc: '생산 카테고리 로그 (생산/재포장/전처리 등) 미확인 시 차단' },
+  { key: 'blockOfficeLog', label: '사무 로그 미확인 시 마감 차단', desc: '사무 카테고리 로그 (봉투/계란/원육/입고예정 등) 미확인 시 차단' },
+  { key: 'blockEggOut', label: '계란 출고 미입력 시 마감 차단', desc: '노른자 사용 생산이 있는데 계란 출고가 입력되지 않으면 차단' },
+];
+
+const CLOSING_FLAG_WARNS = [
+  { key: 'warnNoTomorrowProd', label: '내일 생산 입력 없을 시 마감 경고', desc: '다음 영업일 생산이 0건이면 마감 시 확인 모달' },
+  { key: 'warnBagMin', label: '봉투 최소재고 미달 시 마감 경고', desc: '봉투 종류별 현재 재고가 최소재고 미만이면 마감 시 확인 모달' },
+  { key: 'warnMeatMin', label: '원육 최소재고 미달 시 마감 경고', desc: '원육 종류별 현재 재고가 최소재고 미만이면 마감 시 확인 모달' },
+  { key: 'warnSupplementMin', label: '영양제 최소재고 미달 시 마감 경고', desc: '영양제 SKU 중 5봉 미만이 있으면 마감 시 확인 모달 (임계값 추후 변경 가능)' },
+];
+
 export async function renderSettings() {
   if (currentUserRole === 'production') {
-    alert('설정은 대표/사무실 계정만 가능합니다.');
+    alert('설정은 대표/사무 계정만 가능합니다.');
     return;
   }
 
@@ -18,13 +35,13 @@ export async function renderSettings() {
 
   const staffGroups = await loadStaffGroups();
   const holidays = await loadHolidays();
+  const closingFlags = await loadClosingFlags();
   const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
-  
+
   content.innerHTML = `
     <div class="settings-wrap">
       <h2 class="settings-title">설정</h2>
 
-      <!-- 담당자 관리 -->
       <div class="settings-section">
         <h3 class="settings-section-title">담당자 관리</h3>
         <div class="staff-groups">
@@ -34,7 +51,23 @@ export async function renderSettings() {
         </div>
       </div>
 
-      <!-- 공휴일 관리 -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">마감 차단/경고 설정</h3>
+        <p class="settings-section-desc">
+          ON인 항목만 마감 시 차단/경고로 동작합니다. OFF로 두면 해당 항목을 무시하고 마감 가능합니다.
+        </p>
+
+        <h4 class="closing-flag-subtitle">차단 항목 (마감 자체를 막음)</h4>
+        <div class="closing-flag-list">
+          ${CLOSING_FLAG_BLOCKS.map(flag => renderFlagRow(flag, closingFlags[flag.key], isWriter)).join('')}
+        </div>
+
+        <h4 class="closing-flag-subtitle">경고 항목 (마감 시 확인 모달만 표시)</h4>
+        <div class="closing-flag-list">
+          ${CLOSING_FLAG_WARNS.map(flag => renderFlagRow(flag, closingFlags[flag.key], isWriter)).join('')}
+        </div>
+      </div>
+
       <div class="settings-section">
         <h3 class="settings-section-title">공휴일 관리</h3>
         <p class="settings-section-desc">토/일은 자동 처리됩니다. 추가 공휴일만 등록하세요.</p>
@@ -43,12 +76,73 @@ export async function renderSettings() {
     </div>
   `;
 
-  // 이벤트 바인딩
   if (isWriter) bindStaffEvents(staffGroups);
-  bindHolidayEvents(holidays);
+  if (isWriter) bindClosingFlagEvents(closingFlags);
+  bindHolidayEvents();
 }
 
-// 담당자 그룹 로드
+async function loadClosingFlags() {
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'closingFlags'));
+    return snap.exists()
+      ? { ...DEFAULT_CLOSING_FLAGS, ...snap.data() }
+      : { ...DEFAULT_CLOSING_FLAGS };
+  } catch (err) {
+    console.warn('[settings] closingFlags load failed:', err);
+    return { ...DEFAULT_CLOSING_FLAGS };
+  }
+}
+
+function renderFlagRow(flag, value, isWriter) {
+  const checked = value === false ? '' : 'checked';
+  const disabled = isWriter ? '' : 'disabled';
+  return `
+    <div class="closing-flag-row">
+      <div class="closing-flag-meta">
+        <div class="closing-flag-label">${flag.label}</div>
+        <div class="closing-flag-desc">${flag.desc}</div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" data-flag-key="${flag.key}" ${checked} ${disabled}>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+  `;
+}
+
+function bindClosingFlagEvents(initialFlags) {
+  document.querySelectorAll('.closing-flag-list input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', async (e) => {
+      const flagKey = e.target.dataset.flagKey;
+      const before = initialFlags[flagKey] !== false;
+      const after = e.target.checked;
+
+      try {
+        await setDoc(
+          doc(db, 'settings', 'closingFlags'),
+          { [flagKey]: after },
+          { merge: true }
+        );
+        initialFlags[flagKey] = after;
+
+        await addDoc(collection(db, 'activityLogs'), {
+          date: getTodayKST(),
+          timestamp: serverTimestamp(),
+          action: 'settings',
+          subAction: 'closingFlagToggle',
+          details: { flagKey, before, after },
+          staffName: currentUser?.email || currentUser?.uid || '',
+          acknowledged: false,
+        });
+      } catch (err) {
+        console.error('[settings] closingFlags save failed:', err);
+        alert('저장 실패: ' + err.message);
+        e.target.checked = before;
+      }
+    });
+  });
+}
+
 async function loadStaffGroups() {
   const groups = { senior: [], lead: [], office: [] };
   for (const key of Object.keys(groups)) {
@@ -60,7 +154,6 @@ async function loadStaffGroups() {
   return groups;
 }
 
-// 담당자 그룹 렌더
 function renderStaffGroup(key, label, members, isWriter = false) {
   return `
     <div class="staff-group" data-group="${key}">
@@ -81,9 +174,7 @@ function renderStaffGroup(key, label, members, isWriter = false) {
   `;
 }
 
-// 이벤트 바인딩
 function bindStaffEvents(staffGroups) {
-  // 추가 버튼
   document.querySelectorAll('.btn-add-staff').forEach(btn => {
     btn.addEventListener('click', async () => {
       const group = btn.dataset.group;
@@ -96,18 +187,28 @@ function bindStaffEvents(staffGroups) {
       if (name === null) return;
       if (!name || !name.trim()) return;
 
-      staffGroups[group].push({ id: Date.now().toString(), name: name.trim(), active: true, sortOrder: staffGroups[group].length });
+      staffGroups[group].push({
+        id: Date.now().toString(),
+        name: name.trim(),
+        active: true,
+        sortOrder: staffGroups[group].length,
+      });
       await saveStaffGroup(group, staffGroups[group]);
       renderSettingsRefresh(staffGroups);
     });
   });
 
-  // 삭제 버튼
   document.querySelectorAll('.btn-del-staff').forEach(btn => {
     btn.addEventListener('click', async () => {
       const group = btn.dataset.group;
-      const index = parseInt(btn.dataset.index);
-      const __c = await showConfirmModal({ title:'담당자 삭제', message:'담당자를 삭제하시겠습니까?', confirmText:'삭제', danger:true }); if (!__c) return;
+      const index = parseInt(btn.dataset.index, 10);
+      const confirmed = await showConfirmModal({
+        title: '담당자 삭제',
+        message: '담당자를 삭제하시겠습니까?',
+        confirmText: '삭제',
+        danger: true,
+      });
+      if (!confirmed) return;
 
       staffGroups[group].splice(index, 1);
       await saveStaffGroup(group, staffGroups[group]);
@@ -116,18 +217,16 @@ function bindStaffEvents(staffGroups) {
   });
 }
 
-// 담당자 저장
 async function saveStaffGroup(groupKey, members) {
   const groupNames = { senior: '선임', lead: '주임', office: '사무' };
   await setDoc(doc(db, 'staffGroups', groupKey), {
     name: groupNames[groupKey],
     sortOrder: ['senior', 'lead', 'office'].indexOf(groupKey),
     members,
-    updatedAt: new Date()
+    updatedAt: new Date(),
   });
 }
 
-// 새로고침
 function renderSettingsRefresh(staffGroups) {
   const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
   document.getElementById('staffList-senior').innerHTML = renderStaffList('senior', staffGroups.senior, isWriter);
@@ -144,9 +243,7 @@ function renderStaffList(key, members, isWriter = false) {
     </div>
   `).join('') || '<p class="staff-empty">담당자 없음</p>';
 }
-// ===== 공휴일 관리 (Phase 7B-1) =====
 
-// 휴일 목록 로드 (날짜 오름차순)
 async function loadHolidays() {
   const snap = await getDocs(collection(db, 'holidays'));
   const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -154,17 +251,16 @@ async function loadHolidays() {
   return list;
 }
 
-// 휴일 섹션 렌더 (등록 폼 + 목록)
 function renderHolidaysSection(holidays) {
   const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
 
   const formHtml = isWriter ? `
     <div class="holiday-form">
       <input type="date" id="hd_date" class="cell-input" />
-      <input type="text" id="hd_label" class="cell-input" placeholder="휴일명 (예: 근로자의 날)" />
+      <input type="text" id="hd_label" class="cell-input" placeholder="공휴일명 (예: 회사 휴무)" />
       <button class="btn-primary" id="btnAddHoliday">+ 등록</button>
     </div>
-  ` : `<p class="staff-empty">읽기 전용입니다. 등록은 대표/사무실 계정에서 가능합니다.</p>`;
+  ` : `<p class="staff-empty">읽기 전용입니다. 등록은 대표/사무 계정에서 가능합니다.</p>`;
 
   const listHtml = holidays.length === 0
     ? '<p class="staff-empty">등록된 공휴일 없음</p>'
@@ -183,7 +279,6 @@ function renderHolidaysSection(holidays) {
   return formHtml + listHtml;
 }
 
-// 휴일 이벤트 바인딩
 function bindHolidayEvents() {
   const addBtn = document.getElementById('btnAddHoliday');
   if (addBtn) {
@@ -195,7 +290,6 @@ function bindHolidayEvents() {
   });
 }
 
-// 휴일 등록
 async function handleAddHoliday() {
   const dateInput = document.getElementById('hd_date');
   const labelInput = document.getElementById('hd_label');
@@ -203,12 +297,11 @@ async function handleAddHoliday() {
   const label = labelInput.value.trim();
 
   if (!date) { alert('날짜를 선택해주세요.'); return; }
-  if (!label) { alert('휴일명을 입력해주세요.'); return; }
+  if (!label) { alert('공휴일명을 입력해주세요.'); return; }
 
-  // 같은 날짜 중복 체크
   const existing = await getDoc(doc(db, 'holidays', date));
   if (existing.exists()) {
-    alert(`${date}는 이미 등록된 공휴일입니다.`);
+    alert(`${date}은 이미 등록된 공휴일입니다.`);
     return;
   }
 
@@ -219,7 +312,7 @@ async function handleAddHoliday() {
       createdAt: new Date(),
       createdBy: currentUser?.uid || null,
     });
-    await loadHolidaysCache();  // 캐시 즉시 갱신
+    await loadHolidaysCache();
     alert('공휴일 등록 완료!');
     await renderSettings();
   } catch (err) {
@@ -228,13 +321,18 @@ async function handleAddHoliday() {
   }
 }
 
-// 휴일 삭제
 async function handleDeleteHoliday(holidayId) {
-  const __c = await showConfirmModal({ title:'공휴일 삭제', message:`${holidayId} 공휴일을 삭제하시겠습니까?`, confirmText:'삭제', danger:true }); if (!__c) return;
+  const confirmed = await showConfirmModal({
+    title: '공휴일 삭제',
+    message: `${holidayId} 공휴일을 삭제하시겠습니까?`,
+    confirmText: '삭제',
+    danger: true,
+  });
+  if (!confirmed) return;
 
   try {
     await deleteDoc(doc(db, 'holidays', holidayId));
-    await loadHolidaysCache();  // 캐시 즉시 갱신
+    await loadHolidaysCache();
     alert('공휴일 삭제 완료!');
     await renderSettings();
   } catch (err) {
