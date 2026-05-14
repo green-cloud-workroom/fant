@@ -756,6 +756,208 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   min-height: 0;
 }
 
+/* 영양제 재고 표 (spec_v26 §1) */
+.supplement-toolbar-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+.supplement-staff-label {
+  font-size: 11px;
+  color: #666;
+  margin-left: 4px;
+}
+
+.supplement-staff-select {
+  height: 30px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-family: 'Noto Sans KR', sans-serif;
+  background: white;
+}
+
+.supplement-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px;
+}
+
+.supplement-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.supplement-table th,
+.supplement-table td {
+  border-right: 1px solid #ececec;
+  border-bottom: 1px solid #ececec;
+  padding: 0;
+}
+
+.supplement-table thead th {
+  background: #f5f5f5;
+  font-weight: 600;
+  color: #444;
+  text-align: center;
+  padding: 6px 8px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.supplement-th-name,
+.supplement-td-name {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: white;
+  min-width: 160px;
+  text-align: left;
+  padding: 6px 10px;
+}
+
+.supplement-th-name {
+  background: #f5f5f5;
+  z-index: 4;
+}
+
+.supplement-th-qty,
+.supplement-td-qty {
+  position: sticky;
+  left: 160px;
+  z-index: 3;
+  background: white;
+  min-width: 70px;
+  text-align: right;
+  padding: 6px 10px;
+}
+
+.supplement-th-qty {
+  background: #f5f5f5;
+  z-index: 4;
+}
+
+.supplement-td-name {
+  font-weight: 500;
+  color: #222;
+}
+
+.supplement-td-name .tag-inactive {
+  margin-left: 6px;
+}
+
+.supplement-td-qty {
+  font-variant-numeric: tabular-nums;
+  color: #333;
+}
+
+.supplement-qty--warning {
+  background: #fff8e1;
+  color: #8a6d1d;
+  font-weight: 600;
+}
+
+.supplement-qty--danger {
+  background: #ffebee;
+  color: #c62828;
+  font-weight: 600;
+}
+
+.supplement-th-date {
+  border-bottom: 1px solid #ddd;
+  background: #eef1f4;
+}
+
+.supplement-th-type {
+  font-size: 11px;
+  font-weight: 500;
+  min-width: 64px;
+}
+
+.supplement-th-in { color: #2d4a8a; }
+.supplement-th-adjust { color: #8a6d1d; }
+.supplement-th-auto { color: #888; }
+
+.supplement-th-reason {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  color: #999;
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.supplement-cell {
+  text-align: center;
+  height: 32px;
+  vertical-align: middle;
+}
+
+.supplement-cell--readonly {
+  background: #fafafa;
+  color: #999;
+}
+
+.supplement-cell--auto {
+  color: #c0392b;
+}
+
+.supplement-cell--locked {
+  background: #f0f4f8;
+  color: #2d4a8a;
+  cursor: help;
+  font-weight: 500;
+}
+
+.supplement-cell-input {
+  width: 100%;
+  height: 30px;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: center;
+  font-size: 12px;
+  font-family: 'Noto Sans KR', sans-serif;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.supplement-cell-input:hover {
+  border-color: #ddd;
+}
+
+.supplement-cell-input:focus {
+  border-color: #4A7C59;
+  background: white;
+}
+
+.supplement-cell-input:disabled {
+  background: #f0f0f0;
+}
+
+.supplement-cell-sum {
+  display: block;
+  font-size: 9px;
+  color: #8a6d1d;
+  line-height: 1;
+  padding-bottom: 2px;
+}
+
+.supplement-row--inactive {
+  opacity: 0.5;
+}
+
+.supplement-row--inactive .supplement-td-name,
+.supplement-row--inactive .supplement-td-qty {
+  background: #f4f4f4;
+}
+
 .supplement-card {
   border-left-width: 8px;
 }
