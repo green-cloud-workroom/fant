@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const API_BASE = 'https://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService';
-const DEFAULT_OPERATION = 'getRestDeInfo';
+const DEFAULT_OPERATION = 'getHoliDeInfo';
 const DEFAULT_OUT = 'src/services/holidayMaster.js';
 
 function parseArgs(argv) {
@@ -35,6 +35,7 @@ Options:
   --years <count>           Number of years to fetch. Default: 5.
   --operation <name>        API operation. Default: ${DEFAULT_OPERATION}.
   --out <path>              Output file. Default: ${DEFAULT_OUT}.
+  --delay-ms <ms>           Delay between yearly calls. Default: 1200.
   --dry-run                 Print parsed holidays without writing a file.
 `;
 }
@@ -146,7 +147,7 @@ function normalizeHolidayItem(item) {
 
 async function fetchYear({ serviceKey, year, operation }) {
   const query = [
-    `serviceKey=${encodeServiceKey(serviceKey)}`,
+    `ServiceKey=${encodeServiceKey(serviceKey)}`,
     'pageNo=1',
     'numOfRows=100',
     `solYear=${year}`,
@@ -157,13 +158,35 @@ async function fetchYear({ serviceKey, year, operation }) {
   const res = await fetch(url);
   const text = await res.text();
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status} for ${year}: ${text.slice(0, 200)}`);
+    const err = new Error(`HTTP ${res.status} for ${year}: ${text.slice(0, 200)}`);
+    err.status = res.status;
+    throw err;
   }
 
   return parsePayload(text)
     .map(normalizeHolidayItem)
     .filter(Boolean)
     .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function fetchYearWithRetry(options) {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fetchYear(options);
+    } catch (err) {
+      const retryable = err.status === 401 || err.status === 429 || err.status >= 500;
+      if (!retryable || attempt === maxAttempts) throw err;
+      const waitMs = 1500 * attempt;
+      console.warn(`[holidays] ${options.year}: ${err.message}; retrying in ${waitMs}ms`);
+      await sleep(waitMs);
+    }
+  }
+  return [];
 }
 
 function groupByYear(holidays) {
@@ -174,6 +197,24 @@ function groupByYear(holidays) {
     grouped[year].push(holiday);
   }
   return grouped;
+}
+
+function dedupeByDate(holidays) {
+  const byDate = new Map();
+  for (const holiday of holidays) {
+    const existing = byDate.get(holiday.date);
+    if (!existing) {
+      byDate.set(holiday.date, { ...holiday });
+      continue;
+    }
+
+    const titles = new Set([
+      ...String(existing.title || '').split(' / ').filter(Boolean),
+      holiday.title,
+    ]);
+    existing.title = Array.from(titles).join(' / ');
+  }
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function jsString(value) {
@@ -245,6 +286,7 @@ async function main() {
   const years = Number(args.years || 5);
   const operation = String(args.operation || DEFAULT_OPERATION);
   const out = String(args.out || DEFAULT_OUT);
+  const delayMs = Number(args['delay-ms'] || 1200);
 
   if (!Number.isInteger(startYear) || startYear < 2000) {
     throw new Error(`Invalid --start-year: ${args['start-year']}`);
@@ -257,9 +299,12 @@ async function main() {
   for (let offset = 0; offset < years; offset += 1) {
     const year = startYear + offset;
     console.log(`[holidays] fetching ${year} (${operation})`);
-    const yearItems = await fetchYear({ serviceKey, year, operation });
+    const yearItems = dedupeByDate(await fetchYearWithRetry({ serviceKey, year, operation }));
     console.log(`[holidays] ${year}: ${yearItems.length} holidays`);
     all.push(...yearItems);
+    if (offset < years - 1 && delayMs > 0) {
+      await sleep(delayMs);
+    }
   }
 
   const grouped = groupByYear(all);
