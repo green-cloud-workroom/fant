@@ -15,7 +15,12 @@ export const PUBLIC_HOLIDAY_SOURCE = {
   generatedAt: "2026-05-15T14:52:06.668Z",
   startYear: 2025,
   years: 3,
+  endYear: 2027,
+  refreshNeededBefore: "2027-10-01",
 };
+
+export const HOLIDAY_DATA_END_YEAR = 2027;
+export const HOLIDAY_REFRESH_NEEDED_BEFORE = "2027-10-01";
 
 export const KOREAN_PUBLIC_HOLIDAYS = {
   "2025": [

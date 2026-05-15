@@ -2,7 +2,7 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy, setDoc, where, deleteDoc, serverTimestamp, limit, startAfter
 } from 'firebase/firestore';
-import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDay, loadHolidaysCache, getHolidaysCache } from '../utils/date.js';
+import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDay, loadHolidaysCache, getHolidaysCache, getHolidayDataNotice } from '../utils/date.js';
 import { getAllBlockingItems } from '../services/closingChecks.js';
 import { setCurrentMenu, currentUserRole } from '../app.js';
 import { renderLayout } from '../layout.js';
@@ -126,6 +126,7 @@ function renderMainLayout() {
   const todayStr = `${displayDateObj.getMonth()+1}/${displayDateObj.getDate()} (${days[displayDateObj.getDay()]})`;
 
   content.innerHTML = `
+    ${renderHolidayDataNoticeBanner()}
     <div class="main-layout">
       <div class="main-panel-left">
         <div class="main-panel-header">
@@ -214,6 +215,16 @@ function renderMainLayout() {
 
   // [묶음 6C-1] 로그 패널 [확인] / [모두 확인] 바인딩
   bindLogActions();
+}
+
+function renderHolidayDataNoticeBanner() {
+  const notice = getHolidayDataNotice(getToday());
+  if (!notice) return '';
+  return `
+    <div class="holiday-data-notice holiday-data-notice--${notice.level}">
+      ${notice.message}
+    </div>
+  `;
 }
 
 // ============================================================

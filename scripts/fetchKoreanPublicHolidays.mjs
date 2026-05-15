@@ -223,6 +223,8 @@ function jsString(value) {
 
 function renderHolidayMaster({ grouped, startYear, years, operation }) {
   const generatedAt = new Date().toISOString();
+  const endYear = startYear + years - 1;
+  const refreshNeededBefore = `${endYear}-10-01`;
   const dataLines = Object.entries(grouped)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([year, items]) => {
@@ -235,7 +237,7 @@ function renderHolidayMaster({ grouped, startYear, years, operation }) {
 // Source: Public Data Portal "Korea Astronomy and Space Science Institute - Special Day Information"
 // API operation: ${operation}
 // Generated at: ${generatedAt}
-// Covered years: ${startYear}-${startYear + years - 1}
+// Covered years: ${startYear}-${endYear}
 //
 // Do not edit the generated holiday rows by hand. Re-run the fetch script when
 // the public holiday source range needs to be extended.
@@ -248,7 +250,12 @@ export const PUBLIC_HOLIDAY_SOURCE = {
   generatedAt: ${jsString(generatedAt)},
   startYear: ${startYear},
   years: ${years},
+  endYear: ${endYear},
+  refreshNeededBefore: ${jsString(refreshNeededBefore)},
 };
+
+export const HOLIDAY_DATA_END_YEAR = ${endYear};
+export const HOLIDAY_REFRESH_NEEDED_BEFORE = ${jsString(refreshNeededBefore)};
 
 export const KOREAN_PUBLIC_HOLIDAYS = {
 ${dataLines}

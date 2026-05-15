@@ -3,6 +3,10 @@
 
 import { db } from '../firebase.js';
 import { collection, getDocs } from 'firebase/firestore';
+import {
+  HOLIDAY_DATA_END_YEAR,
+  HOLIDAY_REFRESH_NEEDED_BEFORE
+} from '../services/holidayMaster.js';
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
@@ -10,6 +14,7 @@ const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 // 모듈 레벨 변수 — 앱 시작 시 1회 로드, 휴일 등록/삭제 시 갱신
 let holidaysCache = [];
 let holidaysCacheLoaded = false;
+let holidayDataExpiryWarned = false;
 
 /**
  * 주어진 Date 객체를 KST 기준 YYYY-MM-DD 문자열로 변환
@@ -55,12 +60,46 @@ export function getNextBusinessDay(dateStr, holidays = null) {
     // KST 시간으로 본 요일 = (UTC + 9h)의 UTC 요일
     const kstDay = new Date(cursor.getTime() + KST_OFFSET_MS).getUTCDay();
     const candidate = formatKstDate(cursor);
+    warnIfHolidayDataOutOfRange(candidate);
 
     if (kstDay !== 0 && kstDay !== 6 && !effectiveHolidays.includes(candidate)) {
       return candidate;
     }
   }
   throw new Error('getNextBusinessDay: 365일 초과 — 입력값 확인');
+}
+
+function warnIfHolidayDataOutOfRange(dateStr) {
+  if (holidayDataExpiryWarned) return;
+  if (!isHolidayDataOutOfRange(dateStr)) return;
+  holidayDataExpiryWarned = true;
+  console.warn(`[holiday] Korean public holiday data only covers through ${HOLIDAY_DATA_END_YEAR}. Refresh required before using ${dateStr}.`);
+}
+
+export function isHolidayDataOutOfRange(dateStr) {
+  if (!dateStr || !HOLIDAY_DATA_END_YEAR) return false;
+  const year = Number(String(dateStr).slice(0, 4));
+  return Number.isFinite(year) && year > HOLIDAY_DATA_END_YEAR;
+}
+
+export function getHolidayDataNotice(referenceDateStr = getTodayKST()) {
+  if (!HOLIDAY_DATA_END_YEAR || !HOLIDAY_REFRESH_NEEDED_BEFORE) return null;
+
+  if (isHolidayDataOutOfRange(referenceDateStr)) {
+    return {
+      level: 'expired',
+      message: `한국 공휴일 데이터가 ${HOLIDAY_DATA_END_YEAR}년까지만 등록되어 있습니다. 공휴일 데이터를 갱신해야 영업일 계산이 정확합니다.`,
+    };
+  }
+
+  if (referenceDateStr >= HOLIDAY_REFRESH_NEEDED_BEFORE) {
+    return {
+      level: 'warning',
+      message: `한국 공휴일 데이터가 ${HOLIDAY_DATA_END_YEAR}년 말까지입니다. ${HOLIDAY_REFRESH_NEEDED_BEFORE} 이후에는 다음 연도 데이터 갱신을 준비해주세요.`,
+    };
+  }
+
+  return null;
 }
 /**
  * KST 기준 N개월 후 날짜 (YYYY-MM-DD)
