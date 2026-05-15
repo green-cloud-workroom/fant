@@ -3,7 +3,7 @@ import {
   collection, getDocs, doc, updateDoc, query, orderBy, getDoc, where, writeBatch,
   runTransaction, serverTimestamp
 } from 'firebase/firestore';
-import { getTodayKST as getToday, getHolidaysCache } from '../utils/date.js';
+import { getTodayKST as getToday, getHolidayInfo, getHolidayInfoCache } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUser, currentUserRole } from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
@@ -218,8 +218,8 @@ function renderHolidayBadge(dateStr) {
   }
 
   // 등록된 공휴일 표시
-  const holidays = getHolidaysCache();
-  if (holidays.includes(dateStr)) {
+  const holiday = getHolidayInfo(dateStr);
+  if (holiday?.affectsProduction === true) {
     return `<span class="holiday-badge holiday-badge-registered">🔴 등록 공휴일</span>`;
   }
 
@@ -231,8 +231,11 @@ function renderHolidaysOfMonth(dateStr) {
   if (!dateStr) return '';
   const [year, month] = dateStr.split('-');
   const prefix = `${year}-${month}-`;
-  const all = getHolidaysCache();
-  const monthly = all.filter(d => d.startsWith(prefix)).sort();
+  const all = getHolidayInfoCache();
+  const monthly = Object.entries(all)
+    .filter(([d, h]) => d.startsWith(prefix) && h.status !== 'deleted' && h.affectsProduction === true)
+    .map(([d]) => d)
+    .sort();
 
   if (monthly.length === 0) return '';
 
