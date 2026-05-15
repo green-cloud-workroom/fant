@@ -7,7 +7,7 @@
 //
 import { db } from '../firebase.js';
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
-import { getNextBusinessDay } from '../utils/date.js';
+import { getNextBusinessDayByType } from '../utils/date.js';
 import {
   DEFAULT_CLOSING_FLAGS,
   judgeTomorrowProductionLoaded,
@@ -118,7 +118,7 @@ export async function checkSupplementMinimumStock() {
 }
 
 async function loadNextDayProductions(dateStr) {
-  const nextBizDay = getNextBusinessDay(dateStr);
+  const nextBizDay = getNextBusinessDayByType(dateStr, 'production');
   const prodSnap = await getDocs(collection(db, 'productions'));
   return prodSnap.docs
     .map(d => d.data())

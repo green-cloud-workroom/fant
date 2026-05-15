@@ -2,7 +2,7 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy, setDoc, where, deleteDoc, serverTimestamp, limit, startAfter
 } from 'firebase/firestore';
-import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDay, loadHolidaysCache, getHolidaysCache, getHolidayDataNotice } from '../utils/date.js';
+import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDayByType as getNextBusinessDay, loadHolidaysCache, getHolidaysCache, getHolidayDataNotice } from '../utils/date.js';
 import { getAllBlockingItems } from '../services/closingChecks.js';
 import { setCurrentMenu, currentUserRole } from '../app.js';
 import { renderLayout } from '../layout.js';

@@ -19,7 +19,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { currentUser } from './app.js';
-import { getTodayKST, getNextBusinessDay, formatKstDate } from './utils/date.js';
+import { getTodayKST, getNextBusinessDayByType, formatKstDate } from './utils/date.js';
 import { recordActivity } from './services/activityLogs.js';
 
 // ===== 상태 판정 =====
@@ -82,7 +82,7 @@ export async function getEarliestUnclosedWorkday(holidays = []) {
   }
 
   // 마지막 마감일 다음 영업일부터 시작
-  candidate = getNextBusinessDay(lastClosed, holidays);
+  candidate = getNextBusinessDayByType(lastClosed, 'production');
 
   // 미래는 반환하지 않음
   if (candidate > today) return null;
