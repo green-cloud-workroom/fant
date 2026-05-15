@@ -1,8 +1,10 @@
 import fs from 'node:fs/promises';
 import process from 'node:process';
-import { cert, initializeApp } from 'firebase-admin/app';
+import { applicationDefault, cert, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { parseArgs } from './firestoreConfig.mjs';
+
+const DEFAULT_PROJECT_ID = 'fant-e5ae5';
 
 const DEFAULT_TARGETS = [
   {
@@ -21,15 +23,24 @@ const DEFAULT_TARGETS = [
 
 async function loadServiceAccount(args) {
   const keyPath = args.get('key') || process.env.FANT_ADMIN_KEY_PATH;
-  if (!keyPath) {
-    throw new Error('Missing service account key path. Set FANT_ADMIN_KEY_PATH or pass --key.');
-  }
+  if (!keyPath) return null;
+
   const raw = await fs.readFile(keyPath, 'utf8');
   const key = JSON.parse(raw);
   for (const field of ['client_email', 'private_key', 'project_id']) {
     if (!key[field]) throw new Error(`Service account key is missing ${field}.`);
   }
   return key;
+}
+
+function resolveProjectId(args, serviceAccount) {
+  return (
+    args.get('project') ||
+    process.env.GOOGLE_CLOUD_PROJECT ||
+    process.env.GCLOUD_PROJECT ||
+    serviceAccount?.project_id ||
+    DEFAULT_PROJECT_ID
+  );
 }
 
 function claimsByteLength(claims) {
@@ -47,14 +58,24 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const execute = args.has('execute');
   const serviceAccount = await loadServiceAccount(args);
+  const projectId = resolveProjectId(args, serviceAccount);
 
-  initializeApp({
-    credential: cert(serviceAccount),
-  });
+  if (serviceAccount) {
+    initializeApp({
+      credential: cert(serviceAccount),
+      projectId,
+    });
+  } else {
+    initializeApp({
+      credential: applicationDefault(),
+      projectId,
+    });
+  }
 
   const auth = getAuth();
   console.log(`[claims] mode: ${execute ? 'execute' : 'dry-run'}`);
-  console.log(`[claims] project: ${serviceAccount.project_id}`);
+  console.log(`[claims] project: ${projectId}`);
+  console.log(`[claims] credential: ${serviceAccount ? 'service-account-key' : 'application-default'}`);
   console.log('[claims] targets:');
 
   for (const target of DEFAULT_TARGETS) {
