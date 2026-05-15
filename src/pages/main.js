@@ -218,6 +218,7 @@ function renderMainLayout() {
 }
 
 function renderHolidayDataNoticeBanner() {
+  if (currentUserRole === 'production') return '';
   const notice = getHolidayDataNotice(getToday());
   if (!notice) return '';
   return `
