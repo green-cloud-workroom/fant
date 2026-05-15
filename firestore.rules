@@ -1,0 +1,265 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function hasApp(appName) {
+      return signedIn()
+        && request.auth.token.app is list
+        && appName in request.auth.token.app;
+    }
+
+    function isProductionApp() {
+      return hasApp('production');
+    }
+
+    function isInventoryApp() {
+      return hasApp('inventory');
+    }
+
+    function hasRole(roleName) {
+      return signedIn() && request.auth.token.role == roleName;
+    }
+
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    function isOffice() {
+      return hasRole('office');
+    }
+
+    function isProductionRole() {
+      return hasRole('production');
+    }
+
+    function isProductionAdmin() {
+      return isProductionApp() && isAdmin();
+    }
+
+    function isProductionWriter() {
+      return isProductionApp() && (isAdmin() || isOffice());
+    }
+
+    function isProductionStaff() {
+      return isProductionApp() && (isAdmin() || isOffice() || isProductionRole());
+    }
+
+    function isAckUpdateOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'acknowledged',
+        'acknowledgedAt',
+        'acknowledgedBy',
+        'acknowledgedByUid',
+        'read',
+      ]);
+    }
+
+    match /users/{uid} {
+      allow read: if isProductionApp() && (request.auth.uid == uid || isProductionWriter());
+      allow write: if isProductionAdmin();
+    }
+
+    match /staffGroups/{groupId} {
+      allow read: if isProductionApp();
+      allow write: if isProductionWriter();
+    }
+
+    match /settings/{settingId} {
+      allow read: if isProductionApp();
+      allow write: if isProductionWriter();
+    }
+
+    match /recipes/{recipeId} {
+      allow read: if isProductionApp();
+      allow write: if isProductionWriter();
+    }
+
+    match /productionMethods/{methodId} {
+      allow read: if isProductionApp();
+      allow write: if isProductionWriter();
+    }
+
+    match /conversionHistory/{historyId} {
+      allow read: if isProductionApp();
+      allow write: if isProductionWriter();
+    }
+
+    match /productionPlans/{planId} {
+      allow read: if isProductionApp();
+      allow write: if isProductionWriter();
+    }
+
+    match /productions/{productionId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionWriter();
+    }
+
+    match /productionCompletion/{completionId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /closings/{closingId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /meatTypes/{typeId} {
+      allow read: if isProductionApp();
+      allow write: if isProductionWriter();
+    }
+
+    match /meatStocks/{stockId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionWriter();
+    }
+
+    match /meatLogs/{logId} {
+      allow read: if isProductionApp();
+      allow create: if isProductionStaff();
+      allow update: if isProductionWriter();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /bagTypes/{typeId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionWriter();
+    }
+
+    match /bagLogs/{logId} {
+      allow read: if isProductionApp();
+      allow create: if isProductionStaff();
+      allow update: if isProductionWriter();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /eggStock/{stockId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /eggLogs/{logId} {
+      allow read: if isProductionApp();
+      allow create: if isProductionStaff();
+      allow update: if isProductionWriter();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /frozenProducts/{productId} {
+      allow read: if isProductionApp();
+      allow write: if isProductionWriter();
+    }
+
+    match /frozenLogs/{logId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /frozenPanStock/{stockId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /frozenPanLots/{lotId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /frozenPanLogs/{logId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /breadPanLots/{lotId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /breadPanLogs/{logId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /frozenSeparation/{separationId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /frozenSeparationLogs/{logId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /schedules/{scheduleId} {
+      allow read: if isProductionApp();
+      allow write: if isProductionWriter();
+    }
+
+    match /events/{eventId} {
+      allow read: if isProductionApp();
+      allow write: if isProductionWriter();
+    }
+
+    match /holidays/{holidayId} {
+      allow read: if isProductionApp() || isInventoryApp();
+      allow write: if isProductionWriter();
+    }
+
+    match /supplementTypes/{typeId} {
+      allow read: if isProductionApp();
+      allow create, update, delete: if isProductionWriter();
+    }
+
+    match /supplementStock/{stockId} {
+      allow read: if isProductionApp();
+      allow create, update, delete: if isProductionStaff();
+    }
+
+    match /supplementLogs/{logId} {
+      allow read: if isProductionApp();
+      allow create: if isProductionStaff();
+      allow update: if isProductionWriter();
+      allow delete: if isProductionWriter();
+    }
+
+    match /stockLedger/{ledgerId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionStaff();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /activityLogs/{logId} {
+      allow read: if isProductionApp() || isInventoryApp();
+      allow create: if signedIn() && (isProductionApp() || isInventoryApp());
+      allow update: if signedIn() && (isProductionApp() || isInventoryApp()) && isAckUpdateOnly();
+      allow delete: if isProductionAdmin();
+    }
+
+    match /wipeHistory/{historyId} {
+      allow read: if isProductionAdmin();
+      allow write: if isProductionAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
