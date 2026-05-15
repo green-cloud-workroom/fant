@@ -1,11 +1,12 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc
+  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, where, writeBatch
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
+import { showConfirmModal } from '../utils/modal.js';
 
 let bagTypes = [];
 
@@ -171,6 +172,7 @@ async function showBagDetail(bag) {
       <span class="detail-title">${bag.name}</span>
       <div class="detail-actions">
         ${canManageBagTypes ? '<button class="btn-secondary" id="btnEditBag">수정</button>' : ''}
+        ${canManageBagTypes ? '<button class="btn-danger" id="btnDeleteBag">삭제</button>' : ''}
         <button class="btn-secondary" id="btnAdjustBag">수동조정</button>
         <button class="btn-primary" id="btnAddBagIncoming">+ 입고 등록</button>
       </div>
@@ -238,6 +240,88 @@ async function showBagDetail(bag) {
   document.getElementById('btnAddBagIncoming').addEventListener('click', () => showBagIncomingModal(bag));
   document.getElementById('btnAdjustBag').addEventListener('click', () => showBagAdjustModal(bag));
   document.getElementById('btnEditBag')?.addEventListener('click', () => showEditBagModal(bag));
+  document.getElementById('btnDeleteBag')?.addEventListener('click', () => deleteBagType(bag));
+}
+
+async function loadBagDeleteContext(bag) {
+  const [recipeSnap, frozenProductSnap, logSnap] = await Promise.all([
+    getDocs(query(collection(db, 'recipes'), where('bagTypeId', '==', bag.id))),
+    getDocs(query(collection(db, 'frozenProducts'), where('bagTypeId', '==', bag.id))),
+    getDocs(query(collection(db, 'bagLogs'), where('bagTypeId', '==', bag.id))),
+  ]);
+
+  return {
+    linkedRecipes: recipeSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+    linkedProducts: frozenProductSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+    logDocs: logSnap.docs,
+  };
+}
+
+function getBagDeleteMessage(bag, logCount) {
+  const currentQty = Number(bag.currentQty || 0);
+  if (currentQty > 0) {
+    return `${bag.name} 재고 ${currentQty}장이 남아있습니다.\n봉투 재고 및 이력 ${logCount}건이 모두 삭제됩니다.\n진행하시겠습니까?`;
+  }
+  if (logCount > 0) {
+    return `입고/조정 이력 ${logCount}건이 함께 삭제됩니다.\n진행하시겠습니까?`;
+  }
+  return `${bag.name} 봉투를 삭제하시겠습니까?`;
+}
+
+async function deleteBagType(bag) {
+  if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+    alert('봉투 삭제는 대표/사무실 계정만 가능합니다.');
+    return;
+  }
+
+  try {
+    const { linkedRecipes, linkedProducts, logDocs } = await loadBagDeleteContext(bag);
+    const linkedNames = [
+      ...linkedRecipes.map(r => r.displayName || r.name || r.id),
+      ...linkedProducts.map(p => p.name || p.id),
+    ];
+    if (linkedNames.length > 0) {
+      alert(`${linkedNames.join(', ')}에 연결되어 있어 삭제할 수 없습니다.\n연결을 먼저 해제해주세요.`);
+      return;
+    }
+
+    const logCount = logDocs.length;
+    const confirmed = await showConfirmModal({
+      title: '봉투 삭제',
+      message: getBagDeleteMessage(bag, logCount),
+      confirmText: '삭제',
+      danger: true,
+    });
+    if (!confirmed) return;
+
+    const batch = writeBatch(db);
+    batch.delete(doc(db, 'bagTypes', bag.id));
+    logDocs.forEach(logDoc => batch.delete(doc(db, 'bagLogs', logDoc.id)));
+    await batch.commit();
+
+    await recordActivity({
+      action: 'bag',
+      subAction: 'delete',
+      date: getToday(),
+      staff: getRoleStaffLabel(),
+      message: `봉투 삭제 — ${bag.name}`,
+      details: {
+        bagTypeId: bag.id,
+        bagName: bag.name,
+        bagType: bag.category === 'freezeDry' ? 'dried' : 'raw',
+        currentQty: Number(bag.currentQty || 0),
+        logCount,
+      },
+    });
+
+    selectedBagId = null;
+    bagTypes = await loadBagTypes();
+    renderBagLayout();
+    alert('봉투가 삭제되었습니다.');
+  } catch (err) {
+    console.error('[bag] delete failed:', err);
+    alert('봉투 삭제 중 오류가 발생했습니다.');
+  }
 }
 
 function showNewBagModal() {

@@ -6,6 +6,7 @@ import { currentUser, currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { makeSupplementId, makeSupplementName, makeSupplementSortOrder } from '../utils/supplement.js';
+import { showConfirmModal } from '../utils/modal.js';
 
 let recipes = [];
 let selectedRecipeId = null;
@@ -116,6 +117,36 @@ function getSupplementBaseDoc(recipeId, recipeData, unit, unitIndex) {
     sortOrder: makeSupplementSortOrder(recipeData.sortOrder, unitIndex),
     updatedAt: new Date(),
     updatedBy: currentUser?.uid || null,
+  };
+}
+
+async function loadRecipeDeleteContext(recipe) {
+  const [productionSnap, scheduleSnap, supplementTypeSnap] = await Promise.all([
+    getDocs(query(collection(db, 'productions'), where('recipeId', '==', recipe.id))),
+    getDocs(query(collection(db, 'schedules'), where('recipeId', '==', recipe.id))),
+    getDocs(query(collection(db, 'supplementTypes'), where('recipeId', '==', recipe.id))),
+  ]);
+
+  const supplementSummaries = [];
+  for (const skuDoc of supplementTypeSnap.docs) {
+    const sku = { id: skuDoc.id, ...skuDoc.data() };
+    const [stockSnap, logSnap] = await Promise.all([
+      getDoc(doc(db, 'supplementStock', sku.id)),
+      getDocs(query(collection(db, 'supplementLogs'), where('supplementTypeId', '==', sku.id))),
+    ]);
+    const stockQty = Number(stockSnap.data()?.currentQty || 0);
+    supplementSummaries.push({
+      sku,
+      stockQty,
+      stockExists: stockSnap.exists(),
+      logDocs: logSnap.docs,
+    });
+  }
+
+  return {
+    productionCount: productionSnap.size,
+    scheduleCount: scheduleSnap.size,
+    supplementSummaries,
   };
 }
 
@@ -255,6 +286,7 @@ function showRecipeDetail(recipe) {
       <span class="detail-title">${isNew ? '새 레시피' : getDisplayName(recipe)}</span>
       <div class="detail-actions">
         <button class="btn-primary" id="btnSaveRecipe">저장</button>
+        ${!isNew ? '<button class="btn-danger" id="btnDeleteRecipe">삭제</button>' : ''}
       </div>
     </div>
 
@@ -410,6 +442,95 @@ function showRecipeDetail(recipe) {
   document.getElementById('btnSaveRecipe').addEventListener('click', () => saveRecipe(recipe?.id));
 
   // 삭제
+  document.getElementById('btnDeleteRecipe')?.addEventListener('click', () => deleteRecipe(recipe));
+}
+
+function getRecipeDeleteMessage(recipe, supplementSummaries) {
+  const supplementSkuCount = supplementSummaries.length;
+  const supplementTotalQty = supplementSummaries.reduce((sum, s) => sum + s.stockQty, 0);
+  const supplementLogCount = supplementSummaries.reduce((sum, s) => sum + s.logDocs.length, 0);
+  const stockLines = supplementSummaries
+    .filter(s => s.stockQty > 0)
+    .map(s => `${s.sku.name || s.sku.id} ${s.stockQty}봉`);
+
+  if (stockLines.length > 0) {
+    return `영양제 재고가 남아있습니다.\n${stockLines.join('\n')}\n\n레시피와 영양제 SKU ${supplementSkuCount}개, 영양제 이력 ${supplementLogCount}건이 모두 삭제됩니다.\n진행하시겠습니까?`;
+  }
+  if (supplementLogCount > 0) {
+    return `영양제 이력 ${supplementLogCount}건이 함께 삭제됩니다.\n레시피와 영양제 SKU ${supplementSkuCount}개를 삭제하시겠습니까?`;
+  }
+  if (supplementSkuCount > 0) {
+    return `레시피와 영양제 SKU ${supplementSkuCount}개를 삭제하시겠습니까?`;
+  }
+  return `${getDisplayName(recipe)} 레시피를 삭제하시겠습니까?`;
+}
+
+async function deleteRecipe(recipe) {
+  if (!recipe?.id) return;
+  if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+    alert('레시피 삭제는 대표/사무실 계정만 가능합니다.');
+    return;
+  }
+
+  try {
+    const context = await loadRecipeDeleteContext(recipe);
+    if (context.productionCount > 0) {
+      alert(`이 레시피로 만든 생산 기록이 ${context.productionCount}건 있어 삭제할 수 없습니다.\n비활성화로 처리해주세요.`);
+      return;
+    }
+    if (context.scheduleCount > 0) {
+      alert(`입고 예정 ${context.scheduleCount}건이 있어 삭제할 수 없습니다.`);
+      return;
+    }
+
+    const confirmed = await showConfirmModal({
+      title: '레시피 삭제',
+      message: getRecipeDeleteMessage(recipe, context.supplementSummaries),
+      confirmText: '삭제',
+      danger: true,
+    });
+    if (!confirmed) return;
+
+    const batch = writeBatch(db);
+    batch.delete(doc(db, 'recipes', recipe.id));
+    context.supplementSummaries.forEach(summary => {
+      batch.delete(doc(db, 'supplementTypes', summary.sku.id));
+      if (summary.stockExists) {
+        batch.delete(doc(db, 'supplementStock', summary.sku.id));
+      }
+      summary.logDocs.forEach(logDoc => {
+        batch.delete(doc(db, 'supplementLogs', logDoc.id));
+      });
+    });
+    await batch.commit();
+
+    const supplementSkuCount = context.supplementSummaries.length;
+    const supplementTotalQty = context.supplementSummaries.reduce((sum, s) => sum + s.stockQty, 0);
+    const supplementLogCount = context.supplementSummaries.reduce((sum, s) => sum + s.logDocs.length, 0);
+    await recordActivity({
+      action: 'recipe',
+      subAction: 'delete',
+      date: getToday(),
+      staff: getRoleStaffLabel(),
+      message: `레시피 삭제 — ${getDisplayName(recipe)}`,
+      details: {
+        recipeId: recipe.id,
+        recipeName: getDisplayName(recipe),
+        category: recipe.category === 'freezeDry' ? 'dried' : 'raw',
+        supplementSkuCount,
+        supplementTotalQty,
+        supplementLogCount,
+      },
+    });
+
+    selectedRecipeId = null;
+    recipes = await loadRecipes();
+    renderRecipeLayout();
+    alert('레시피가 삭제되었습니다.');
+  } catch (err) {
+    console.error('[recipe] delete failed:', err);
+    alert('레시피 삭제 중 오류가 발생했습니다.');
+  }
 }
 
 function renderUnitPresetChips() {

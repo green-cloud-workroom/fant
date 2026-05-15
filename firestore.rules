@@ -139,7 +139,7 @@ service cloud.firestore {
       allow read: if isProductionApp();
       allow create: if isProductionStaff();
       allow update: if isProductionWriter();
-      allow delete: if isProductionAdmin();
+      allow delete: if isProductionWriter();
     }
 
     match /eggStock/{stockId} {
