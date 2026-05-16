@@ -1,8 +1,24 @@
 ﻿# Fantapet Management Codebase Notes
 
-Last updated: 2026-05-14
+Last updated: 2026-05-16
 
 ## Current Status
+
+- 2026-05-16 v26 / Phase 2a closeout:
+  - Phase 2a holiday-master code and public deploy are complete. Latest relevant commits: `875bb03` holiday data, `7287287` expiry notice, `c21b70f` holiday-aware business-day helpers, `959f9cb` holiday settings UI, `d740010` production business-day wiring, `64befa2` shipping business-day schedule adjustment, `4e01cae` production-impact holiday badge.
+  - Firestore Rules + Custom Claims work is complete (`9ee0517`, `9c8c7d8`). Three accounts have custom claims: `alice@fantapet.com` admin, `admin@fantapet.com` office, `qc@fantapet.com` production; all include `app: ['inventory', 'production']`.
+  - Bag/recipe delete UI work is complete (`cc722a6`): admin and office can delete with cascade/soft-delete behavior as implemented; production is blocked by UI/rules.
+  - Phase 2a smoke test passed:
+    1. Korean public holiday auto import generated the 2025-2027 holiday docs.
+    2. Company holiday range create/edit/delete works; delete is soft delete through `status: 'deleted'`.
+    3. Incoming schedule on Sunday/non-shipping holiday shows the adjustment modal and changes to the next shipping business day. Verified with `2026-05-17 -> 2026-05-18`; test schedule was cancelled afterward.
+    4. Production input on a production-affecting holiday shows the holiday badge. Verified with `2026-05-05` showing `등록 공휴일`.
+  - Follow-up polish after smoke testing:
+    - `3b390eb` improved company holiday form validation and required-field feedback.
+    - `339e527` made settings sections collapsible; default state is collapsed.
+    - `d0b8474` fixed the holiday form input layout by overriding table-oriented `.cell-input` styles only inside the holiday form and widening the settings container.
+  - Public URL remains https://green-cloud-workroom.github.io/fant/. GitHub Pages can lag by roughly 10 minutes because of cache headers.
+  - Current next work: Phase 2b conversion table work from spec_v26 §2-1~2-4.
 
 - 2026-05-14 Work A completed:
   - `src/pages/main.js` office-log classifier now includes `recipe`.
@@ -103,10 +119,53 @@ Last updated: 2026-05-14
   - `Chart.register(...registerables)` ?ъ슜.
 - `xlsx`
   - Excel ?뚯씪 ?앹꽦 諛??ㅼ슫濡쒕뱶.
+- `firebase-admin`
+  - Dev dependency for `scripts/setCustomClaims.mjs`.
+- `gh-pages`
+  - Dev dependency for publishing Vite `dist` to GitHub Pages.
+
+## Scripts / Config
+
+### `firestore.rules`
+
+New in v26.
+
+- Implements role/app-claim based access using Firebase Auth custom claims.
+- `activityLogs` update is limited to acknowledged-related fields; full arbitrary updates remain blocked.
+- `bagLogs` delete is allowed for admin and office because bag delete cascade needs it.
+- Rules are deployed manually or by the GitHub Actions workflow when the required secret is present.
+
+### `scripts/setCustomClaims.mjs`
+
+New in v26.
+
+- Admin SDK script for assigning role/app claims to the three operating accounts.
+- `npm.cmd run claims:dry-run` previews changes.
+- `npm.cmd run claims:execute` writes claims.
+
+### `scripts/fetchKoreanPublicHolidays.mjs`
+
+New in v26.
+
+- Fetches Korean public holiday rows from the KASI special-day API and regenerates `src/services/holidayMaster.js`.
+- 2028+ data was not available in the v26 session; current generated range is 2025-2027.
+
+### `.github/workflows/firebase-rules.yml`
+
+New in v26.
+
+- Runs on `firestore.rules` changes.
+- Performs a dry-run safety check before deploy.
+- Requires GitHub secret `FIREBASE_RULES_SERVICE_ACCOUNT`.
 
 ## Important Files
 
 ### `src/pages/main.js`
+
+v26 / Phase 2a:
+- Calls `loadHolidaysCache()` on load and uses holiday-aware helpers for calendar and tomorrow-production behavior.
+- Dashboard holiday-data notice appears for admin/office only when Korean public holiday data approaches expiry (`HOLIDAY_REFRESH_NEEDED_BEFORE = '2027-10-01'`) or is out of range after 2027. Production role does not see this banner.
+- `OFFICE_LOG_ACTIONS` now includes `holiday`, in addition to existing office-log actions.
 
 spec_v24 / Work A:
 - `triggerMinStockLogs(today)` now also checks supplement minimum stock and emits daily deterministic alert logs.
@@ -213,6 +272,12 @@ spec_v20 13???댁꽍:
 ### `src/pages/schedule.js`
 
 ?낃퀬 ?덉젙愿由?
+
+v26 / Phase 2a:
+- Incoming schedule registration/edit resolves dates through `resolveScheduleBusinessDate(date)`.
+- If the selected date is not a shipping business day, `showConfirmModal()` asks whether to change to `getNextBusinessDayByType(date, 'shipping')`.
+- Shipping business-day logic considers Sunday plus holidays where `affectsShipping === true`; `shippingClosedFromEnabled === true` also blocks shipping on the preceding day.
+- Smoke test passed with `2026-05-17` (Sunday) changing to `2026-05-18`.
 
 臾띠쓬 b:
 - 媛숈? ?좎쭨/援щ텇/?덈ぉ 以묐났 ?깅줉 李⑤떒 ?뺤씤.
@@ -372,9 +437,63 @@ Helpers:
 
 Used by recipe and production flows to keep SKU id/name/order consistent.
 
+### `src/services/holidayMaster.js`
+
+New in v26 / Phase 2a.
+
+- Generated static Korean public holiday data from the KASI special-day API.
+- Current covered range is 2025-2027. The API did not provide 2028+ data during the v26 session.
+- Exports:
+  - `PUBLIC_HOLIDAY_SOURCE`
+  - `HOLIDAY_DATA_END_YEAR = 2027`
+  - `HOLIDAY_REFRESH_NEEDED_BEFORE = '2027-10-01'`
+  - `KOREAN_PUBLIC_HOLIDAYS`
+  - `getKoreanPublicHolidaysForYear(year)`
+  - `getKoreanPublicHolidaysForYears(startYear, years)`
+- Generated holiday rows default to:
+  - `holidayType: 'publicHoliday'`
+  - `affectsProduction: true`
+  - `affectsShipping: true`
+  - `shippingClosedFromEnabled: true`
+  - `isAutoGenerated: true`
+- Do not hand-edit generated rows. Re-run `npm.cmd run fetch:holidays` when a later source range becomes available.
+
+### `src/utils/date.js`
+
+v26 / Phase 2a:
+- Holiday cache merges static data from `holidayMaster.js` and Firestore `holidays`; Firestore wins on same-date collisions.
+- `status: 'deleted'` removes a Firestore holiday override from effective holiday behavior.
+- Key helpers:
+  - `loadHolidaysCache()`
+  - `getHolidaysCache()`
+  - `getHolidayInfo(dateStr)`
+  - `getHolidayInfoCache()`
+  - `isHoliday(dateStr)`
+  - `isBusinessDay(dateStr, type)`
+  - `getNextBusinessDayByType(dateStr, type)`
+  - `addBusinessDays(dateStr, days, type)`
+  - `isLongShippingHoliday(dateStr)`
+  - `getHolidayDataNotice(referenceDateStr)`
+- Production business days and shipping business days differ:
+  - Production uses `affectsProduction`.
+  - Shipping uses `affectsShipping` and the prior-day shipping block when `shippingClosedFromEnabled` is enabled.
+
 ### `src/pages/settings.js`
 
 ?ㅼ젙 ?붾㈃.
+
+v26 / Phase 2a:
+- Settings sections are rendered as collapsible `details.settings-section` cards and default to collapsed.
+- Closing flags, menu staff groups, system values, and holiday management are now present in the settings UI.
+- Holiday management:
+  - Auto-imports generated Korean public holiday data for 2025-2027 from `src/services/holidayMaster.js`.
+  - Existing docs are not overwritten during auto import.
+  - Company holiday range create/edit/delete is available to admin/office. Delete is soft delete through `status: 'deleted'`.
+  - Holiday fields include `affectsProduction`, `affectsShipping`, and `shippingClosedFromEnabled`.
+  - Holiday changes write `activityLogs` with `action: 'holiday'`.
+- Holiday form layout note:
+  - The generic `.cell-input` class is table-oriented. `src/style.css` intentionally overrides `.holiday-field .cell-input` so date/text inputs render as normal form controls inside the holiday form only.
+  - Keep `.holiday-form-fields` as the single grid wrapper for the four inputs: start date, end date, holiday name, memo.
 
 臾띠쓬 c:
 - spec_v20 湲곗??쇰줈 settings 硫붾돱??production?먭쾶 蹂댁씠寃??좎?.
@@ -383,8 +502,7 @@ Used by recipe and production flows to keep SKU id/name/order consistent.
 - ?대떦??異붽?/??젣 踰꾪듉怨??대깽??諛붿씤?⑹? admin/office???뚮쭔 ?쒖꽦??
 
 二쇱쓽:
-- B5 closingFlags ?좉? UI???꾩쭅 ?놁쓬.
-- 硫붾돱蹂??대떦??洹몃９ ?ㅼ젙 UI???꾩쭅 ?놁쓬.
+- Older notes saying closingFlags/menu-staff/system settings UI is missing are obsolete as of v26.
 
 ### `src/pages/egg.js`
 
@@ -407,6 +525,34 @@ Used by recipe and production flows to keep SKU id/name/order consistent.
 
 ?듦퀎 ?ㅽ????ы븿.
 
+v26 / Phase 2a:
+- Settings accordion styles:
+  - `.settings-section`
+  - `.settings-section-summary`
+  - `.settings-section-toggle`
+  - `.settings-section-body`
+- Holiday settings styles:
+  - `.holiday-import-row`
+  - `.holiday-form`
+  - `.holiday-form-fields`
+  - `.holiday-field`
+  - `.holiday-form-actions`
+  - `.holiday-options`
+  - `.holiday-check`
+  - `.holiday-list`
+  - `.holiday-item`
+  - `.holiday-date`
+  - `.holiday-label`
+  - `.holiday-flags`
+  - `.btn-edit-holiday`
+  - `.btn-del-holiday`
+- Production holiday display styles:
+  - `.holiday-badge`
+  - `.holiday-badge-weekend`
+  - `.holiday-badge-registered`
+  - `.holiday-month-list`
+- Important CSS note: `.cell-input` is a shared table-cell class. Holiday form inputs must be styled through `.holiday-field .cell-input` to avoid inheriting transparent table-cell input behavior.
+
 臾띠쓬 7B:
 - `.stats-recipe-toggles`
 - `.stats-recipe-chip`
@@ -424,6 +570,39 @@ Used by recipe and production flows to keep SKU id/name/order consistent.
 - `.egg-fifo-warning`
 
 ## Firestore Schema Notes
+
+### `holidays/{YYYY-MM-DD}`
+
+New in v26 / Phase 2a.
+
+Effective holiday behavior is built from static `holidayMaster.js` data plus Firestore `holidays`. Firestore docs override static rows for the same date. A Firestore doc with `status: 'deleted'` removes that date from the effective cache.
+
+```js
+{
+  date: 'YYYY-MM-DD',
+  title: '어린이날',
+  label: '어린이날',
+  description: '',
+  holidayType: 'publicHoliday' | 'internalOff',
+  affectsProduction: true,
+  affectsShipping: true,
+  shippingClosedFromEnabled: true,
+  isAutoGenerated: true,
+  recurrenceRule: null,
+  status: 'active' | 'deleted',
+  source: 'KASI_SPECIAL_DAY_API',
+  createdAt,
+  createdBy,
+  updatedAt,
+  updatedBy,
+}
+```
+
+Notes:
+- Auto-import does not overwrite existing docs.
+- Company holiday range registration creates one doc per date.
+- Delete from settings is soft delete (`status: 'deleted'`).
+- Smoke tests passed for auto import, range create/edit/delete, incoming schedule adjustment, and production holiday badge.
 
 ### `settings/closingFlags`
 
@@ -446,8 +625,16 @@ Used by recipe and production flows to keep SKU id/name/order consistent.
 ```
 
 二쇱쓽:
-- UI???꾩쭅 ?놁쓬.
-- ?ㅼ젙 UI 異붽? ?????꾨뱶瑜?洹몃?濡??좉??섎㈃ ??
+- v26 settings UI can edit these flags.
+- Missing fields still use default ON semantics.
+
+### `settings/systemValues`
+
+Newer settings UI stores production/system constants here. Current values were validation/seed-time values; clean before final operation seed if needed.
+
+### `settings/menuStaffGroups`
+
+Newer settings UI stores which staff groups are exposed per menu. Each menu must expose at least one staff group.
 
 ### `eggLogs`
 
@@ -731,19 +918,18 @@ Build warnings:
 
 ## Follow-Up Candidates
 
-Phase 1 remaining candidates:
-- B: `codebase.md` update for supplement units 1-12 and Work A. Completed in this edit.
-- C: write spec_v25 with operational discoveries from handoff_v22.
-- D-1: settings UI for `settings/closingFlags`, including `warnSupplementMin`.
-- D-2: settings UI for menu/staff-group mapping; move supplement stock-in/manual-adjust staff groups out of hard-coded constants.
-- D-3: settings UI for system constants such as supplement color thresholds, supplement closing-warning threshold, and supplement auto-alert threshold.
-- E-2/E-5: drag-sort master ordering for bag, frozen product, meat type, and recipe lists. Supplement SKU ordering remains derived from recipe order and unit preset order; no separate supplement drag-sort UI.
-- F: deploy after grouped changes; Step 2 wipe re-run and Step 3 seed entry remain postponed until deploy/seed timing is confirmed.
+Phase 1 notes:
+- B/codebase update for supplement units and Work A is complete.
+- D-1/D-2/D-3 settings UI work is complete as of v26: closing flags, menu staff groups, and system values are editable in settings.
+- E-2/E-5 drag-sort master ordering for bag, frozen product, meat type, and recipe lists remains a candidate. Supplement SKU ordering remains derived from recipe order and unit preset order; no separate supplement drag-sort UI.
+
+Next implementation candidate:
+- Phase 2b conversion table work from spec_v26 §2-1~2-4.
 
 Operational discoveries to carry into spec_v25:
 - `productions` delete is soft-delete (`status: 'deleted'`), not hard delete.
 - `activityLogs` delete is blocked by Firestore Rules; cleanup/archival policy is still needed.
-- No repo-local `firestore.rules` file is currently present; rules changes have been done through Firebase console.
+- Repo-local `firestore.rules`, `firebase.json`, `.firebaserc`, and `.github/workflows/firebase-rules.yml` are now present as of v26. Rules deploy workflow needs GitHub secret `FIREBASE_RULES_SERVICE_ACCOUNT`; if the secret is absent, rules workflow will fail on the next rules change.
 - `minStock:alert` deterministic id is per-item/per-SKU using `auto_minStock_alert_{date}_{dedupKey}`.
 - Supplement display name format is recipe name plus unit plus supplement label; no separate unit-name text.
 - Supplement delete/refund net calculation depends on `supplementLogs.relatedProductionId`.
@@ -756,13 +942,14 @@ Before launch:
 - Reconnect preserved raw recipe bag mapping after bagTypes are seeded again.
 - Decide whether dog recipes are needed for launch.
 - Normalize preserved recipe naming if needed.
-- Enter only company-specific holidays for now. Korean legal holiday master work should be absorbed into Phase 2 / bundle 9 #22.
+- Korean public holidays for 2025-2027 are already imported and should be treated as operating data, not test residue. Add company-specific holidays through settings as needed.
 - Change exposed test passwords for `alice`, `admin@`, and `qc@` only at final real-operation start.
 - Keep `backup_pre_wipe_20260512_093907` outside git for about one month after launch.
 
 Next work bundles before real operations:
 - C-2 / C-3 follow-up work after the B-1/B-2/B-3 small-fix bundle.
-- Phase 2: bundle 9 #22 plus holiday master work together.
+- Phase 2b: conversion table work from spec_v26 §2-1~2-4.
+- Later Phase 2c: in-app wipe, conversion-difference recommendations/stats, planned production management, and any forecast collection alignment.
 - Inventory-app linkage bundle.
 - spec_v23: fix the meaning of decision 4 and define "operations start" as simultaneous production-management and inventory-app launch.
 
