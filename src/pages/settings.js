@@ -49,17 +49,26 @@ export async function renderSettings() {
     <div class="settings-wrap">
       <h2 class="settings-title">설정</h2>
 
-      <div class="settings-section">
-        <h3 class="settings-section-title">담당자 관리</h3>
+      <details class="settings-section">
+        <summary class="settings-section-summary">
+          <span class="settings-section-title">담당자 관리</span>
+          <span class="settings-section-toggle">펼치기</span>
+        </summary>
+        <div class="settings-section-body">
         <div class="staff-groups">
           ${renderStaffGroup('senior', '선임', staffGroups.senior, isWriter)}
           ${renderStaffGroup('lead', '주임', staffGroups.lead, isWriter)}
           ${renderStaffGroup('office', '사무', staffGroups.office, isWriter)}
         </div>
-      </div>
+        </div>
+      </details>
 
-      <div class="settings-section">
-        <h3 class="settings-section-title">메뉴별 담당자 그룹</h3>
+      <details class="settings-section">
+        <summary class="settings-section-summary">
+          <span class="settings-section-title">메뉴별 담당자 그룹</span>
+          <span class="settings-section-toggle">펼치기</span>
+        </summary>
+        <div class="settings-section-body">
         <p class="settings-section-desc">
           각 메뉴의 담당자 선택에 어떤 그룹을 노출할지 설정합니다. 최소 1개 그룹을 선택해야 합니다.
         </p>
@@ -68,10 +77,15 @@ export async function renderSettings() {
             renderMenuStaffGroupRow(field, menuStaffGroups[field.key], isWriter)
           ).join('')}
         </div>
-      </div>
+        </div>
+      </details>
 
-      <div class="settings-section">
-        <h3 class="settings-section-title">마감 차단/경고 설정</h3>
+      <details class="settings-section">
+        <summary class="settings-section-summary">
+          <span class="settings-section-title">마감 차단/경고 설정</span>
+          <span class="settings-section-toggle">펼치기</span>
+        </summary>
+        <div class="settings-section-body">
         <p class="settings-section-desc">
           ON인 항목만 마감 시 차단/경고로 동작합니다. OFF로 두면 해당 항목을 무시하고 마감 가능합니다.
         </p>
@@ -85,23 +99,34 @@ export async function renderSettings() {
         <div class="closing-flag-list">
           ${CLOSING_FLAG_WARNS.map(flag => renderFlagRow(flag, closingFlags[flag.key], isWriter)).join('')}
         </div>
-      </div>
+        </div>
+      </details>
 
-      <div class="settings-section">
-        <h3 class="settings-section-title">공휴일 관리</h3>
+      <details class="settings-section">
+        <summary class="settings-section-summary">
+          <span class="settings-section-title">공휴일 관리</span>
+          <span class="settings-section-toggle">펼치기</span>
+        </summary>
+        <div class="settings-section-body">
         <p class="settings-section-desc">토/일은 자동 처리됩니다. 추가 공휴일만 등록하세요.</p>
         ${renderHolidaysSection(holidays)}
-      </div>
+        </div>
+      </details>
 
-      <div class="settings-section">
-        <h3 class="settings-section-title">시스템 설정값</h3>
+      <details class="settings-section">
+        <summary class="settings-section-summary">
+          <span class="settings-section-title">시스템 설정값</span>
+          <span class="settings-section-toggle">펼치기</span>
+        </summary>
+        <div class="settings-section-body">
         <p class="settings-section-desc">
           생산/재고 계산에 쓰이는 기준값입니다. 변경 시 이후 계산부터 적용됩니다.
         </p>
         <div class="system-value-list">
           ${SYSTEM_VALUE_FIELDS.map(field => renderSystemValueRow(field, systemValues[field.key], isWriter)).join('')}
         </div>
-      </div>
+        </div>
+      </details>
     </div>
   `;
 
