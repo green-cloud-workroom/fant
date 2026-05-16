@@ -534,22 +534,28 @@ function renderHolidaysSection(holidays) {
       <span class="settings-section-desc">이미 등록된 날짜는 덮어쓰지 않습니다.</span>
     </div>
     <div class="holiday-form">
-      <label class="holiday-field">시작일
-        <input type="date" id="hd_start" class="cell-input" />
-      </label>
-      <label class="holiday-field">종료일
-        <input type="date" id="hd_end" class="cell-input" />
-      </label>
-      <label class="holiday-field holiday-field--name">휴무일명
-        <input type="text" id="hd_label" class="cell-input" placeholder="예: 회사 휴무" />
-      </label>
-      <label class="holiday-field holiday-field--memo">메모
-        <input type="text" id="hd_desc" class="cell-input" placeholder="선택 입력" />
-      </label>
-      <label class="holiday-check"><input type="checkbox" id="hd_affectsProduction" checked> 생산 안 함</label>
-      <label class="holiday-check"><input type="checkbox" id="hd_affectsShipping" checked> 배송 안 함</label>
-      <label class="holiday-check"><input type="checkbox" id="hd_shippingAvailablePrev" checked> 휴일 전날 배송 가능</label>
-      <button class="btn-primary" id="btnAddHoliday">+ 회사 휴무일 등록</button>
+      <div class="holiday-form-fields">
+        <label class="holiday-field">시작일
+          <input type="date" id="hd_start" class="cell-input" />
+        </label>
+        <label class="holiday-field">종료일
+          <input type="date" id="hd_end" class="cell-input" />
+        </label>
+        <label class="holiday-field holiday-field--name">휴무일명
+          <input type="text" id="hd_label" class="cell-input" placeholder="예: 회사 휴무" />
+        </label>
+        <label class="holiday-field holiday-field--memo">메모
+          <input type="text" id="hd_desc" class="cell-input" placeholder="선택 입력" />
+        </label>
+      </div>
+      <div class="holiday-form-actions">
+        <div class="holiday-options">
+          <label class="holiday-check"><input type="checkbox" id="hd_affectsProduction" checked> 생산 안 함</label>
+          <label class="holiday-check"><input type="checkbox" id="hd_affectsShipping" checked> 배송 안 함</label>
+          <label class="holiday-check"><input type="checkbox" id="hd_shippingAvailablePrev" checked> 휴일 전날 배송 가능</label>
+        </div>
+        <button class="btn-primary" id="btnAddHoliday">+ 회사 휴무일 등록</button>
+      </div>
     </div>
   ` : `<p class="staff-empty">읽기 전용입니다. 등록은 대표/사무 계정에서 가능합니다.</p>`;
 
