@@ -534,10 +534,18 @@ function renderHolidaysSection(holidays) {
       <span class="settings-section-desc">이미 등록된 날짜는 덮어쓰지 않습니다.</span>
     </div>
     <div class="holiday-form">
-      <input type="date" id="hd_start" class="cell-input" title="시작일" />
-      <input type="date" id="hd_end" class="cell-input" title="종료일" />
-      <input type="text" id="hd_label" class="cell-input" placeholder="휴무일명 (예: 회사 휴무)" />
-      <input type="text" id="hd_desc" class="cell-input" placeholder="메모 (선택)" />
+      <label class="holiday-field">시작일
+        <input type="date" id="hd_start" class="cell-input" />
+      </label>
+      <label class="holiday-field">종료일
+        <input type="date" id="hd_end" class="cell-input" />
+      </label>
+      <label class="holiday-field holiday-field--name">휴무일명
+        <input type="text" id="hd_label" class="cell-input" placeholder="예: 회사 휴무" />
+      </label>
+      <label class="holiday-field holiday-field--memo">메모
+        <input type="text" id="hd_desc" class="cell-input" placeholder="선택 입력" />
+      </label>
       <label class="holiday-check"><input type="checkbox" id="hd_affectsProduction" checked> 생산 안 함</label>
       <label class="holiday-check"><input type="checkbox" id="hd_affectsShipping" checked> 배송 안 함</label>
       <label class="holiday-check"><input type="checkbox" id="hd_shippingAvailablePrev" checked> 휴일 전날 배송 가능</label>
@@ -604,9 +612,21 @@ async function handleAddHoliday() {
   const label = labelInput.value.trim();
   const description = descInput.value.trim();
 
-  if (!startDate) { alert('시작일을 선택해주세요.'); return; }
-  if (endDate < startDate) { alert('종료일은 시작일 이후여야 합니다.'); return; }
-  if (!label) { alert('휴무일명을 입력해주세요.'); return; }
+  if (!startDate) {
+    alert('시작일을 선택해주세요.');
+    startInput.focus();
+    return;
+  }
+  if (endDate < startDate) {
+    alert('종료일은 시작일 이후여야 합니다.');
+    endInput.focus();
+    return;
+  }
+  if (!label) {
+    alert('휴무일명을 입력해주세요.');
+    labelInput.focus();
+    return;
+  }
 
   const dates = getDateRangeInclusive(startDate, endDate);
 
@@ -651,6 +671,10 @@ async function handleAddHoliday() {
       total: dates.length,
     });
     await loadHolidaysCache();
+    if (created === 0 && skipped > 0) {
+      alert(`등록된 날짜가 없습니다. 선택한 ${skipped}개 날짜가 이미 등록되어 있습니다.`);
+      return;
+    }
     alert(`회사 휴무일 등록 완료: ${created}건${skipped ? ` / 기존 항목 건너뜀 ${skipped}건` : ''}`);
     await renderSettings();
   } catch (err) {
