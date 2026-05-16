@@ -27,27 +27,41 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
     <div class="settings-wrap">
       <h2 class="settings-title">설정</h2>
 
-      <div class="settings-section">
-        <h3 class="settings-section-title">담당자 관리</h3>
+      <details class="settings-section">
+        <summary class="settings-section-summary">
+          <span class="settings-section-title">담당자 관리</span>
+          <span class="settings-section-toggle">펼치기</span>
+        </summary>
+        <div class="settings-section-body">
         <div class="staff-groups">
           ${Po(`senior`,`선임`,t.senior,o)}
           ${Po(`lead`,`주임`,t.lead,o)}
           ${Po(`office`,`사무`,t.office,o)}
         </div>
-      </div>
+        </div>
+      </details>
 
-      <div class="settings-section">
-        <h3 class="settings-section-title">메뉴별 담당자 그룹</h3>
+      <details class="settings-section">
+        <summary class="settings-section-summary">
+          <span class="settings-section-title">메뉴별 담당자 그룹</span>
+          <span class="settings-section-toggle">펼치기</span>
+        </summary>
+        <div class="settings-section-body">
         <p class="settings-section-desc">
           각 메뉴의 담당자 선택에 어떤 그룹을 노출할지 설정합니다. 최소 1개 그룹을 선택해야 합니다.
         </p>
         <div class="menu-staff-group-list">
           ${_o.map(e=>Ao(e,a[e.key],o)).join(``)}
         </div>
-      </div>
+        </div>
+      </details>
 
-      <div class="settings-section">
-        <h3 class="settings-section-title">마감 차단/경고 설정</h3>
+      <details class="settings-section">
+        <summary class="settings-section-summary">
+          <span class="settings-section-title">마감 차단/경고 설정</span>
+          <span class="settings-section-toggle">펼치기</span>
+        </summary>
+        <div class="settings-section-body">
         <p class="settings-section-desc">
           ON인 항목만 마감 시 차단/경고로 동작합니다. OFF로 두면 해당 항목을 무시하고 마감 가능합니다.
         </p>
@@ -61,23 +75,34 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
         <div class="closing-flag-list">
           ${bo.map(e=>Co(e,r[e.key],o)).join(``)}
         </div>
-      </div>
+        </div>
+      </details>
 
-      <div class="settings-section">
-        <h3 class="settings-section-title">공휴일 관리</h3>
+      <details class="settings-section">
+        <summary class="settings-section-summary">
+          <span class="settings-section-title">공휴일 관리</span>
+          <span class="settings-section-toggle">펼치기</span>
+        </summary>
+        <div class="settings-section-body">
         <p class="settings-section-desc">토/일은 자동 처리됩니다. 추가 공휴일만 등록하세요.</p>
         ${Vo(n)}
-      </div>
+        </div>
+      </details>
 
-      <div class="settings-section">
-        <h3 class="settings-section-title">시스템 설정값</h3>
+      <details class="settings-section">
+        <summary class="settings-section-summary">
+          <span class="settings-section-title">시스템 설정값</span>
+          <span class="settings-section-toggle">펼치기</span>
+        </summary>
+        <div class="settings-section-body">
         <p class="settings-section-desc">
           생산/재고 계산에 쓰이는 기준값입니다. 변경 시 이후 계산부터 적용됩니다.
         </p>
         <div class="system-value-list">
           ${fo.map(e=>To(e,i[e.key],o)).join(``)}
         </div>
-      </div>
+        </div>
+      </details>
     </div>
   `,o&&Fo(t),o&&wo(r),o&&Eo(i),o&&jo(a),Ho()}async function So(){try{let e=await j(k(I,`settings`,`closingFlags`));return e.exists()?{...Ua,...e.data()}:{...Ua}}catch(e){return console.warn(`[settings] closingFlags load failed:`,e),{...Ua}}}function Co(e,t,n){let r=t===!1?``:`checked`,i=n?``:`disabled`;return`
     <div class="closing-flag-row">
