@@ -11,6 +11,19 @@ import {
   loadMenuStaffGroups, MENU_STAFF_GROUP_FIELDS, STAFF_GROUP_KEYS, STAFF_GROUP_LABELS
 } from '../services/menuStaffGroups.js';
 import { getKoreanPublicHolidaysForYears, PUBLIC_HOLIDAY_SOURCE } from '../services/holidayMaster.js';
+import Sortable from 'sortablejs';
+
+const COPY_SHEET_ORDER_DEFAULT = ['rawCat', 'rawDog', 'freezeCat', 'freezeDog', 'freezeCommon'];
+
+const COPY_SHEET_ORDER_LABELS = {
+  rawCat: '생식 - 고양이',
+  rawDog: '생식 - 강아지',
+  freezeCat: '동결건조 - 고양이',
+  freezeDog: '동결건조 - 강아지',
+  freezeCommon: '동결건조 - 공용',
+};
+
+let copySheetOrderSortable = null;
 
 const CLOSING_FLAG_BLOCKS = [
   { key: 'blockTomorrowProd', label: '내일생산불러오기 미완료 시 마감 차단', desc: '다음 영업일 생산이 있는데 내일생산불러오기를 안 했으면 차단' },
@@ -43,6 +56,7 @@ export async function renderSettings() {
   const closingFlags = await loadClosingFlags();
   const systemValues = await loadSystemValues();
   const menuStaffGroups = await loadMenuStaffGroups();
+  const copySheetOrder = await loadCopySheetOrder();
   const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
 
   content.innerHTML = `
@@ -115,6 +129,17 @@ export async function renderSettings() {
 
       <details class="settings-section">
         <summary class="settings-section-summary">
+          <span class="settings-section-title">생산지시서 카테고리 순서</span>
+          <span class="settings-section-toggle">펼치기</span>
+        </summary>
+        <div class="settings-section-body">
+          <p class="settings-section-desc">생산지시서 복사 시 카테고리 출력 순서입니다.</p>
+          ${renderCopySheetOrderSection(copySheetOrder, isWriter)}
+        </div>
+      </details>
+
+      <details class="settings-section">
+        <summary class="settings-section-summary">
           <span class="settings-section-title">시스템 설정값</span>
           <span class="settings-section-toggle">펼치기</span>
         </summary>
@@ -134,7 +159,85 @@ export async function renderSettings() {
   if (isWriter) bindClosingFlagEvents(closingFlags);
   if (isWriter) bindSystemValueEvents(systemValues);
   if (isWriter) bindMenuStaffGroupEvents(menuStaffGroups);
+  bindCopySheetOrderEvents(isWriter);
   bindHolidayEvents();
+}
+
+function normalizeCopySheetOrder(order) {
+  const valid = Array.isArray(order)
+    ? order.filter(key => COPY_SHEET_ORDER_DEFAULT.includes(key))
+    : [];
+  const missing = COPY_SHEET_ORDER_DEFAULT.filter(key => !valid.includes(key));
+  return [...valid, ...missing];
+}
+
+async function loadCopySheetOrder() {
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'copySheetOrder'));
+    return snap.exists()
+      ? normalizeCopySheetOrder(snap.data().order)
+      : [...COPY_SHEET_ORDER_DEFAULT];
+  } catch (err) {
+    console.warn('[settings] copySheetOrder load failed:', err);
+    return [...COPY_SHEET_ORDER_DEFAULT];
+  }
+}
+
+function renderCopySheetOrderSection(order, isWriter) {
+  const normalized = normalizeCopySheetOrder(order);
+  return `
+    <ul id="copySheetOrderList" class="copy-sheet-order-list sortable-master-list">
+      ${normalized.map(key => `
+        <li class="copy-sheet-order-item" data-key="${key}">
+          ${isWriter ? '<span class="drag-handle">≡</span>' : ''}
+          <span>${COPY_SHEET_ORDER_LABELS[key] || key}</span>
+        </li>
+      `).join('')}
+    </ul>
+  `;
+}
+
+function bindCopySheetOrderEvents(isWriter) {
+  if (copySheetOrderSortable) {
+    copySheetOrderSortable.destroy();
+    copySheetOrderSortable = null;
+  }
+  if (!isWriter) return;
+
+  const listEl = document.getElementById('copySheetOrderList');
+  if (!listEl) return;
+
+  copySheetOrderSortable = Sortable.create(listEl, {
+    handle: '.drag-handle',
+    animation: 150,
+    ghostClass: 'sortable-ghost',
+    chosenClass: 'sortable-chosen',
+    onEnd: async (evt) => {
+      if (evt.oldIndex === evt.newIndex) return;
+      await persistCopySheetOrder();
+    },
+  });
+}
+
+async function persistCopySheetOrder() {
+  const listEl = document.getElementById('copySheetOrderList');
+  if (!listEl) return;
+
+  const order = Array.from(listEl.querySelectorAll('.copy-sheet-order-item'))
+    .map(item => item.dataset.key)
+    .filter(key => COPY_SHEET_ORDER_DEFAULT.includes(key));
+
+  try {
+    await setDoc(doc(db, 'settings', 'copySheetOrder'), {
+      order: normalizeCopySheetOrder(order),
+      updatedAt: serverTimestamp(),
+      updatedBy: currentUser?.uid || null,
+    });
+  } catch (err) {
+    console.error('[settings] copySheetOrder save failed:', err);
+    alert('카테고리 순서 저장 실패: ' + err.message);
+    await renderSettings();
+  }
 }
 
 async function loadClosingFlags() {

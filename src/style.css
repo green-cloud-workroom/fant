@@ -544,6 +544,27 @@
   background: #e0f2fe;
 }
 
+.copy-sheet-order-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.copy-sheet-order-item {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #222;
+  font-size: 13px;
+}
+
 .recipe-name {
   font-size: 13px;
   font-weight: 500;

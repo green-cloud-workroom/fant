@@ -23,6 +23,16 @@ const PRODUCTION_METHOD_LABELS = {
   manual: '수동',
 };
 
+const COPY_SHEET_ORDER_DEFAULT = ['rawCat', 'rawDog', 'freezeCat', 'freezeDog', 'freezeCommon'];
+
+const COPY_SHEET_CATEGORY_LABELS = {
+  rawCat: '고양이 생식',
+  rawDog: '강아지 생식',
+  freezeCat: '동결건조 - 고양이',
+  freezeDog: '동결건조 - 강아지',
+  freezeCommon: '동결건조 - 공용',
+};
+
 function isTenderFreezeDry(item) {
   return item?.category === 'freezeDry' && item.requiresSeparation === false;
 }
@@ -1098,10 +1108,31 @@ function getRecipeDisplayName(recipe) {
   return prefix + recipe.name;
 }
 
-function showCopySheetModal() {
+function normalizeCopySheetOrder(order) {
+  const valid = Array.isArray(order)
+    ? order.filter(key => COPY_SHEET_ORDER_DEFAULT.includes(key))
+    : [];
+  const missing = COPY_SHEET_ORDER_DEFAULT.filter(key => !valid.includes(key));
+  return [...valid, ...missing];
+}
+
+async function loadCopySheetOrder() {
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'copySheetOrder'));
+    return snap.exists()
+      ? normalizeCopySheetOrder(snap.data().order)
+      : [...COPY_SHEET_ORDER_DEFAULT];
+  } catch (err) {
+    console.warn('[production] copySheetOrder load failed:', err);
+    return [...COPY_SHEET_ORDER_DEFAULT];
+  }
+}
+
+async function showCopySheetModal() {
   const today = new Date(selectedDate);
   const days = ['일', '월', '화', '수', '목', '금', '토'];
   const dateStr = `${String(today.getFullYear()).slice(2)}/${today.getMonth()+1}/${today.getDate()} ${days[today.getDay()]}`;
+  const copySheetOrder = await loadCopySheetOrder();
 
   // [묶음 4B] sortOrder 순으로 정렬하여 묶음 첫 등장 순서 보장
   const sorted = [...productions].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
@@ -1163,6 +1194,21 @@ function showCopySheetModal() {
     const allFreeze = [...catItems, ...dogItems, ...commonItems].join(', ');
     sheet += `- 동결건조 : ${allFreeze}\n`;
   }
+
+  const sheetGroups = {
+    rawCat: groupForSheet(rawCat).map(g => formatGroup(g, '')),
+    rawDog: groupForSheet(rawDog).map(g => formatGroup(g, '')),
+    freezeCat: groupForSheet(freezeCat).map(g => formatGroup(g, '고양이 ')),
+    freezeDog: groupForSheet(freezeDog).map(g => formatGroup(g, '강아지 ')),
+    freezeCommon: groupForSheet(freezeCommon).map(g => formatGroup(g, '')),
+  };
+
+  sheet = `📌${dateStr} 생산\n`;
+  copySheetOrder.forEach(key => {
+    const items = sheetGroups[key] || [];
+    if (items.length === 0) return;
+    sheet += `- ${COPY_SHEET_CATEGORY_LABELS[key]} : ${items.join(', ')}\n`;
+  });
 
   showModal(`
     <h3 class="modal-title">생산지시서 복사</h3>
