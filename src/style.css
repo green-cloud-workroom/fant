@@ -520,6 +520,21 @@
   cursor: grabbing;
 }
 
+.master-table-drag-col {
+  width: 34px;
+}
+
+.master-table-drag-cell {
+  width: 34px;
+  text-align: center;
+}
+
+.master-table-drag-cell .drag-handle {
+  justify-content: center;
+  align-self: center;
+  padding: 0;
+}
+
 .sortable-ghost {
   opacity: 0.4;
   background: #f0f9ff;

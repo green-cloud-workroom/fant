@@ -1,15 +1,17 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, where
+  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, where, writeBatch
 } from 'firebase/firestore';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { recordMeatLog } from '../services/meatLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
+import Sortable from 'sortablejs';
 
 let meatTypes = [];
 let currentTab = 'frozen';
+let meatTypesSortable = null;
 
 export async function renderMeat() {
   const content = document.getElementById('mainContent');
@@ -912,12 +914,14 @@ function showAdjustModal(id, name, remaining) {
 
 // 원육 종류 관리 모달
 function showMeatTypesModal() {
+  const canReorderMeatTypes = currentUserRole === 'admin' || currentUserRole === 'office';
   showModal(`
     <h3 class="modal-title">원육 종류 관리</h3>
     <div class="table-wrap" style="margin-bottom:16px;">
       <table class="data-table">
         <thead>
           <tr>
+            <th class="master-table-drag-col"></th>
             <th>원육명</th>
             <th>기본 단위중량(g)</th>
             <th>최소재고(kg)</th>
@@ -930,7 +934,10 @@ function showMeatTypesModal() {
             const showInStats = m.showInStats !== false;
             const active = m.active !== false;
             return `
-              <tr class="${active ? '' : 'inactive-master'}">
+              <tr class="${active ? '' : 'inactive-master'}" data-id="${m.id}">
+                <td class="master-table-drag-cell">
+                  ${canReorderMeatTypes ? '<span class="drag-handle" title="순서 변경" aria-label="순서 변경">≡</span>' : ''}
+                </td>
                 <td>
                   ${m.name}
                   ${active ? '' : '<span class="tag tag-inactive" style="margin-left:6px;">\uBE44\uD65C\uC131</span>'}
@@ -977,6 +984,14 @@ function showMeatTypesModal() {
       <button class="btn-secondary" onclick="closeModal()">닫기</button>
     </div>
   `);
+
+  initMeatTypeSortable();
+  const baseCloseModal = window.closeModal;
+  window.closeModal = function() {
+    destroyMeatTypeSortable();
+    baseCloseModal?.();
+    window.closeModal = baseCloseModal;
+  };
 
   document.querySelectorAll('.m-show-in-stats').forEach(cb => {
     cb.addEventListener('change', async (e) => {
@@ -1058,6 +1073,64 @@ function showMeatTypesModal() {
 }
 
 // 유틸
+
+function initMeatTypeSortable() {
+  destroyMeatTypeSortable();
+  if (currentUserRole !== 'admin' && currentUserRole !== 'office') return;
+  const el = document.getElementById('meatTypesList');
+  if (!el) return;
+  meatTypesSortable = Sortable.create(el, {
+    handle: '.drag-handle',
+    animation: 150,
+    ghostClass: 'sortable-ghost',
+    chosenClass: 'sortable-chosen',
+    onEnd: async (evt) => {
+      if (evt.oldIndex === evt.newIndex) return;
+      await persistMeatTypeOrder();
+    },
+  });
+}
+
+function destroyMeatTypeSortable() {
+  if (!meatTypesSortable) return;
+  try {
+    meatTypesSortable.destroy();
+  } catch (err) {
+    console.warn('[meat] sortable destroy skipped:', err);
+  }
+  meatTypesSortable = null;
+}
+
+async function persistMeatTypeOrder() {
+  const listEl = document.getElementById('meatTypesList');
+  if (!listEl) return;
+  const orderedIds = Array.from(listEl.querySelectorAll('tr[data-id]'))
+    .map(row => row.dataset.id)
+    .filter(Boolean);
+  const now = new Date();
+  const batch = writeBatch(db);
+
+  orderedIds.forEach((id, idx) => {
+    batch.update(doc(db, 'meatTypes', id), {
+      sortOrder: idx,
+      updatedAt: now,
+    });
+  });
+
+  try {
+    await batch.commit();
+    const orderMap = new Map(orderedIds.map((id, idx) => [id, idx]));
+    meatTypes = meatTypes
+      .map(m => orderMap.has(m.id) ? { ...m, sortOrder: orderMap.get(m.id), updatedAt: now } : m)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  } catch (err) {
+    console.error('[meat] reorder save failed:', err);
+    alert('순번 저장 실패: ' + (err.message || err));
+    meatTypes = await loadMeatTypes();
+    closeModal();
+    showMeatTypesModal();
+  }
+}
 
 function getRandomColor() {
   const colors = ['#e8f4ea', '#e8eef8', '#fef0e8', '#f0e8fe', '#fff0e8', '#e8f8f4'];
