@@ -1,6 +1,6 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc
+  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, writeBatch
 } from 'firebase/firestore';
 import { getTodayKST as getToday, addMonthsKST } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
@@ -8,6 +8,7 @@ import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
 import { recordActivity } from '../services/activityLogs.js';
+import Sortable from 'sortablejs';
 
 let frozenProducts = [];
 let selectedProductId = null;
@@ -59,6 +60,7 @@ function renderFrozenProductLayout() {
   `;
 
   bindProductListEvents();
+  initFrozenProductSortable();
   document.getElementById('btnNewProduct')?.addEventListener('click', showNewProductModal);
 }
 
@@ -67,8 +69,10 @@ function renderProductList() {
   return frozenProducts
     .map(p => {
       const active = p.active !== false;
+      const canReorder = currentUserRole === 'admin' || currentUserRole === 'office';
       return `
       <div class="recipe-list-item ${selectedProductId === p.id ? 'active' : ''} ${active ? '' : 'inactive-master'}" data-id="${p.id}">
+        ${canReorder ? '<span class="drag-handle" title="순서 변경" aria-label="순서 변경">≡</span>' : ''}
         <div class="recipe-list-info">
           <span class="recipe-name">${p.name}</span>
           <div class="recipe-tags">
@@ -87,9 +91,59 @@ function renderProductList() {
     }).join('');
 }
 
+function initFrozenProductSortable() {
+  if (currentUserRole !== 'admin' && currentUserRole !== 'office') return;
+  const el = document.getElementById('productList');
+  if (!el) return;
+  Sortable.create(el, {
+    handle: '.drag-handle',
+    animation: 150,
+    ghostClass: 'sortable-ghost',
+    chosenClass: 'sortable-chosen',
+    onEnd: async (evt) => {
+      if (evt.oldIndex === evt.newIndex) return;
+      await persistFrozenProductOrder();
+    },
+  });
+}
+
+async function persistFrozenProductOrder() {
+  const listEl = document.getElementById('productList');
+  if (!listEl) return;
+  const orderedIds = Array.from(listEl.querySelectorAll('.recipe-list-item'))
+    .map(item => item.dataset.id)
+    .filter(Boolean);
+  const now = new Date();
+  const batch = writeBatch(db);
+  orderedIds.forEach((id, idx) => {
+    batch.update(doc(db, 'frozenProducts', id), {
+      sortOrder: idx,
+      updatedAt: now,
+    });
+  });
+
+  try {
+    await batch.commit();
+    const orderMap = new Map(orderedIds.map((id, idx) => [id, idx]));
+    frozenProducts = frozenProducts
+      .map(p => orderMap.has(p.id) ? { ...p, sortOrder: orderMap.get(p.id), updatedAt: now } : p)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  } catch (err) {
+    console.error('[frozenProduct] reorder save failed:', err);
+    alert('순번 저장 실패: ' + (err.message || err));
+    frozenProducts = await loadFrozenProducts();
+    renderFrozenProductLayout();
+    if (selectedProductId) {
+      const selected = frozenProducts.find(p => p.id === selectedProductId);
+      if (selected) await showProductDetail(selected);
+    }
+  }
+}
+
 function bindProductListEvents() {
   document.querySelectorAll('.recipe-list-item').forEach(item => {
-    item.addEventListener('click', async () => {
+    item.addEventListener('click', async (e) => {
+      if (e.target.closest('.drag-handle')) return;
       selectedProductId = item.dataset.id;
       document.querySelectorAll('.recipe-list-item').forEach(i => i.classList.remove('active'));
       item.classList.add('active');
