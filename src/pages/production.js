@@ -14,6 +14,7 @@ let productions = [];
 let selectedDate = getToday();
 let selectedProductionId = null;
 const conversionHistoryCache = new Map();
+let refreshProductionFormConversion = null;
 
 const PRODUCTION_METHOD_LABELS = {
   rotary: '로터리',
@@ -75,6 +76,11 @@ function getApplicableConversion(recipe, methodKey, productionDate, history = []
     return dateCompare || b.sourceRank - a.sourceRank;
   });
   return candidates[0] || null;
+}
+
+function getCurrentProductionMethod(recipe, methodKey) {
+  return normalizeProductionMethods(recipe?.productionMethods)
+    .find(method => method.methodKey === methodKey && method.active) || null;
 }
 
 function getExpectedBox(qty, unitToBox) {
@@ -250,6 +256,7 @@ function renderProductionLayout() {
     document.getElementById('holidayBadge').innerHTML = renderHolidayBadge(selectedDate);
     document.getElementById('holidayMonthList').innerHTML = renderHolidaysOfMonth(selectedDate);
     bindCardEvents();
+    await refreshProductionFormConversion?.();
   });
 
   document.getElementById('btnNewProduction')?.addEventListener('click', () => showProductionForm(null));
@@ -446,6 +453,7 @@ async function showProductionForm(production) {
           <label>예상 박스</label>
           <span class="production-conversion-expected" id="pf_expectedBox">-</span>
         </div>
+        <div class="production-conversion-future-notice" id="pf_conversion_future_notice" style="display:none;"></div>
         <div class="production-conversion-row">
           <label for="pf_actualBox">실제 박스</label>
           <div class="production-conversion-actual">
@@ -475,6 +483,7 @@ async function showProductionForm(production) {
   const methodSelect = document.getElementById('pf_methodKey');
   const conversionBlock = document.getElementById('pf_conversion_block');
   const conversionMessage = document.getElementById('pf_conversion_message');
+  const conversionFutureNotice = document.getElementById('pf_conversion_future_notice');
   const expectedBoxEl = document.getElementById('pf_expectedBox');
   let unitBlocked = false;
   let conversionBlocked = false;
@@ -508,6 +517,7 @@ async function showProductionForm(production) {
       qtySelect.innerHTML = '<option value="">레시피 선택</option>';
       qtySelect.disabled = true;
       unitBlocked = false;
+      setConversionFutureNotice(null, null);
       updateSaveButtonState();
       return;
     }
@@ -552,6 +562,25 @@ async function showProductionForm(production) {
     conversionMessage.style.display = message ? '' : 'none';
   }
 
+  function setConversionFutureNotice(currentMethod, applied) {
+    if (!conversionFutureNotice) return;
+    const usingFallback = currentMethod
+      && currentMethod.effectiveDate
+      && currentMethod.effectiveDate > selectedDate
+      && applied
+      && applied.effectiveDate !== currentMethod.effectiveDate;
+
+    if (!usingFallback) {
+      conversionFutureNotice.textContent = '';
+      conversionFutureNotice.style.display = 'none';
+      return;
+    }
+
+    conversionFutureNotice.textContent =
+      `⚠ 이 환산값은 ${currentMethod.effectiveDate}부터 적용됩니다. 현재 생산일에는 이전 값(${Number(applied.unitToBox)})을 사용 중입니다.`;
+    conversionFutureNotice.style.display = '';
+  }
+
   async function renderProductionConversionControl(recipe) {
     conversionBlocked = false;
     updateSaveButtonState();
@@ -561,6 +590,7 @@ async function showProductionForm(production) {
     methodSelect.innerHTML = '';
     expectedBoxEl.textContent = '-';
     setConversionMessage('');
+    setConversionFutureNotice(null, null);
 
     if (recipe?.category !== 'raw') {
       updateSaveButtonState();
@@ -591,6 +621,7 @@ async function showProductionForm(production) {
   async function updateConversionCalculation(recipe) {
     if (!conversionBlock || !methodSelect || !expectedBoxEl || recipe?.category !== 'raw') {
       conversionBlocked = false;
+      setConversionFutureNotice(null, null);
       updateSaveButtonState();
       return;
     }
@@ -599,11 +630,13 @@ async function showProductionForm(production) {
     const qty = getSelectedQty();
     const history = await loadConversionHistory(recipe.id);
     const applied = getApplicableConversion(recipe, methodKey, selectedDate, history);
+    const currentMethod = getCurrentProductionMethod(recipe, methodKey);
 
     if (!applied) {
       expectedBoxEl.textContent = '-';
       conversionBlocked = true;
       setConversionMessage('선택한 생산방식의 환산값 적용 시작일이 생산일 이후입니다. 다른 방식을 선택하거나 환산값 적용일을 조정해주세요.');
+      setConversionFutureNotice(null, null);
       updateSaveButtonState();
       return;
     }
@@ -611,8 +644,13 @@ async function showProductionForm(production) {
     expectedBoxEl.textContent = qty > 0 ? `${getExpectedBox(qty, applied.unitToBox).toFixed(1)}박스` : '-';
     conversionBlocked = false;
     setConversionMessage('');
+    setConversionFutureNotice(currentMethod, applied);
     updateSaveButtonState();
   }
+
+  refreshProductionFormConversion = async () => {
+    await updateConversionCalculation(recipes.find(r => r.id === recipeSelect.value));
+  };
 
   function handleQtyModeChange() {
     qtyDirectInput.style.display = qtySelect.value === 'custom' ? '' : 'none';

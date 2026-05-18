@@ -8,6 +8,7 @@ Last updated: 2026-05-18
   - Added raw recipe `productionMethods` editing in `src/pages/recipe.js` and nested `recipes/{recipeId}/conversionHistory` writes for manual unit-to-box changes.
   - Manual conversion edits write `activityLogs` with `action: 'conversion'`, `subAction: 'manualEdit'`; office-log classification now includes `conversion`.
   - Production input now blocks raw recipes with no active conversion method, calculates `expectedBox` from the production date's applicable conversion value, accepts optional integer `actualBox`, and stores `methodKey`, `expectedBox`, `actualBox`, and `appliedUnitToBox`.
+  - Production input keeps spec_v26 date-effective fallback behavior and shows a yellow notice when the current method value starts after the production date and an older conversion value is being used.
   - Existing raw `rawBoxQty` remains unchanged and continues to represent the pack-weight based theoretical box count.
   - Firestore rules now allow the nested `recipes/{recipeId}/conversionHistory/{historyId}` subcollection.
   - Phase 2c remains out of scope: automatic suggestions, 2-step conversion modal, and stats tab 7.
