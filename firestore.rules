@@ -76,6 +76,11 @@ service cloud.firestore {
     match /recipes/{recipeId} {
       allow read: if isProductionApp();
       allow write: if isProductionWriter();
+
+      match /conversionHistory/{historyId} {
+        allow read: if isProductionApp();
+        allow write: if isProductionWriter();
+      }
     }
 
     match /productionMethods/{methodId} {

@@ -1166,6 +1166,128 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   line-height: 1.4;
 }
 
+.production-methods-row {
+  width: 100%;
+}
+
+.production-methods-group {
+  width: 100%;
+}
+
+.production-methods-table {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.production-methods-header,
+.production-method-row {
+  display: grid;
+  grid-template-columns: 120px minmax(120px, 1fr) 160px 70px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+}
+
+.production-methods-header {
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.production-method-row + .production-method-row {
+  border-top: 1px solid #f1f5f9;
+}
+
+.production-method-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.production-method-row input[type="number"],
+.production-method-row input[type="date"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.production-method-active {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.production-methods-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.production-method-add-select {
+  max-width: 140px;
+}
+
+.production-methods-hint,
+.production-methods-empty {
+  color: #888;
+  font-size: 12px;
+}
+
+.production-methods-empty {
+  padding: 12px;
+}
+
+.production-conversion-control {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fbfcfd;
+}
+
+.production-conversion-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.production-conversion-row label {
+  color: #555;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.production-conversion-expected {
+  color: #244a30;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.production-conversion-actual {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.production-conversion-actual input {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 700px) {
+  .production-methods-header,
+  .production-method-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 .list-empty {
   text-align: center;
   color: #aaa;

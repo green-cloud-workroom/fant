@@ -190,6 +190,7 @@ const OFFICE_LOG_ACTIONS = new Set([
   'schedule',
   'frozenPan',
   'closing',
+  'conversion',
 ]);
 
 function classifyClosingLog(log) {

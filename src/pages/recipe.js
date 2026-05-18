@@ -1,6 +1,6 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, getDoc, doc, updateDoc, query, orderBy, where, writeBatch
+  collection, getDocs, getDoc, doc, updateDoc, query, orderBy, where, writeBatch, serverTimestamp
 } from 'firebase/firestore';
 import { currentUser, currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
@@ -15,6 +15,12 @@ let meatTypes = [];
 // [봉투 연동] raw 카테고리에서 선택 가능한 봉투 목록
 let bagTypes = [];
 let currentUnitPresets = [];
+let currentProductionMethods = [];
+
+const PRODUCTION_METHOD_OPTIONS = [
+  { methodKey: 'rotary', label: '로터리' },
+  { methodKey: 'manual', label: '수동' },
+];
 
 async function loadMeatTypes() {
   const q = query(collection(db, 'meatTypes'), orderBy('sortOrder'));
@@ -104,6 +110,181 @@ function getRoleStaffLabel() {
   if (currentUserRole === 'office') return '사무실';
   if (currentUserRole === 'production') return '생산실';
   return '시스템';
+}
+
+function getProductionMethodLabel(methodKey) {
+  return PRODUCTION_METHOD_OPTIONS.find(m => m.methodKey === methodKey)?.label || methodKey;
+}
+
+function normalizeProductionMethods(methods) {
+  if (!Array.isArray(methods)) return [];
+  const seen = new Set();
+  return methods
+    .map(method => {
+      const methodKey = method?.methodKey;
+      if (!PRODUCTION_METHOD_OPTIONS.some(option => option.methodKey === methodKey) || seen.has(methodKey)) return null;
+      seen.add(methodKey);
+      const unitToBox = Number(method.unitToBox);
+      return {
+        methodKey,
+        label: getProductionMethodLabel(methodKey),
+        unitToBox: Number.isFinite(unitToBox) ? unitToBox : 0,
+        effectiveDate: method.effectiveDate || getToday(),
+        active: method.active !== false,
+      };
+    })
+    .filter(Boolean);
+}
+
+function renderProductionMethodsSection(category) {
+  const hiddenStyle = category === 'raw' ? '' : 'style="display:none"';
+  return `
+    <div class="form-row production-methods-row" id="productionMethodsSection" ${hiddenStyle}>
+      <div class="form-group production-methods-group">
+        <label>생산 방식별 환산값 (생식 한정)</label>
+        <div class="production-methods-table" id="productionMethodsTable">
+          ${renderProductionMethodRows()}
+        </div>
+        <div class="production-methods-actions">
+          <select id="productionMethodAddSelect" class="production-method-add-select"></select>
+          <button type="button" class="btn-secondary" id="btnAddProductionMethod">+ 방식 추가</button>
+          <span class="production-methods-hint" id="productionMethodsHint"></span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderProductionMethodRows() {
+  if (currentProductionMethods.length === 0) {
+    return '<div class="production-methods-empty">등록된 생산 방식별 환산값이 없습니다.</div>';
+  }
+  return `
+    <div class="production-methods-header">
+      <span>방식</span>
+      <span>단위 1 → 박스</span>
+      <span>적용 시작일</span>
+      <span>활성</span>
+    </div>
+    ${currentProductionMethods.map(method => `
+      <div class="production-method-row" data-method-key="${method.methodKey}">
+        <div class="production-method-label">${method.label || getProductionMethodLabel(method.methodKey)}</div>
+        <input type="number" class="production-method-unit" value="${method.unitToBox || ''}" min="0.01" step="0.01" placeholder="0.83" />
+        <input type="date" class="production-method-date" value="${method.effectiveDate || getToday()}" />
+        <label class="production-method-active">
+          <input type="checkbox" class="production-method-active-input" ${method.active !== false ? 'checked' : ''} />
+        </label>
+      </div>
+    `).join('')}
+  `;
+}
+
+function refreshProductionMethodsEditor() {
+  const table = document.getElementById('productionMethodsTable');
+  if (table) table.innerHTML = renderProductionMethodRows();
+
+  const addSelect = document.getElementById('productionMethodAddSelect');
+  const addButton = document.getElementById('btnAddProductionMethod');
+  const hint = document.getElementById('productionMethodsHint');
+  if (!addSelect || !addButton || !hint) return;
+
+  const used = new Set(currentProductionMethods.map(m => m.methodKey));
+  const unused = PRODUCTION_METHOD_OPTIONS.filter(option => !used.has(option.methodKey));
+  addSelect.innerHTML = unused.map(option => `<option value="${option.methodKey}">${option.label}</option>`).join('');
+  addSelect.disabled = unused.length === 0;
+  addButton.disabled = unused.length === 0;
+  hint.textContent = unused.length === 0 ? '더 추가할 방식이 없습니다' : '';
+}
+
+function bindProductionMethodEvents() {
+  refreshProductionMethodsEditor();
+  document.getElementById('btnAddProductionMethod')?.addEventListener('click', () => {
+    const select = document.getElementById('productionMethodAddSelect');
+    const methodKey = select?.value;
+    if (!methodKey || currentProductionMethods.some(m => m.methodKey === methodKey)) return;
+    currentProductionMethods.push({
+      methodKey,
+      label: getProductionMethodLabel(methodKey),
+      unitToBox: 0,
+      effectiveDate: getToday(),
+      active: true,
+    });
+    refreshProductionMethodsEditor();
+  });
+}
+
+function collectProductionMethods() {
+  const rows = Array.from(document.querySelectorAll('.production-method-row'));
+  const seen = new Set();
+  const methods = [];
+  for (const row of rows) {
+    const methodKey = row.dataset.methodKey;
+    if (!methodKey || seen.has(methodKey)) {
+      alert('같은 생산방식은 중복 등록할 수 없습니다.');
+      return null;
+    }
+    seen.add(methodKey);
+    const unitToBox = Number(row.querySelector('.production-method-unit')?.value);
+    const effectiveDate = row.querySelector('.production-method-date')?.value || '';
+    if (!Number.isFinite(unitToBox) || unitToBox <= 0) {
+      alert('환산값은 0보다 큰 숫자로 입력해주세요.');
+      return null;
+    }
+    if (!effectiveDate) {
+      alert('환산값 적용 시작일을 입력해주세요.');
+      return null;
+    }
+    methods.push({
+      methodKey,
+      label: getProductionMethodLabel(methodKey),
+      unitToBox,
+      effectiveDate,
+      active: row.querySelector('.production-method-active-input')?.checked !== false,
+    });
+  }
+  return methods;
+}
+
+function getProductionMethodChanges(previousMethods, nextMethods) {
+  const prevMap = new Map(normalizeProductionMethods(previousMethods).map(method => [method.methodKey, method]));
+  return nextMethods
+    .map(method => {
+      const prev = prevMap.get(method.methodKey);
+      if (!prev) {
+        return {
+          methodKey: method.methodKey,
+          from: null,
+          to: method.unitToBox,
+          effectiveDate: method.effectiveDate,
+        };
+      }
+      if (Number(prev.unitToBox) !== Number(method.unitToBox)) {
+        return {
+          methodKey: method.methodKey,
+          from: Number(prev.unitToBox),
+          to: method.unitToBox,
+          effectiveDate: method.effectiveDate,
+        };
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function addConversionHistoryToBatch(batch, recipeId, changes) {
+  changes.forEach(change => {
+    const ref = doc(collection(db, 'recipes', recipeId, 'conversionHistory'));
+    batch.set(ref, {
+      methodKey: change.methodKey,
+      unitToBox: change.to,
+      prevUnitToBox: change.from,
+      effectiveDate: change.effectiveDate,
+      reason: 'manual',
+      basedOnAvgOfRecent5: false,
+      createdAt: serverTimestamp(),
+      createdBy: currentUser?.uid || null,
+    });
+  });
 }
 
 function getSupplementBaseDoc(recipeId, recipeData, unit, unitIndex) {
@@ -280,6 +461,7 @@ function showRecipeDetail(recipe) {
   const detail = document.getElementById('recipeDetail');
   const isNew = !recipe;
   currentUnitPresets = Array.isArray(recipe?.unitPresets) ? [...recipe.unitPresets] : [];
+  currentProductionMethods = normalizeProductionMethods(recipe?.productionMethods);
 
   detail.innerHTML = `
     <div class="detail-header">
@@ -378,6 +560,7 @@ function showRecipeDetail(recipe) {
             </div>
           </div>
         </div>
+        ${renderProductionMethodsSection(recipe?.category)}
       </div>
 
       <!-- 원료 테이블 -->
@@ -415,6 +598,8 @@ function showRecipeDetail(recipe) {
     const requiresSeparation = document.getElementById('requiresSeparation')?.value === 'true';
     document.getElementById('rawFields').style.display = category === 'raw' ? '' : 'none';
     document.getElementById('freezeDryFields').style.display = category === 'freezeDry' ? '' : 'none';
+    const productionMethodsSection = document.getElementById('productionMethodsSection');
+    if (productionMethodsSection) productionMethodsSection.style.display = category === 'raw' ? '' : 'none';
     const breadPanGroup = document.getElementById('breadPanCountGroup');
     if (breadPanGroup) {
       breadPanGroup.style.display = category === 'freezeDry' && requiresSeparation ? '' : 'none';
@@ -424,6 +609,7 @@ function showRecipeDetail(recipe) {
   document.getElementById('requiresSeparation')?.addEventListener('change', updateFieldVisibility);
   updateFieldVisibility();
   bindUnitPresetEvents();
+  bindProductionMethodEvents();
 
   // 행 추가
   document.getElementById('btnAddIngredient').addEventListener('click', () => {
@@ -729,6 +915,7 @@ async function saveRecipe(id) {
   const target = document.getElementById('recipeTarget').value;
   const existingRecipe = id ? recipes.find(r => r.id === id) : null;
   const previousUnitPresets = Array.isArray(existingRecipe?.unitPresets) ? existingRecipe.unitPresets : [];
+  const previousProductionMethods = normalizeProductionMethods(existingRecipe?.productionMethods);
 
   if (!name || !category || !target) {
     alert('레시피명, 카테고리, 대상은 필수입니다.');
@@ -760,6 +947,11 @@ async function saveRecipe(id) {
       return;
     }
     data.bagTypeId = selectedBagId;
+    const productionMethods = collectProductionMethods();
+    if (productionMethods === null) return;
+    data.productionMethods = productionMethods;
+  } else {
+    data.productionMethods = [];
   }
 
   if (category === 'freezeDry') {
@@ -769,6 +961,10 @@ async function saveRecipe(id) {
     data.freezePanCountPerUnit = parseFloat(document.getElementById('freezePanCount').value) || null;
     data.requiresSeparation = requiresSeparation;
   }
+
+  const conversionChanges = category === 'raw'
+    ? getProductionMethodChanges(previousProductionMethods, data.productionMethods)
+    : [];
 
   try {
     if (id) {
@@ -792,6 +988,7 @@ async function saveRecipe(id) {
 
       const batch = writeBatch(db);
       batch.update(doc(db, 'recipes', id), data);
+      addConversionHistoryToBatch(batch, id, conversionChanges);
 
       const deleteSummaryMap = new Map((Array.isArray(deleteSummaries) ? deleteSummaries : []).map(s => [s.unit, s]));
       data.unitPresets.forEach((unit, idx) => {
@@ -837,6 +1034,7 @@ async function saveRecipe(id) {
       const ref = doc(collection(db, 'recipes'));
       const batch = writeBatch(db);
       batch.set(ref, data);
+      addConversionHistoryToBatch(batch, ref.id, conversionChanges);
       data.unitPresets.forEach((unit, idx) => {
         const supplementTypeId = makeSupplementId(ref.id, unit);
         const baseDoc = getSupplementBaseDoc(ref.id, data, unit, idx);
@@ -860,6 +1058,25 @@ async function saveRecipe(id) {
     console.error('[recipe] save failed:', err);
     alert('레시피 저장 중 오류가 발생했습니다.');
     return;
+  }
+
+  if (conversionChanges.length > 0) {
+    try {
+      await recordActivity({
+        action: 'conversion',
+        subAction: 'manualEdit',
+        date: getToday(),
+        staff: getRoleStaffLabel(),
+        message: `환산값 변경 - ${data.displayName}`,
+        details: {
+          recipeId: selectedRecipeId,
+          recipeName: data.displayName,
+          changes: conversionChanges,
+        },
+      });
+    } catch (err) {
+      console.error('[recipe] conversion activity log failed:', err);
+    }
   }
 
   recipes = await loadRecipes();

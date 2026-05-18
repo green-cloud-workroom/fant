@@ -1,8 +1,16 @@
 ﻿# Fantapet Management Codebase Notes
 
-Last updated: 2026-05-16
+Last updated: 2026-05-18
 
 ## Current Status
+
+- 2026-05-18 v26 / Phase 2b implementation:
+  - Added raw recipe `productionMethods` editing in `src/pages/recipe.js` and nested `recipes/{recipeId}/conversionHistory` writes for manual unit-to-box changes.
+  - Manual conversion edits write `activityLogs` with `action: 'conversion'`, `subAction: 'manualEdit'`; office-log classification now includes `conversion`.
+  - Production input now blocks raw recipes with no active conversion method, calculates `expectedBox` from the production date's applicable conversion value, accepts optional integer `actualBox`, and stores `methodKey`, `expectedBox`, `actualBox`, and `appliedUnitToBox`.
+  - Existing raw `rawBoxQty` remains unchanged and continues to represent the pack-weight based theoretical box count.
+  - Firestore rules now allow the nested `recipes/{recipeId}/conversionHistory/{historyId}` subcollection.
+  - Phase 2c remains out of scope: automatic suggestions, 2-step conversion modal, and stats tab 7.
 
 - 2026-05-16 v26 / Phase 2a closeout:
   - Phase 2a holiday-master code and public deploy are complete. Latest relevant commits: `875bb03` holiday data, `7287287` expiry notice, `c21b70f` holiday-aware business-day helpers, `959f9cb` holiday settings UI, `d740010` production business-day wiring, `64befa2` shipping business-day schedule adjustment, `4e01cae` production-impact holiday badge.
@@ -304,6 +312,11 @@ spec_v24:
 - Saving a recipe auto-syncs `supplementTypes/{recipeId}_{unit}` and `supplementStock/{recipeId}_{unit}`.
 - Removing a preset deletes the matching supplement SKU, stock doc, and its supplement logs after confirmation. Existing stock/history warnings are shown before delete.
 - Recipe active/inactive toggle propagates active state to supplement SKUs and writes `activityLogs` with `action: 'recipe'`, `subAction: 'activeToggle'`.
+
+v26 / Phase 2b:
+- Raw recipes can store `productionMethods: [{ methodKey, label, unitToBox, effectiveDate, active }]` for `rotary` and `manual` conversion values.
+- Manual `unitToBox` changes create `recipes/{recipeId}/conversionHistory/{historyId}` docs and write `activityLogs` as `conversion/manualEdit`.
+- Freeze-dry recipes hide the production-method conversion section.
 
 ?덉떆??愿由?
 
@@ -705,6 +718,66 @@ Notes:
 - Existing docs may have no field; code reads missing/non-array as `[]`.
 - Production save is blocked when the selected recipe has no presets.
 - Each preset creates one supplement SKU with deterministic id `${recipeId}_${unit}`.
+
+### `recipes.productionMethods`
+
+New in v26 / Phase 2b. Raw recipes only.
+
+```js
+productionMethods: [
+  {
+    methodKey: 'rotary' | 'manual',
+    label: string,
+    unitToBox: number,
+    effectiveDate: string, // YYYY-MM-DD
+    active: boolean,
+  }
+]
+```
+
+Notes:
+- Existing docs may have no field; code reads missing/non-array as `[]`.
+- Production save for raw recipes is blocked when there is no active method.
+- Freeze-dry recipes hide the conversion UI.
+
+### `recipes/{recipeId}/conversionHistory/{auto-id}`
+
+New in v26 / Phase 2b. Manual conversion change history.
+
+```js
+{
+  methodKey: 'rotary' | 'manual',
+  unitToBox: number,
+  prevUnitToBox: number | null,
+  effectiveDate: string,
+  reason: 'manual' | 'autoSuggested',
+  basedOnAvgOfRecent5: boolean,
+  createdAt: Timestamp,
+  createdBy: string | null,
+}
+```
+
+Notes:
+- Phase 2b only writes `reason: 'manual'` and `basedOnAvgOfRecent5: false`.
+- Production input combines current `productionMethods` with history and applies the latest `effectiveDate <= productionDate`.
+- Firestore rules include this nested subcollection under `recipes/{recipeId}`.
+
+### `productions` conversion snapshot fields
+
+New in v26 / Phase 2b for raw productions.
+
+```js
+methodKey: 'rotary' | 'manual',
+expectedBox: number,
+actualBox: number | null,
+appliedUnitToBox: number,
+```
+
+Notes:
+- `expectedBox` is cached at save time with one decimal of precision.
+- `actualBox` is optional but must be an integer when entered.
+- `appliedUnitToBox` snapshots the conversion value so later recipe changes do not recalculate existing production cards.
+- `rawBoxQty` remains in place as the pack-weight based theoretical box count.
 
 ### `supplementTypes/{recipeId_unit}`
 

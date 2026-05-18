@@ -13,6 +13,12 @@ let recipes = [];
 let productions = [];
 let selectedDate = getToday();
 let selectedProductionId = null;
+const conversionHistoryCache = new Map();
+
+const PRODUCTION_METHOD_LABELS = {
+  rotary: '로터리',
+  manual: '수동',
+};
 
 function isTenderFreezeDry(item) {
   return item?.category === 'freezeDry' && item.requiresSeparation === false;
@@ -27,6 +33,52 @@ function renderFreezeDryQtyLine(item) {
 
 function getUnitPresets(recipe) {
   return Array.isArray(recipe?.unitPresets) ? recipe.unitPresets : [];
+}
+
+function normalizeProductionMethods(methods) {
+  if (!Array.isArray(methods)) return [];
+  return methods
+    .map(method => {
+      const methodKey = method?.methodKey;
+      const unitToBox = Number(method?.unitToBox);
+      if (!methodKey || !Number.isFinite(unitToBox)) return null;
+      return {
+        methodKey,
+        label: method.label || PRODUCTION_METHOD_LABELS[methodKey] || methodKey,
+        unitToBox,
+        effectiveDate: method.effectiveDate || '',
+        active: method.active !== false,
+      };
+    })
+    .filter(Boolean);
+}
+
+async function loadConversionHistory(recipeId) {
+  if (!recipeId) return [];
+  if (conversionHistoryCache.has(recipeId)) return conversionHistoryCache.get(recipeId);
+  const snap = await getDocs(collection(db, 'recipes', recipeId, 'conversionHistory'));
+  const history = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  conversionHistoryCache.set(recipeId, history);
+  return history;
+}
+
+function getApplicableConversion(recipe, methodKey, productionDate, history = []) {
+  const candidates = [];
+  normalizeProductionMethods(recipe?.productionMethods)
+    .filter(method => method.methodKey === methodKey && method.active && method.effectiveDate && method.effectiveDate <= productionDate)
+    .forEach(method => candidates.push({ unitToBox: method.unitToBox, effectiveDate: method.effectiveDate, sourceRank: 1 }));
+  history
+    .filter(item => item.methodKey === methodKey && item.effectiveDate && item.effectiveDate <= productionDate && Number.isFinite(Number(item.unitToBox)))
+    .forEach(item => candidates.push({ unitToBox: Number(item.unitToBox), effectiveDate: item.effectiveDate, sourceRank: 0 }));
+  candidates.sort((a, b) => {
+    const dateCompare = b.effectiveDate.localeCompare(a.effectiveDate);
+    return dateCompare || b.sourceRank - a.sourceRank;
+  });
+  return candidates[0] || null;
+}
+
+function getExpectedBox(qty, unitToBox) {
+  return Math.round(qty * unitToBox * 10) / 10;
 }
 
 function getSupplementSaveErrorMessage(code, supplementName) {
@@ -345,7 +397,7 @@ function bindCardEvents() {
   });
 }
 
-function showProductionForm(production) {
+async function showProductionForm(production) {
   const isNew = !production;
   const canManageProduction = currentUserRole === 'admin' || currentUserRole === 'office';
   const form = document.getElementById('productionForm');
@@ -385,6 +437,24 @@ function showProductionForm(production) {
         </div>
         <div class="production-unit-message" id="pf_qty_message" style="display:none;"></div>
       </div>
+      <div class="production-conversion-control" id="pf_conversion_block" style="display:none;">
+        <div class="production-conversion-row">
+          <label for="pf_methodKey">생산방식</label>
+          <select id="pf_methodKey"></select>
+        </div>
+        <div class="production-conversion-row">
+          <label>예상 박스</label>
+          <span class="production-conversion-expected" id="pf_expectedBox">-</span>
+        </div>
+        <div class="production-conversion-row">
+          <label for="pf_actualBox">실제 박스</label>
+          <div class="production-conversion-actual">
+            <input type="number" id="pf_actualBox" min="0" step="1" value="${production?.actualBox ?? ''}" placeholder="선택 입력" />
+            <span>박스</span>
+          </div>
+        </div>
+        <div class="production-unit-message" id="pf_conversion_message" style="display:none;"></div>
+      </div>
 
       <!-- 원료 목록 -->
       <div id="pf_ingredients" style="margin-bottom:12px;max-height:200px;overflow-y:auto;font-size:12px;"></div>
@@ -402,6 +472,16 @@ function showProductionForm(production) {
   const qtyDirectInput = document.getElementById('pf_qty_direct');
   const qtyMessage = document.getElementById('pf_qty_message');
   const saveButton = document.getElementById('btnSaveProduction');
+  const methodSelect = document.getElementById('pf_methodKey');
+  const conversionBlock = document.getElementById('pf_conversion_block');
+  const conversionMessage = document.getElementById('pf_conversion_message');
+  const expectedBoxEl = document.getElementById('pf_expectedBox');
+  let unitBlocked = false;
+  let conversionBlocked = false;
+
+  function updateSaveButtonState() {
+    if (saveButton) saveButton.disabled = unitBlocked || conversionBlocked;
+  }
 
   function getSelectedQty() {
     if (!qtySelect || qtySelect.disabled) return 0;
@@ -427,7 +507,8 @@ function showProductionForm(production) {
     if (!recipe) {
       qtySelect.innerHTML = '<option value="">레시피 선택</option>';
       qtySelect.disabled = true;
-      if (saveButton) saveButton.disabled = false;
+      unitBlocked = false;
+      updateSaveButtonState();
       return;
     }
 
@@ -436,14 +517,16 @@ function showProductionForm(production) {
       qtySelect.disabled = true;
       qtyMessage.textContent = '⚠ 레시피 관리에서 생산단위 프리셋을 먼저 설정해주세요.';
       qtyMessage.style.display = '';
-      if (saveButton) saveButton.disabled = true;
+      unitBlocked = true;
+      updateSaveButtonState();
       return;
     }
 
     const options = presets.map(unit => `<option value="${unit}">${unit}</option>`).join('');
     qtySelect.innerHTML = `${options}<option value="custom">직접 입력...</option>`;
     qtySelect.disabled = false;
-    if (saveButton) saveButton.disabled = false;
+    unitBlocked = false;
+    updateSaveButtonState();
 
     if (allowLegacyEdit && !presets.includes(Number(currentQty))) {
       qtySelect.value = 'custom';
@@ -463,12 +546,81 @@ function showProductionForm(production) {
     }
   }
 
+  function setConversionMessage(message) {
+    if (!conversionMessage) return;
+    conversionMessage.textContent = message || '';
+    conversionMessage.style.display = message ? '' : 'none';
+  }
+
+  async function renderProductionConversionControl(recipe) {
+    conversionBlocked = false;
+    updateSaveButtonState();
+    if (!conversionBlock || !methodSelect || !expectedBoxEl) return;
+
+    conversionBlock.style.display = 'none';
+    methodSelect.innerHTML = '';
+    expectedBoxEl.textContent = '-';
+    setConversionMessage('');
+
+    if (recipe?.category !== 'raw') {
+      updateSaveButtonState();
+      return;
+    }
+
+    conversionBlock.style.display = '';
+    const activeMethods = normalizeProductionMethods(recipe.productionMethods).filter(method => method.active);
+    if (activeMethods.length === 0) {
+      conversionBlocked = true;
+      setConversionMessage('레시피 관리에서 생산 방식별 환산값을 먼저 등록해주세요.');
+      updateSaveButtonState();
+      return;
+    }
+
+    conversionBlocked = true;
+    methodSelect.innerHTML = activeMethods
+      .map(method => `<option value="${method.methodKey}">${method.label}</option>`)
+      .join('');
+    const currentMethodKey = production?.methodKey;
+    methodSelect.value = activeMethods.some(method => method.methodKey === currentMethodKey)
+      ? currentMethodKey
+      : activeMethods[0].methodKey;
+    updateSaveButtonState();
+    await updateConversionCalculation(recipe);
+  }
+
+  async function updateConversionCalculation(recipe) {
+    if (!conversionBlock || !methodSelect || !expectedBoxEl || recipe?.category !== 'raw') {
+      conversionBlocked = false;
+      updateSaveButtonState();
+      return;
+    }
+
+    const methodKey = methodSelect.value;
+    const qty = getSelectedQty();
+    const history = await loadConversionHistory(recipe.id);
+    const applied = getApplicableConversion(recipe, methodKey, selectedDate, history);
+
+    if (!applied) {
+      expectedBoxEl.textContent = '-';
+      conversionBlocked = true;
+      setConversionMessage('선택한 생산방식의 환산값 적용 시작일이 생산일 이후입니다. 다른 방식을 선택하거나 환산값 적용일을 조정해주세요.');
+      updateSaveButtonState();
+      return;
+    }
+
+    expectedBoxEl.textContent = qty > 0 ? `${getExpectedBox(qty, applied.unitToBox).toFixed(1)}박스` : '-';
+    conversionBlocked = false;
+    setConversionMessage('');
+    updateSaveButtonState();
+  }
+
   function handleQtyModeChange() {
     qtyDirectInput.style.display = qtySelect.value === 'custom' ? '' : 'none';
     if (qtySelect.value !== 'custom') {
       qtyDirectInput.value = '';
     }
     updateIngredients();
+    updateConversionCalculation(recipes.find(r => r.id === recipeSelect.value));
   }
 
   function updateIngredients() {
@@ -513,15 +665,23 @@ const ingHtml = (recipe.ingredients || []).map(ing => {
     document.getElementById('pf_refs').textContent = refs;
   }
 
-  recipeSelect.addEventListener('change', () => {
+  recipeSelect.addEventListener('change', async () => {
     const recipe = recipes.find(r => r.id === recipeSelect.value);
     renderProductionUnitControl(recipe);
+    await renderProductionConversionControl(recipe);
     updateIngredients();
   });
   qtySelect.addEventListener('change', handleQtyModeChange);
-  qtyDirectInput.addEventListener('input', updateIngredients);
+  qtyDirectInput.addEventListener('input', () => {
+    updateIngredients();
+    updateConversionCalculation(recipes.find(r => r.id === recipeSelect.value));
+  });
+  methodSelect?.addEventListener('change', () => {
+    updateConversionCalculation(recipes.find(r => r.id === recipeSelect.value));
+  });
 
   renderProductionUnitControl(recipes.find(r => r.id === recipeSelect.value));
+  await renderProductionConversionControl(recipes.find(r => r.id === recipeSelect.value));
   updateIngredients();
 
   document.getElementById('btnSaveProduction')?.addEventListener('click', async () => {
@@ -546,6 +706,34 @@ const ingHtml = (recipe.ingredients || []).map(ing => {
     }
     if (!qty || qty <= 0) { alert('레시피와 생산단위는 필수입니다.'); return; }
     if (await blockIfClosed(selectedDate)) return;
+
+    let conversionPayload = null;
+    if (recipe.category === 'raw') {
+      const activeMethods = normalizeProductionMethods(recipe.productionMethods).filter(method => method.active);
+      if (activeMethods.length === 0) {
+        alert('레시피 관리에서 생산 방식별 환산값을 먼저 등록해주세요.');
+        return;
+      }
+      const methodKey = methodSelect?.value || activeMethods[0].methodKey;
+      const history = await loadConversionHistory(recipe.id);
+      const applied = getApplicableConversion(recipe, methodKey, selectedDate, history);
+      if (!applied) {
+        alert('선택한 생산방식의 환산값 적용 시작일이 생산일 이후입니다. 다른 방식을 선택하거나 환산값 적용일을 조정해주세요.');
+        return;
+      }
+      const actualBoxRaw = document.getElementById('pf_actualBox')?.value.trim() || '';
+      const actualBox = actualBoxRaw === '' ? null : Number(actualBoxRaw);
+      if (actualBox !== null && (!Number.isInteger(actualBox) || actualBox < 0)) {
+        alert('실제 박스는 0 이상의 정수로 입력해주세요.');
+        return;
+      }
+      conversionPayload = {
+        methodKey,
+        appliedUnitToBox: applied.unitToBox,
+        expectedBox: getExpectedBox(qty, applied.unitToBox),
+        actualBox,
+      };
+    }
 
     const unitName = recipe.ingredients?.find(i => i.isProductionUnit)?.unitName || '';
     const displayName = getRecipeDisplayName(recipe);
@@ -597,6 +785,12 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
     if (recipe.category === 'raw' && recipe.packWeightG) {
       const totalG = (recipe.ingredients?.find(i => i.isProductionUnit)?.baseWeightG || 0) * qty;
       data.rawBoxQty = Math.ceil(totalG / recipe.packWeightG / 20);
+    }
+    if (recipe.category === 'raw' && conversionPayload) {
+      data.methodKey = conversionPayload.methodKey;
+      data.expectedBox = conversionPayload.expectedBox;
+      data.actualBox = conversionPayload.actualBox;
+      data.appliedUnitToBox = conversionPayload.appliedUnitToBox;
     }
     if (recipe.category === 'freezeDry') {
       data.freezeDryBagQty = (recipe.freezeDryBagCountPerUnit || 0) * qty;
