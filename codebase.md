@@ -14,6 +14,10 @@ Last updated: 2026-05-18
   - Firestore rules now allow the nested `recipes/{recipeId}/conversionHistory/{historyId}` subcollection.
   - Phase 2c remains out of scope: automatic suggestions, 2-step conversion modal, and stats tab 7.
 
+- 2026-05-18 v26 / 4th bundle reorder work:
+  - E-2 bagTypes reorder is complete with SortableJS drag handles, admin/office-only handles, raw/freezeDry boundary protection, and global continuous sortOrder (`raw 0...`, `freezeDry` after raw).
+  - E-3/E-4/E-5 added the same reorder pattern for frozenProducts, meatTypes, and recipes. Recipe reorder splits raw/freezeDry sections and updates existing supplementTypes sortOrder from the new recipe order.
+
 - 2026-05-16 v26 / Phase 2a closeout:
   - Phase 2a holiday-master code and public deploy are complete. Latest relevant commits: `875bb03` holiday data, `7287287` expiry notice, `c21b70f` holiday-aware business-day helpers, `959f9cb` holiday settings UI, `d740010` production business-day wiring, `64befa2` shipping business-day schedule adjustment, `4e01cae` production-impact holiday badge.
   - Firestore Rules + Custom Claims work is complete (`9ee0517`, `9c8c7d8`). Three accounts have custom claims: `alice@fantapet.com` admin, `admin@fantapet.com` office, `qc@fantapet.com` production; all include `app: ['inventory', 'production']`.

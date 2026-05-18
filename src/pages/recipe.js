@@ -7,6 +7,7 @@ import { recordActivity } from '../services/activityLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { makeSupplementId, makeSupplementName, makeSupplementSortOrder } from '../utils/supplement.js';
 import { showConfirmModal } from '../utils/modal.js';
+import Sortable from 'sortablejs';
 
 let recipes = [];
 let selectedRecipeId = null;
@@ -73,14 +74,15 @@ function renderRecipeLayout() {
   `;
 
   bindRecipeListEvents();
+  initRecipeSortables();
   document.getElementById('btnNewRecipe').addEventListener('click', showNewRecipeForm);
 }
 
-function renderRecipeList() {
-  if (recipes.length === 0) return '<div class="list-empty">등록된 레시피 없음</div>';
-  
-  return recipes.map(r => `
+function renderRecipeListItem(r) {
+  const canReorder = currentUserRole === 'admin' || currentUserRole === 'office';
+  return `
     <div class="recipe-list-item ${selectedRecipeId === r.id ? 'active' : ''}" data-id="${r.id}" style="border-left-color: ${r.color || '#4A7C59'}">
+      ${canReorder ? '<span class="drag-handle" title="순서 변경" aria-label="순서 변경">≡</span>' : ''}
       <div class="recipe-list-info">
         <span class="recipe-name">${getDisplayName(r)}</span>
         <div class="recipe-tags">
@@ -93,7 +95,24 @@ function renderRecipeList() {
         <span class="toggle-slider"></span>
       </label>
     </div>
-  `).join('');
+  `;
+}
+
+function renderRecipeList() {
+  if (recipes.length === 0) return '<div class="list-empty">등록된 레시피 없음</div>';
+
+  const raw = recipes.filter(r => r.category === 'raw');
+  const freezeDry = recipes.filter(r => r.category === 'freezeDry');
+  let html = '';
+  if (raw.length > 0) {
+    html += `<div class="list-group-label">생식</div>`;
+    html += `<div class="sortable-master-list" id="recipeListRaw" data-category="raw">${raw.map(r => renderRecipeListItem(r)).join('')}</div>`;
+  }
+  if (freezeDry.length > 0) {
+    html += `<div class="list-group-label">동결건조</div>`;
+    html += `<div class="sortable-master-list" id="recipeListFreezeDry" data-category="freezeDry">${freezeDry.map(r => renderRecipeListItem(r)).join('')}</div>`;
+  }
+  return html;
 }
 
 function getDisplayName(r) {
@@ -394,6 +413,7 @@ function bindRecipeListEvents() {
   document.querySelectorAll('.recipe-list-item').forEach(item => {
     item.addEventListener('click', (e) => {
       if (e.target.closest('.toggle-switch')) return;
+      if (e.target.closest('.drag-handle')) return;
       const id = item.dataset.id;
       selectedRecipeId = id;
       const recipe = recipes.find(r => r.id === id);
@@ -449,6 +469,96 @@ function bindRecipeListEvents() {
       }
     });
   });
+}
+
+function initRecipeSortables() {
+  if (currentUserRole !== 'admin' && currentUserRole !== 'office') return;
+
+  [
+    ['recipeListRaw', 'raw'],
+    ['recipeListFreezeDry', 'freezeDry'],
+  ].forEach(([elementId, category]) => {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    Sortable.create(el, {
+      handle: '.drag-handle',
+      animation: 150,
+      ghostClass: 'sortable-ghost',
+      chosenClass: 'sortable-chosen',
+      onEnd: async (evt) => {
+        if (evt.oldIndex === evt.newIndex) return;
+        await persistRecipeOrder(category);
+      },
+    });
+  });
+}
+
+async function persistRecipeOrder(category) {
+  const rawItems = Array.from(document.getElementById('recipeListRaw')?.querySelectorAll('.recipe-list-item') || []);
+  const freezeDryItems = Array.from(document.getElementById('recipeListFreezeDry')?.querySelectorAll('.recipe-list-item') || []);
+  const ordered = [
+    ...rawItems.map((item, idx) => ({ id: item.dataset.id, sortOrder: idx })),
+    ...freezeDryItems.map((item, idx) => ({ id: item.dataset.id, sortOrder: rawItems.length + idx })),
+  ].filter(item => item.id);
+  if (ordered.length === 0) return;
+  if (ordered.length > 450) {
+    alert('순번 저장 항목이 너무 많습니다. 관리자에게 문의해주세요.');
+    return;
+  }
+
+  const now = new Date();
+  const batch = writeBatch(db);
+  const sortMap = new Map(ordered.map(item => [item.id, item.sortOrder]));
+  const affectedRecipes = recipes.filter(recipe => sortMap.has(recipe.id));
+  const supplementSnapshots = await Promise.all(affectedRecipes.map(async recipe => ({
+    recipe,
+    snap: await getDocs(query(collection(db, 'supplementTypes'), where('recipeId', '==', recipe.id))),
+  })));
+  let opCount = 0;
+
+  ordered.forEach(({ id, sortOrder }) => {
+    batch.update(doc(db, 'recipes', id), {
+      sortOrder,
+      updatedAt: now,
+    });
+    opCount += 1;
+  });
+
+  supplementSnapshots.forEach(({ recipe, snap }) => {
+    const sortOrder = sortMap.get(recipe.id);
+    const unitPresets = Array.isArray(recipe.unitPresets) ? recipe.unitPresets : [];
+    snap.docs.forEach(skuDoc => {
+      const unitIndex = unitPresets.indexOf(skuDoc.data().unit);
+      if (unitIndex < 0) return;
+      batch.update(doc(db, 'supplementTypes', skuDoc.id), {
+        sortOrder: makeSupplementSortOrder(sortOrder, unitIndex),
+        updatedAt: now,
+        updatedBy: currentUser?.uid || null,
+      });
+      opCount += 1;
+    });
+  });
+
+  if (opCount > 500) {
+    alert('순번 저장 항목이 너무 많습니다. 관리자에게 문의해주세요.');
+    return;
+  }
+
+  try {
+    await batch.commit();
+    recipes = recipes
+      .map(recipe => sortMap.has(recipe.id) ? { ...recipe, sortOrder: sortMap.get(recipe.id), updatedAt: now } : recipe)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  } catch (err) {
+    console.error('[recipe] reorder save failed:', err);
+    alert('순번 저장 실패: ' + (err.message || err));
+    recipes = await loadRecipes();
+    renderRecipeLayout();
+    if (selectedRecipeId) {
+      const selected = recipes.find(r => r.id === selectedRecipeId);
+      if (selected) showRecipeDetail(selected);
+    }
+  }
 }
 
 function showNewRecipeForm() {
