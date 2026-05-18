@@ -466,6 +466,7 @@
 }
 
 .recipe-list-item {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -496,6 +497,36 @@
 
 .recipe-list-info {
   flex: 1;
+  min-width: 0;
+}
+
+.sortable-master-list {
+  min-height: 4px;
+}
+
+.drag-handle {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  padding: 0 10px 0 0;
+  color: #999;
+  font-size: 18px;
+  line-height: 1;
+  cursor: grab;
+  user-select: none;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.sortable-ghost {
+  opacity: 0.4;
+  background: #f0f9ff;
+}
+
+.sortable-chosen {
+  background: #e0f2fe;
 }
 
 .recipe-name {

@@ -7,6 +7,7 @@ import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { showConfirmModal } from '../utils/modal.js';
+import Sortable from 'sortablejs';
 
 let bagTypes = [];
 
@@ -52,6 +53,7 @@ function renderBagLayout() {
   `;
 
   bindBagListEvents();
+  initBagSortables();
   document.getElementById('btnNewBag')?.addEventListener('click', showNewBagModal);
 }
 
@@ -64,11 +66,11 @@ function renderBagList() {
   let html = '';
   if (raw.length > 0) {
     html += `<div class="list-group-label">생식</div>`;
-    html += raw.map(b => renderBagItem(b)).join('');
+    html += `<div class="sortable-master-list" id="bagListRaw" data-category="raw">${raw.map(b => renderBagItem(b)).join('')}</div>`;
   }
   if (freeze.length > 0) {
     html += `<div class="list-group-label">동결건조</div>`;
-    html += freeze.map(b => renderBagItem(b)).join('');
+    html += `<div class="sortable-master-list" id="bagListFreezeDry" data-category="freezeDry">${freeze.map(b => renderBagItem(b)).join('')}</div>`;
   }
   return html;
 }
@@ -76,8 +78,10 @@ function renderBagList() {
 function renderBagItem(b) {
   const isLow = b.currentQty < (b.minimumQty || 0);
   const inactive = b.active === false;
+  const canReorder = currentUserRole === 'admin' || currentUserRole === 'office';
   return `
     <div class="recipe-list-item ${selectedBagId === b.id ? 'active' : ''} ${inactive ? 'inactive-master' : ''}" data-id="${b.id}">
+      ${canReorder ? '<span class="drag-handle" title="순서 변경" aria-label="순서 변경">≡</span>' : ''}
       <div class="recipe-list-info">
         <span class="recipe-name" style="color:${inactive ? '#999' : isLow ? '#e53e3e' : '#1a1a1a'}">${b.name}</span>
         <div class="recipe-tags">
@@ -98,9 +102,69 @@ function renderBagItem(b) {
   `;
 }
 
+function initBagSortables() {
+  if (currentUserRole !== 'admin' && currentUserRole !== 'office') return;
+
+  [
+    ['bagListRaw', 'raw'],
+    ['bagListFreezeDry', 'freezeDry'],
+  ].forEach(([elementId, category]) => {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    Sortable.create(el, {
+      handle: '.drag-handle',
+      animation: 150,
+      ghostClass: 'sortable-ghost',
+      chosenClass: 'sortable-chosen',
+      onEnd: async (evt) => {
+        if (evt.oldIndex === evt.newIndex) return;
+        await persistBagOrder(category);
+      },
+    });
+  });
+}
+
+async function persistBagOrder(category) {
+  const listEl = document.getElementById(category === 'raw' ? 'bagListRaw' : 'bagListFreezeDry');
+  if (!listEl) return;
+
+  const orderedIds = Array.from(listEl.querySelectorAll('.recipe-list-item'))
+    .map(item => item.dataset.id)
+    .filter(Boolean);
+  const rawCount = bagTypes.filter(b => b.category === 'raw').length;
+  const offset = category === 'freezeDry' ? rawCount : 0;
+  const now = new Date();
+  const batch = writeBatch(db);
+
+  orderedIds.forEach((id, idx) => {
+    batch.update(doc(db, 'bagTypes', id), {
+      sortOrder: offset + idx,
+      updatedAt: now,
+    });
+  });
+
+  try {
+    await batch.commit();
+    const orderMap = new Map(orderedIds.map((id, idx) => [id, offset + idx]));
+    bagTypes = bagTypes
+      .map(b => orderMap.has(b.id) ? { ...b, sortOrder: orderMap.get(b.id), updatedAt: now } : b)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  } catch (err) {
+    console.error('[bag] reorder save failed:', err);
+    alert('순번 저장 실패: ' + (err.message || err));
+    bagTypes = await loadBagTypes();
+    renderBagLayout();
+    if (selectedBagId) {
+      const selected = bagTypes.find(b => b.id === selectedBagId);
+      if (selected) await showBagDetail(selected);
+    }
+  }
+}
+
 function bindBagListEvents() {
   document.querySelectorAll('.recipe-list-item').forEach(item => {
-    item.addEventListener('click', () => {
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('.drag-handle')) return;
       selectedBagId = item.dataset.id;
       const bag = bagTypes.find(b => b.id === selectedBagId);
       showBagDetail(bag);
