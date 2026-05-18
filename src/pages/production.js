@@ -8,6 +8,7 @@ import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUser, currentUserRole } from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
 import { makeSupplementId } from '../utils/supplement.js';
+import Sortable from 'sortablejs';
 
 let recipes = [];
 let productions = [];
@@ -15,6 +16,7 @@ let selectedDate = getToday();
 let selectedProductionId = null;
 const conversionHistoryCache = new Map();
 let refreshProductionFormConversion = null;
+let productionCardsSortable = null;
 
 const PRODUCTION_METHOD_LABELS = {
   rotary: '로터리',
@@ -259,10 +261,9 @@ function renderProductionLayout() {
   document.getElementById('productionDate').addEventListener('change', async (e) => {
     selectedDate = e.target.value;
     productions = await loadProductions(selectedDate);
-    document.getElementById('productionCards').innerHTML = renderProductionCards();
+    refreshProductionCardsView();
     document.getElementById('holidayBadge').innerHTML = renderHolidayBadge(selectedDate);
     document.getElementById('holidayMonthList').innerHTML = renderHolidaysOfMonth(selectedDate);
-    bindCardEvents();
     await refreshProductionFormConversion?.();
   });
 
@@ -271,6 +272,7 @@ function renderProductionLayout() {
   document.getElementById('btnBigView').addEventListener('click', showBigViewModal);
 
   bindCardEvents();
+  initProductionCardsSortable();
 }
 // [Phase 7B-2] 휴일 배지 렌더 (read-only)
 // 선택한 날짜가 holidays 캐시에 있으면 휴일명 배지 표시. 토/일은 자동 처리되므로 별도 표시 안 함.
@@ -321,6 +323,7 @@ function renderProductionCards() {
     <div class="production-card ${selectedProductionId === p.id ? 'active' : ''}"
          data-id="${p.id}"
          style="border-left:4px solid ${p.color || '#4A7C59'}">
+      ${canManageProduction ? '<span class="drag-handle production-card-drag-handle">≡</span>' : ''}
       <div class="card-title">${p.recipeName}${getRoundBadgeHtml(p)}</div>
       <div class="card-info">${p.productionUnitQty} ${p.productionUnitName}</div>
       ${p.category === 'raw' ? `<div class="card-sub">${p.rawBoxQty || 0}박스</div>` : ''}
@@ -330,10 +333,19 @@ function renderProductionCards() {
   `).join('');
 }
 
+function refreshProductionCardsView() {
+  const cardsEl = document.getElementById('productionCards');
+  if (!cardsEl) return;
+  cardsEl.innerHTML = renderProductionCards();
+  bindCardEvents();
+  initProductionCardsSortable();
+}
+
 function bindCardEvents() {
   document.querySelectorAll('.production-card').forEach(card => {
     card.addEventListener('click', (e) => {
       if (e.target.classList.contains('card-del')) return;
+      if (e.target.closest('.drag-handle')) return;
       selectedProductionId = card.dataset.id;
       const p = productions.find(pr => pr.id === selectedProductionId);
       showProductionForm(p);
@@ -401,14 +413,71 @@ function bindCardEvents() {
       });
       // [묶음 4A] 삭제 후 회차/차수 재정렬
       await applyRoundsAndBatches(selectedDate);
-      document.getElementById('productionCards').innerHTML = renderProductionCards();
-      bindCardEvents();
+      refreshProductionCardsView();
       if (selectedProductionId === deletedId) {
         selectedProductionId = null;
         document.getElementById('productionForm').innerHTML = `<div style="color:#aaa;font-size:12px;text-align:center;padding:20px;">카드를 선택하거나 아래에서 새 생산을 추가하세요</div>`;
       }
     });
   });
+}
+
+function initProductionCardsSortable() {
+  if (productionCardsSortable) {
+    productionCardsSortable.destroy();
+    productionCardsSortable = null;
+  }
+  if (currentUserRole !== 'admin' && currentUserRole !== 'office') return;
+
+  const containerEl = document.getElementById('productionCards');
+  if (!containerEl) return;
+  if (containerEl.querySelectorAll('.production-card').length < 2) return;
+
+  productionCardsSortable = Sortable.create(containerEl, {
+    handle: '.drag-handle',
+    animation: 150,
+    ghostClass: 'sortable-ghost',
+    chosenClass: 'sortable-chosen',
+    onEnd: async (evt) => {
+      if (evt.oldIndex === evt.newIndex) return;
+      await persistProductionCardOrder();
+    },
+  });
+}
+
+async function persistProductionCardOrder() {
+  const containerEl = document.getElementById('productionCards');
+  if (!containerEl) return;
+
+  const items = Array.from(containerEl.querySelectorAll('.production-card'));
+  const currentSortOrders = items
+    .map(item => productions.find(p => p.id === item.dataset.id)?.sortOrder)
+    .filter(v => v !== undefined && v !== null)
+    .sort((a, b) => a - b);
+
+  if (items.length !== currentSortOrders.length) {
+    refreshProductionCardsView();
+    return;
+  }
+
+  const batch = writeBatch(db);
+  items.forEach((item, idx) => {
+    batch.update(doc(db, 'productions', item.dataset.id), {
+      sortOrder: currentSortOrders[idx],
+      updatedAt: serverTimestamp(),
+    });
+  });
+
+  try {
+    await batch.commit();
+    await applyRoundsAndBatches(selectedDate);
+    refreshProductionCardsView();
+  } catch (err) {
+    console.error('[production] card reorder failed:', err);
+    alert('카드 순서 저장 실패: ' + err.message);
+    productions = await loadProductions(selectedDate);
+    refreshProductionCardsView();
+  }
 }
 
 async function showProductionForm(production) {
@@ -1014,8 +1083,7 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
     // [묶음 4A] 저장 후 같은 날 productions의 round/batchNo 일괄 재계산
     // 수량 수정으로 동일 수량 묶음이 새로 생기거나 깨지는 경우도 자동 반영
     await applyRoundsAndBatches(selectedDate);
-    document.getElementById('productionCards').innerHTML = renderProductionCards();
-    bindCardEvents();
+    refreshProductionCardsView();
     alert(isNew ? '저장 완료!' : '수정 완료!');
   });
 }
