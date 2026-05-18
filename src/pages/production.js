@@ -67,13 +67,20 @@ function getApplicableConversion(recipe, methodKey, productionDate, history = []
   const candidates = [];
   normalizeProductionMethods(recipe?.productionMethods)
     .filter(method => method.methodKey === methodKey && method.active && method.effectiveDate && method.effectiveDate <= productionDate)
-    .forEach(method => candidates.push({ unitToBox: method.unitToBox, effectiveDate: method.effectiveDate, sourceRank: 1 }));
+    .forEach(method => candidates.push({ unitToBox: method.unitToBox, effectiveDate: method.effectiveDate, sourceRank: 1, createdAtMs: Number.MAX_SAFE_INTEGER }));
   history
     .filter(item => item.methodKey === methodKey && item.effectiveDate && item.effectiveDate <= productionDate && Number.isFinite(Number(item.unitToBox)))
-    .forEach(item => candidates.push({ unitToBox: Number(item.unitToBox), effectiveDate: item.effectiveDate, sourceRank: 0 }));
+    .forEach(item => candidates.push({
+      unitToBox: Number(item.unitToBox),
+      effectiveDate: item.effectiveDate,
+      sourceRank: 0,
+      createdAtMs: typeof item.createdAt?.toMillis === 'function'
+        ? item.createdAt.toMillis()
+        : Date.parse(item.createdAt || '') || 0,
+    }));
   candidates.sort((a, b) => {
     const dateCompare = b.effectiveDate.localeCompare(a.effectiveDate);
-    return dateCompare || b.sourceRank - a.sourceRank;
+    return dateCompare || b.sourceRank - a.sourceRank || b.createdAtMs - a.createdAtMs;
   });
   return candidates[0] || null;
 }
