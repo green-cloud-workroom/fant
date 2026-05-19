@@ -1,8 +1,17 @@
 ﻿# Fantapet Management Codebase Notes
 
-Last updated: 2026-05-18
+Last updated: 2026-05-19
 
 ## Current Status
+
+- 2026-05-19 v28 / Phase 1 code closeout:
+  - Phase 1 code work is complete through Phase 2b, the 4th reorder bundle, and the 5th bundle. Next major step is seed entry and pre-operation data cleanup.
+  - Latest relevant commits after v27: `7b2b5d4` production card reorder, `1b74aff` copy-sheet category order, `2e71161` left-side production reorder handle polish.
+  - Latest deployed assets verified on GitHub Pages: `index-C-jDtjJi.js`, `index-BNP2kANj.css`.
+  - 5th bundle E-6 production-card reorder is complete. Admin/office can drag production cards for the selected date only; production role does not see handles. The implementation reassigns the visible cards' existing `sortOrder` values and then calls the existing round/batch recalculation flow.
+  - 5th bundle E-7 production-instruction category order is complete. Settings now stores `settings/copySheetOrder`; production sheet copy falls back to the default order when the document is missing.
+  - 5th bundle E-8 log item ordering was intentionally deferred/cancelled for now. Current log ordering remains "unacknowledged required logs first, then timestamp descending"; revisit after about one week of seed/operation data if users report a concrete pain point.
+  - E-6/E-7 verification passed by data/logic checks: same-date `sortOrder` pool reassigns correctly, other dates are unchanged, `round`/`batchNo` recalculates, `settings/copySheetOrder` save/delete/default fallback works. Verification production docs were marked `status: 'deleted'`; `copySheetOrder` was reset to default.
 
 - 2026-05-18 v26 / Phase 2b implementation:
   - Added raw recipe `productionMethods` editing in `src/pages/recipe.js` and nested `recipes/{recipeId}/conversionHistory` writes for manual unit-to-box changes.
@@ -32,7 +41,7 @@ Last updated: 2026-05-18
     - `339e527` made settings sections collapsible; default state is collapsed.
     - `d0b8474` fixed the holiday form input layout by overriding table-oriented `.cell-input` styles only inside the holiday form and widening the settings container.
   - Public URL remains https://green-cloud-workroom.github.io/fant/. GitHub Pages can lag by roughly 10 minutes because of cache headers.
-  - Current next work: Phase 2b conversion table work from spec_v26 §2-1~2-4.
+  - Superseded next work note: Phase 2b and the 4th/5th bundles are now complete; current next work is seed entry.
 
 - 2026-05-14 Work A completed:
   - `src/pages/main.js` office-log classifier now includes `recipe`.
@@ -137,6 +146,9 @@ Last updated: 2026-05-18
   - Dev dependency for `scripts/setCustomClaims.mjs`.
 - `gh-pages`
   - Dev dependency for publishing Vite `dist` to GitHub Pages.
+- `sortablejs`
+  - Drag-and-drop ordering for master lists and production cards.
+  - Used in bag, frozen product, meat type, recipe, production card, and copy-sheet category ordering flows.
 
 ## Scripts / Config
 
@@ -425,6 +437,17 @@ spec_v24:
 - Production delete soft-deletes the production card and refunds the linked supplement deduction; `supplementLogs.relatedProductionId` is used for net/refund tracking.
 - Supplement deduct/refund is independent of tomorrow-load meat/bag deduction flows.
 
+v26 / Phase 2b:
+- Raw production input shows production method, expected boxes, optional integer actual boxes, and the future-effective-date notice.
+- Raw production documents store `methodKey`, `expectedBox`, `actualBox`, and `appliedUnitToBox`; `rawBoxQty` remains the separate pack-weight theoretical box count.
+
+v28 / 5th bundle E-6/E-7:
+- `productionCards` uses SortableJS for same-date card reordering. Handles render for admin/office only.
+- Reorder reassigns only the selected date's visible cards' existing `sortOrder` values. Other dates are intentionally not renumbered.
+- After reorder, the existing `applyRoundsAndBatches(selectedDate)` flow recalculates `round` and `batchNo`.
+- `showCopySheetModal()` reads `settings/copySheetOrder`; missing or invalid settings fall back to `rawCat`, `rawDog`, `freezeCat`, `freezeDog`, `freezeCommon`.
+- Production sheet grouping is still derived from production `category` and `target`; E-7 changes output order only.
+
 ?앹궛 移대뱶 愿由?
 
 臾띠쓬 c:
@@ -513,6 +536,12 @@ v26 / Phase 2a:
 - Holiday form layout note:
   - The generic `.cell-input` class is table-oriented. `src/style.css` intentionally overrides `.holiday-field .cell-input` so date/text inputs render as normal form controls inside the holiday form only.
   - Keep `.holiday-form-fields` as the single grid wrapper for the four inputs: start date, end date, holiday name, memo.
+
+v28 / 5th bundle E-7:
+- Settings has a `생산지시서 카테고리 순서` section.
+- The section renders five draggable items: `rawCat`, `rawDog`, `freezeCat`, `freezeDog`, `freezeCommon`.
+- Sort order is stored at `settings/copySheetOrder` with `{ order, updatedAt, updatedBy }`.
+- Firestore rules did not need a new match block because existing `settings/{settingId}` writer rules cover this document.
 
 臾띠쓬 c:
 - spec_v20 湲곗??쇰줈 settings 硫붾돱??production?먭쾶 蹂댁씠寃??좎?.
