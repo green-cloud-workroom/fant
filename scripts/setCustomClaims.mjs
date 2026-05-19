@@ -9,16 +9,24 @@ const DEFAULT_PROJECT_ID = 'fant-e5ae5';
 const DEFAULT_TARGETS = [
   {
     email: 'alice@fantapet.com',
-    roles: { inventory: 'owner', production: 'admin' },
+    claims: {
+      app: ['inventory', 'production'],
+      roles: { inventory: 'owner', production: 'admin' },
+    },
   },
   {
     email: 'admin@fantapet.com',
-    roles: { production: 'office' },
-    note: 'inventory role/access is intentionally pending; existing roles.inventory is preserved if present.',
+    claims: {
+      app: ['inventory', 'production'],
+      roles: { inventory: 'admin', production: 'office' },
+    },
   },
   {
     email: 'qc@fantapet.com',
-    roles: { inventory: 'qc', production: 'production' },
+    claims: {
+      app: ['inventory', 'production'],
+      roles: { inventory: 'qc', production: 'production' },
+    },
   },
 ];
 
@@ -48,26 +56,11 @@ function claimsByteLength(claims) {
   return Buffer.byteLength(JSON.stringify(claims), 'utf8');
 }
 
-function isPlainObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function sortedUnique(values) {
-  return [...new Set(values)].sort();
-}
-
-function mergeClaims(existingClaims, nextRoles) {
-  const { role: _legacyRole, app: _legacyApp, roles: existingRolesRaw, ...rest } = existingClaims;
-  const existingRoles = isPlainObject(existingRolesRaw) ? existingRolesRaw : {};
-  const roles = {
-    ...existingRoles,
-    ...nextRoles,
-  };
-
+function mergeClaims(existingClaims, nextClaims) {
+  const { role: _legacyRole, app: _legacyApp, roles: _legacyRoles, ...rest } = existingClaims;
   return {
     ...rest,
-    app: sortedUnique(Object.keys(roles)),
-    roles,
+    ...nextClaims,
   };
 }
 
@@ -93,12 +86,15 @@ async function main() {
   console.log(`[claims] mode: ${execute ? 'execute' : 'dry-run'}`);
   console.log(`[claims] project: ${projectId}`);
   console.log(`[claims] credential: ${serviceAccount ? 'service-account-key' : 'application-default'}`);
+  console.log(`[claims] target count: ${DEFAULT_TARGETS.length}`);
+  console.log('[claims] scope: only configured target users are queried or modified.');
+  console.log('[claims] skipped: all non-target Firebase Auth users.');
   console.log('[claims] targets:');
 
   for (const target of DEFAULT_TARGETS) {
     const user = await auth.getUserByEmail(target.email);
     const before = user.customClaims || {};
-    const after = mergeClaims(before, target.roles);
+    const after = mergeClaims(before, target.claims);
     const byteLength = claimsByteLength(after);
 
     if (byteLength > 1000) {
@@ -106,9 +102,7 @@ async function main() {
     }
 
     console.log(`  - ${target.email}`);
-    if (target.note) {
-      console.log(`    note: ${target.note}`);
-    }
+    console.log('    target: yes');
     console.log(`    uid: ${user.uid}`);
     console.log(`    before: ${JSON.stringify(before)}`);
     console.log(`    after:  ${JSON.stringify(after)} (${byteLength} bytes)`);

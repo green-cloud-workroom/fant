@@ -30,7 +30,8 @@ Last updated: 2026-05-19
 - 2026-05-16 v26 / Phase 2a closeout:
   - Phase 2a holiday-master code and public deploy are complete. Latest relevant commits: `875bb03` holiday data, `7287287` expiry notice, `c21b70f` holiday-aware business-day helpers, `959f9cb` holiday settings UI, `d740010` production business-day wiring, `64befa2` shipping business-day schedule adjustment, `4e01cae` production-impact holiday badge.
   - Firestore Rules + Custom Claims work is updated for the cross-app role model. The production app reads `roles.production`; inventory reads `roles.inventory`; no setter writes a bare top-level `role`.
-  - Current claim mapping: `alice@fantapet.com` has `roles: { inventory: 'owner', production: 'admin' }`; `qc@fantapet.com` has `roles: { inventory: 'qc', production: 'production' }`; `admin@fantapet.com` has `roles.production: 'office'` only until Hodu confirms inventory access/role.
+  - Current claim mapping: `alice@fantapet.com` has `roles: { inventory: 'owner', production: 'admin' }`; `admin@fantapet.com` has `roles: { inventory: 'admin', production: 'office' }`; `qc@fantapet.com` has `roles: { inventory: 'qc', production: 'production' }`.
+  - Cutover safety: do not push or merge Firestore rules changes to `main` before the Admin SDK re-claim has been executed and verified with live token reads; `main` push triggers the rules deploy workflow.
   - Bag/recipe delete UI work is complete (`cc722a6`): admin and office can delete with cascade/soft-delete behavior as implemented; production is blocked by UI/rules.
   - Phase 2a smoke test passed:
     1. Korean public holiday auto import generated the 2025-2027 holiday docs.
@@ -167,8 +168,8 @@ New in v26.
 New in v26.
 
 - Admin SDK script for assigning cross-app `app`/`roles` claims to the three operating accounts.
-- Removes legacy bare top-level `role`; read-merges with existing `roles.inventory` and writes `roles.production`.
-- `alice@fantapet.com` and `qc@fantapet.com` receive both inventory and production roles. `admin@fantapet.com` receives production `office`; inventory remains pending Hodu confirmation.
+- Removes legacy bare top-level `role` and deterministically writes `app` plus both `roles.inventory` and `roles.production` for the three configured accounts.
+- Only `alice@fantapet.com`, `admin@fantapet.com`, and `qc@fantapet.com` are queried or modified; all other Firebase Auth users are skipped by design.
 - `npm.cmd run claims:dry-run` previews changes.
 - `npm.cmd run claims:execute` writes claims.
 

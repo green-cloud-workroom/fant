@@ -185,9 +185,11 @@ Custom claims use the cross-app model:
 The production app reads only `roles.production`; do not write a bare top-level `role` claim.
 
 - `alice@fantapet.com` - `app: ['inventory', 'production']`, `roles: { inventory: 'owner', production: 'admin' }`
-- `admin@fantapet.com` - `app: ['production']`, `roles: { production: 'office' }`; inventory access/role remains pending Hodu confirmation.
+- `admin@fantapet.com` - `app: ['inventory', 'production']`, `roles: { inventory: 'admin', production: 'office' }`
 - `qc@fantapet.com` - `app: ['inventory', 'production']`, `roles: { inventory: 'qc', production: 'production' }`
 - production role accounts - to be created during seed step
+
+Cutover safety: do not push or merge Firestore rules changes to `main` before the Admin SDK re-claim has been executed and verified with live token reads. Push to `main` triggers the GitHub Actions rules deploy immediately.
 
 **Passwords are NOT in this document.** Request from 호두 when verification requires login.
 
