@@ -9,15 +9,16 @@ const DEFAULT_PROJECT_ID = 'fant-e5ae5';
 const DEFAULT_TARGETS = [
   {
     email: 'alice@fantapet.com',
-    claims: { role: 'admin', app: ['production', 'inventory'] },
+    roles: { inventory: 'owner', production: 'admin' },
   },
   {
     email: 'admin@fantapet.com',
-    claims: { role: 'office', app: ['production', 'inventory'] },
+    roles: { production: 'office' },
+    note: 'inventory role/access is intentionally pending; existing roles.inventory is preserved if present.',
   },
   {
     email: 'qc@fantapet.com',
-    claims: { role: 'production', app: ['production', 'inventory'] },
+    roles: { inventory: 'qc', production: 'production' },
   },
 ];
 
@@ -47,10 +48,26 @@ function claimsByteLength(claims) {
   return Buffer.byteLength(JSON.stringify(claims), 'utf8');
 }
 
-function mergeClaims(existingClaims, nextClaims) {
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function sortedUnique(values) {
+  return [...new Set(values)].sort();
+}
+
+function mergeClaims(existingClaims, nextRoles) {
+  const { role: _legacyRole, app: _legacyApp, roles: existingRolesRaw, ...rest } = existingClaims;
+  const existingRoles = isPlainObject(existingRolesRaw) ? existingRolesRaw : {};
+  const roles = {
+    ...existingRoles,
+    ...nextRoles,
+  };
+
   return {
-    ...existingClaims,
-    ...nextClaims,
+    ...rest,
+    app: sortedUnique(Object.keys(roles)),
+    roles,
   };
 }
 
@@ -81,7 +98,7 @@ async function main() {
   for (const target of DEFAULT_TARGETS) {
     const user = await auth.getUserByEmail(target.email);
     const before = user.customClaims || {};
-    const after = mergeClaims(before, target.claims);
+    const after = mergeClaims(before, target.roles);
     const byteLength = claimsByteLength(after);
 
     if (byteLength > 1000) {
@@ -89,6 +106,9 @@ async function main() {
     }
 
     console.log(`  - ${target.email}`);
+    if (target.note) {
+      console.log(`    note: ${target.note}`);
+    }
     console.log(`    uid: ${user.uid}`);
     console.log(`    before: ${JSON.stringify(before)}`);
     console.log(`    after:  ${JSON.stringify(after)} (${byteLength} bytes)`);

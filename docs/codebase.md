@@ -29,7 +29,8 @@ Last updated: 2026-05-19
 
 - 2026-05-16 v26 / Phase 2a closeout:
   - Phase 2a holiday-master code and public deploy are complete. Latest relevant commits: `875bb03` holiday data, `7287287` expiry notice, `c21b70f` holiday-aware business-day helpers, `959f9cb` holiday settings UI, `d740010` production business-day wiring, `64befa2` shipping business-day schedule adjustment, `4e01cae` production-impact holiday badge.
-  - Firestore Rules + Custom Claims work is complete (`9ee0517`, `9c8c7d8`). Three accounts have custom claims: `alice@fantapet.com` admin, `admin@fantapet.com` office, `qc@fantapet.com` production; all include `app: ['inventory', 'production']`.
+  - Firestore Rules + Custom Claims work is updated for the cross-app role model. The production app reads `roles.production`; inventory reads `roles.inventory`; no setter writes a bare top-level `role`.
+  - Current claim mapping: `alice@fantapet.com` has `roles: { inventory: 'owner', production: 'admin' }`; `qc@fantapet.com` has `roles: { inventory: 'qc', production: 'production' }`; `admin@fantapet.com` has `roles.production: 'office'` only until Hodu confirms inventory access/role.
   - Bag/recipe delete UI work is complete (`cc722a6`): admin and office can delete with cascade/soft-delete behavior as implemented; production is blocked by UI/rules.
   - Phase 2a smoke test passed:
     1. Korean public holiday auto import generated the 2025-2027 holiday docs.
@@ -156,7 +157,7 @@ Last updated: 2026-05-19
 
 New in v26.
 
-- Implements role/app-claim based access using Firebase Auth custom claims.
+- Implements app claim + `roles.production` based access using Firebase Auth custom claims.
 - `activityLogs` update is limited to acknowledged-related fields; full arbitrary updates remain blocked.
 - `bagLogs` delete is allowed for admin and office because bag delete cascade needs it.
 - Rules are deployed manually or by the GitHub Actions workflow when the required secret is present.
@@ -165,7 +166,9 @@ New in v26.
 
 New in v26.
 
-- Admin SDK script for assigning role/app claims to the three operating accounts.
+- Admin SDK script for assigning cross-app `app`/`roles` claims to the three operating accounts.
+- Removes legacy bare top-level `role`; read-merges with existing `roles.inventory` and writes `roles.production`.
+- `alice@fantapet.com` and `qc@fantapet.com` receive both inventory and production roles. `admin@fantapet.com` receives production `office`; inventory remains pending Hodu confirmation.
 - `npm.cmd run claims:dry-run` previews changes.
 - `npm.cmd run claims:execute` writes claims.
 

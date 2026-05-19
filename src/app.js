@@ -1,5 +1,4 @@
-import { auth, db } from './firebase.js';
-import { doc, getDoc } from 'firebase/firestore';
+import { auth } from './firebase.js';
 import { signOut } from 'firebase/auth';
 
 // 현재 사용자 정보
@@ -9,11 +8,8 @@ export let currentUserRole = null;
 // 사용자 정보 로드
 export async function loadUserInfo(user) {
   currentUser = user;
-  const docRef = doc(db, 'users', user.uid);
-  const docSnap = await getDoc(docRef);
-  if (docSnap.exists()) {
-    currentUserRole = docSnap.data().role;
-  }
+  const tokenResult = await user.getIdTokenResult(true);
+  currentUserRole = tokenResult.claims.roles?.production || null;
 }
 
 // 메뉴 목록
@@ -23,7 +19,7 @@ export const MENUS = [
   { id: 'meat', label: '원육 재고', roles: ['admin', 'office', 'production'] },
   { id: 'egg', label: '계란', roles: ['admin', 'office', 'production'] },
   { id: 'bag', label: '봉투 재고', roles: ['admin', 'office', 'production'] },
-  { id: 'supplement', label: '영양제 재고', roles: ['admin', 'office', 'production', 'qc'] },
+  { id: 'supplement', label: '영양제 재고', roles: ['admin', 'office', 'production'] },
   { id: 'frozenProduct', label: '동결제품 입고', roles: ['admin', 'office', 'production'] },
   { id: 'frozenPan', label: '동결판 재고', roles: ['admin', 'office', 'production'] },
   { id: 'frozenSep', label: '동결 분리작업', roles: ['admin', 'office', 'production'] },

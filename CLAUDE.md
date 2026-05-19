@@ -180,10 +180,14 @@ UI buttons are visible to all roles but Firestore rules block writes. Cosmetic i
 
 ### 6. Test accounts (current verification accounts)
 
-- `alice@fantapet.com` — role=admin
-- `admin@fantapet.com` — role=admin
-- `qc@fantapet.com` — role=qc (shared with inventory app, `app: ["production", "inventory"]`)
-- production role accounts — to be created during seed step
+Custom claims use the cross-app model:
+`{ app: string[], roles: { inventory?: 'owner'|'admin'|'qc', production?: 'admin'|'office'|'production' } }`.
+The production app reads only `roles.production`; do not write a bare top-level `role` claim.
+
+- `alice@fantapet.com` - `app: ['inventory', 'production']`, `roles: { inventory: 'owner', production: 'admin' }`
+- `admin@fantapet.com` - `app: ['production']`, `roles: { production: 'office' }`; inventory access/role remains pending Hodu confirmation.
+- `qc@fantapet.com` - `app: ['inventory', 'production']`, `roles: { inventory: 'qc', production: 'production' }`
+- production role accounts - to be created during seed step
 
 **Passwords are NOT in this document.** Request from 호두 when verification requires login.
 
