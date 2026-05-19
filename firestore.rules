@@ -21,9 +21,10 @@ service cloud.firestore {
     }
 
     function hasRole(roleName) {
-      return signedIn()
-        && request.auth.token.roles is map
-        && request.auth.token.roles.production == roleName;
+      return signedIn() && (
+        (request.auth.token.roles is map && request.auth.token.roles.production == roleName)
+        || request.auth.token.role == roleName
+      );
     }
 
     function isAdmin() {
