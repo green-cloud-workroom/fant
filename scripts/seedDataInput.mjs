@@ -60,6 +60,10 @@ function makeSupplementId(recipeId, unit) {
   return `${recipeId}_${unit}`;
 }
 
+function makeSupplementName(recipeName, unit) {
+  return `${recipeName} ${unit}용 영양제`;
+}
+
 function makeSupplementSortOrder(recipeSortOrder, unitIndex) {
   return (recipeSortOrder || 0) * 100 + unitIndex;
 }
@@ -127,6 +131,18 @@ function printSupplementDiscovery(supplements) {
   }
 }
 
+function printSupplementStockDiscovery(supplementStocks) {
+  console.log(`[seed-data] raw recipe supplementStock (${RAW_RECIPE_ID}_*):`);
+  const rawStocks = supplementStocks.filter((stock) => stock.id.startsWith(`${RAW_RECIPE_ID}_`));
+  if (rawStocks.length === 0) {
+    console.log('  - (none)');
+    return;
+  }
+  for (const stock of rawStocks) {
+    console.log(`  - ${JSON.stringify(stock)}`);
+  }
+}
+
 function validateFreezeDryRecipe(recipe, configuredName) {
   const current = Array.isArray(recipe.unitPresets) ? recipe.unitPresets : [];
   if (arraysEqual(current, FREEZE_DRY_UNIT_PRESETS)) return;
@@ -145,8 +161,16 @@ async function collectPlan(db) {
   const supplements = supplementSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
   supplements.sort((a, b) => String(a.id).localeCompare(String(b.id)));
 
+  const supplementStockSnap = await db.collection('supplementStock').get();
+  const supplementStocks = supplementStockSnap.docs.map((docSnap) => ({
+    id: docSnap.id,
+    ...docSnap.data(),
+  }));
+  supplementStocks.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
   printRecipeDiscovery(recipes);
   printSupplementDiscovery(supplements);
+  printSupplementStockDiscovery(supplementStocks);
 
   const rawRecipe = recipes.find((recipe) => recipe.id === RAW_RECIPE_ID);
   if (!rawRecipe) throw new Error(`RAW_RECIPE_ID not found: ${RAW_RECIPE_ID}`);
@@ -237,16 +261,43 @@ async function collectPlan(db) {
     }
 
     const supplementData = {
+      id: supplementId,
       recipeId: recipe.id,
       recipeName: recipeLabel(recipe),
       unit: 1,
-      unitIndex: 0,
+      name: makeSupplementName(recipeLabel(recipe), 1),
+      active: recipe.active !== false,
       sortOrder: makeSupplementSortOrder(recipe.sortOrder, 0),
-      stock: NEW_SUPPLEMENT_DEFAULT_STOCK,
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: null,
       createdAt: FieldValue.serverTimestamp(),
+      createdBy: null,
     };
-    console.log(`    supplementTypes/${supplementId}: create ${JSON.stringify({ ...supplementData, createdAt: '<serverTimestamp>' })}`);
+    console.log(`    supplementTypes/${supplementId}: create ${JSON.stringify({
+      ...supplementData,
+      updatedAt: '<serverTimestamp>',
+      createdAt: '<serverTimestamp>',
+    })}`);
     plan.push({ type: 'set', path: `supplementTypes/${supplementId}`, ref: supplementRef, data: supplementData });
+
+    const stockRef = db.collection('supplementStock').doc(supplementId);
+    const stockDoc = supplementStocks.find((stock) => stock.id === supplementId);
+    if (stockDoc) {
+      console.log(`    supplementStock/${supplementId}: exists, skip`);
+      continue;
+    }
+
+    const stockData = {
+      id: supplementId,
+      supplementTypeId: supplementId,
+      currentQty: NEW_SUPPLEMENT_DEFAULT_STOCK,
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+    console.log(`    supplementStock/${supplementId}: create ${JSON.stringify({
+      ...stockData,
+      updatedAt: '<serverTimestamp>',
+    })}`);
+    plan.push({ type: 'set', path: `supplementStock/${supplementId}`, ref: stockRef, data: stockData });
   }
 
   return plan;
