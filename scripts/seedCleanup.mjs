@@ -3,7 +3,8 @@
 // 백업 사전 조건: backup_pre_wipe_adc_20260520_210654 존재(2026-05-20).
 // 보존 대상(절대 건드리지 않음): users, staffGroups, holidays, 운영 recipes 4개,
 //   meatTypes, bagTypes, frozenProducts, settings/closingFlags,
-//   supplementTypes/yEhV7xTxX8giuDtSnFmQ_60·_100, 모든 stock/log/schedule/closingCheck/forecast.
+//   supplementTypes/yEhV7xTxX8giuDtSnFmQ_60·_100.
+//   supplementStock orphan은 step 7에서 정리. 그 외 모든 stock/log/schedule/closingCheck/forecast 보존.
 // 신규 wipe scripts/wipeFirestoreOperationalData* 는 collection-단위라 부적합 → 이 스크립트가 대체.
 
 import fs from 'node:fs/promises';
@@ -115,7 +116,7 @@ async function batchDeleteRefs(db, refs) {
 async function collectPlan(db) {
   const plan = [];
 
-  console.log('[seed-cleanup] step 1/6: test recipes recursive delete targets');
+  console.log('[seed-cleanup] step 1/7: test recipes recursive delete targets');
   const recipeTargets = [];
   for (const recipeId of TEST_RECIPE_IDS) {
     const docRef = db.collection('recipes').doc(recipeId);
@@ -136,7 +137,7 @@ async function collectPlan(db) {
   }
   plan.push({ label: 'test recipes recursive delete', refs: recipeTargets, recursive: true });
 
-  console.log('[seed-cleanup] step 2/6: settings verification docs');
+  console.log('[seed-cleanup] step 2/7: settings verification docs');
   const settingsTargets = [];
   for (const docId of SETTINGS_DOC_IDS) {
     const docRef = db.collection('settings').doc(docId);
@@ -150,7 +151,7 @@ async function collectPlan(db) {
   }
   plan.push({ label: 'settings verification docs', refs: settingsTargets });
 
-  console.log('[seed-cleanup] step 3/6: supplementTypes test prefix');
+  console.log('[seed-cleanup] step 3/7: supplementTypes test prefix');
   const supplementDocs = await listCollectionDocs(db.collection('supplementTypes'));
   const supplementTargets = supplementDocs
     .map((docSnap) => docSnap.ref)
@@ -159,7 +160,7 @@ async function collectPlan(db) {
   logRefs(supplementTargets);
   plan.push({ label: 'supplementTypes test prefix', refs: supplementTargets });
 
-  console.log('[seed-cleanup] step 4/6: conversionHistory verification entries');
+  console.log('[seed-cleanup] step 4/7: conversionHistory verification entries');
   const conversionTargets = (
     await listCollectionDocs(
       db.collection('recipes').doc(CONVERSION_HISTORY_RECIPE_ID).collection('conversionHistory'),
@@ -169,7 +170,7 @@ async function collectPlan(db) {
   logRefs(conversionTargets);
   plan.push({ label: 'conversionHistory verification entries', refs: conversionTargets });
 
-  console.log('[seed-cleanup] step 5/6: activityLogs all docs');
+  console.log('[seed-cleanup] step 5/7: activityLogs all docs');
   const activityTargets = (await listCollectionDocs(db.collection('activityLogs'))).map(
     (docSnap) => docSnap.ref,
   );
@@ -177,7 +178,7 @@ async function collectPlan(db) {
   logRefs(activityTargets);
   plan.push({ label: 'activityLogs all docs', refs: activityTargets });
 
-  console.log('[seed-cleanup] step 6/6: productions all docs with status guard');
+  console.log('[seed-cleanup] step 6/7: productions all docs with status guard');
   const productionDocs = await listCollectionDocs(db.collection('productions'));
   const invalidProductions = productionDocs.filter(
     (docSnap) => docSnap.data().status !== PRODUCTIONS_STATUS_REQUIRED,
@@ -197,6 +198,19 @@ async function collectPlan(db) {
   console.log(`  - guard passed: all ${productionTargets.length} docs have status='deleted'`);
   logRefs(productionTargets);
   plan.push({ label: 'productions deleted docs', refs: productionTargets });
+
+  console.log('[seed-cleanup] step 7/7: orphan supplementStock (no matching supplementTypes)');
+  const allSupplements = await listCollectionDocs(db.collection('supplementTypes'));
+  const supplementTypeIds = new Set(allSupplements.map((docSnap) => docSnap.id));
+  const allStocks = await listCollectionDocs(db.collection('supplementStock'));
+  const orphanStockDocs = allStocks.filter((docSnap) => !supplementTypeIds.has(docSnap.id));
+  const orphanStockTargets = orphanStockDocs.map((docSnap) => docSnap.ref);
+  console.log(`  - matched count: ${orphanStockTargets.length}`);
+  for (const docSnap of orphanStockDocs) {
+    const data = docSnap.data() || {};
+    console.log(`    - supplementStock/${docSnap.id} currentQty=${data.currentQty ?? '<none>'}`);
+  }
+  plan.push({ label: 'orphan supplementStock', refs: orphanStockTargets });
 
   return plan;
 }
