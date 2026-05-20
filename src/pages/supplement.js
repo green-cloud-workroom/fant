@@ -88,10 +88,6 @@ function getSupplementDateColumns() {
 
 function renderSupplementLayout() {
   const content = document.getElementById('mainContent');
-  const inStaffMembers = getSupplementStaffMembers(getSupplementStaffGroupKeys('supplementStockIn'));
-  const adjustStaffMembers = getSupplementStaffMembers(getSupplementStaffGroupKeys('supplementAdjust'));
-  const inStaffLabel = getSupplementStaffGroupLabel(getSupplementStaffGroupKeys('supplementStockIn'));
-  const adjustStaffLabel = getSupplementStaffGroupLabel(getSupplementStaffGroupKeys('supplementAdjust'));
 
   content.innerHTML = `
     <div class="supplement-page">
@@ -100,29 +96,6 @@ function renderSupplementLayout() {
           <span class="supplement-toolbar-title">영양제 재고</span>
         </div>
         <div class="supplement-toolbar-actions">
-          ${isProductionRole() ? `
-            <label class="supplement-staff-label">입고 담당자 (${escapeHtml(inStaffLabel)})</label>
-            <select id="supplementInStaff" class="supplement-staff-select">
-              <option value="">선택</option>
-              ${inStaffMembers.map(m => `<option value="${escapeHtml(m.name)}" ${selectedInStaff === m.name ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('')}
-            </select>
-          ` : ''}
-          ${isWriterRole() ? `
-            <label class="supplement-staff-label">수동조정 담당자 (${escapeHtml(adjustStaffLabel)})</label>
-            <select id="supplementAdjustStaff" class="supplement-staff-select">
-              <option value="">선택</option>
-              ${adjustStaffMembers.map(m => `<option value="${escapeHtml(m.name)}" ${selectedAdjustStaff === m.name ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('')}
-            </select>
-            <label class="supplement-staff-label">수동조정 사유</label>
-            <input
-              type="text"
-              id="supplementAdjustReason"
-              class="supplement-reason-input"
-              value="${escapeHtml(selectedAdjustReason)}"
-              maxlength="200"
-              placeholder="사유"
-            />
-          ` : ''}
           <select id="supplementFilter" class="supplement-filter-select" aria-label="영양제 재고 필터">
             <option value="all" ${supplementFilter === 'all' ? 'selected' : ''}>전체</option>
             <option value="warning" ${supplementFilter === 'warning' ? 'selected' : ''}>${supplementThresholdYellow}봉 미만만</option>
@@ -175,6 +148,36 @@ function hasCellLog(typeId, date, type) {
   );
 }
 
+function getLatestSupplementLog(typeId) {
+  return supplementLogs.find(log => log.supplementTypeId === typeId);
+}
+
+function getStockStatus(qty, inactive) {
+  if (inactive) return { label: '비활성', className: 'supplement-status--inactive' };
+  if (qty < supplementThresholdRed) return { label: '부족', className: 'supplement-status--danger' };
+  if (qty < supplementThresholdYellow) return { label: '주의', className: 'supplement-status--warning' };
+  return { label: '정상', className: 'supplement-status--normal' };
+}
+
+function renderStockStatus(qty, inactive) {
+  const status = getStockStatus(qty, inactive);
+  return `<span class="supplement-status ${status.className}">${status.label}</span>`;
+}
+
+function renderRecentChange(typeId) {
+  const log = getLatestSupplementLog(typeId);
+  if (!log) return '<span class="supplement-muted">-</span>';
+
+  const after = Number.isFinite(Number(log.after)) ? ` / 잔량 ${Number(log.after)}봉` : '';
+  return `
+    <div class="supplement-recent-change">
+      <span class="supplement-recent-date">${escapeHtml(log.date || '-')}</span>
+      ${renderLogTypeTag(log.type)}
+      <span class="supplement-recent-qty">${formatSignedQty(log.qty)}${after}</span>
+    </div>
+  `;
+}
+
 function isWriterRole() {
   return currentUserRole === 'admin' || currentUserRole === 'office';
 }
@@ -183,7 +186,7 @@ function isProductionRole() {
   return currentUserRole === 'production';
 }
 
-// 표 렌더링. 좌측 고정(SKU명 + 현재재고) + 날짜별 3열(입고/수동조정/자동차감).
+// 표 렌더링. 운영 기본 화면은 현재 재고와 최근 변동만 보여준다.
 function renderSupplementTable() {
   const filtered = getFilteredSupplementTypes();
   if (supplementTypes.length === 0) {
@@ -193,23 +196,6 @@ function renderSupplementTable() {
     return '<div class="list-empty">필터 조건에 맞는 영양제가 없습니다</div>';
   }
 
-  const dateColumns = getSupplementDateColumns();
-
-  const headerDateCells = dateColumns.map(date => `
-    <th class="supplement-th-date" colspan="3">${formatColumnDate(date)}</th>
-  `).join('');
-
-  const headerTypeCells = dateColumns.map(date => {
-    const reason = getAdjustReasonForColumn(date);
-    return `
-      <th class="supplement-th-type supplement-th-in">입고</th>
-      <th class="supplement-th-type supplement-th-adjust" title="${escapeHtml(reason || '')}">
-        수동조정${reason ? `<span class="supplement-th-reason">${escapeHtml(reason)}</span>` : ''}
-      </th>
-      <th class="supplement-th-type supplement-th-auto">자동차감</th>
-    `;
-  }).join('');
-
   const bodyRows = filtered.map(type => {
     const qty = getStockQty(type.id);
     const inactive = type.active === false;
@@ -218,8 +204,6 @@ function renderSupplementTable() {
       : qty < supplementThresholdYellow ? 'supplement-qty--warning'
       : '';
 
-    const dateCells = dateColumns.map(date => renderDateCells(type, date, inactive)).join('');
-
     return `
       <tr class="${inactive ? 'supplement-row--inactive' : ''}">
         <td class="supplement-td-name">
@@ -227,7 +211,8 @@ function renderSupplementTable() {
           ${inactive ? '<span class="tag tag-inactive">비활성</span>' : ''}
         </td>
         <td class="supplement-td-qty ${qtyClass}">${qty}봉</td>
-        ${dateCells}
+        <td class="supplement-td-status">${renderStockStatus(qty, inactive)}</td>
+        <td class="supplement-td-recent">${renderRecentChange(type.id)}</td>
       </tr>
     `;
   }).join('');
@@ -236,12 +221,10 @@ function renderSupplementTable() {
     <table class="supplement-table">
       <thead>
         <tr>
-          <th class="supplement-th-name" rowspan="2">영양제 SKU</th>
-          <th class="supplement-th-qty" rowspan="2">현재 재고</th>
-          ${headerDateCells}
-        </tr>
-        <tr>
-          ${headerTypeCells}
+          <th class="supplement-th-name">영양제 SKU</th>
+          <th class="supplement-th-qty">현재 재고</th>
+          <th class="supplement-th-status">상태</th>
+          <th class="supplement-th-recent">최근 변동</th>
         </tr>
       </thead>
       <tbody>
