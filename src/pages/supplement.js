@@ -213,6 +213,10 @@ function renderSupplementTable() {
         <td class="supplement-td-qty ${qtyClass}">${qty}봉</td>
         <td class="supplement-td-status">${renderStockStatus(qty, inactive)}</td>
         <td class="supplement-td-recent">${renderRecentChange(type.id)}</td>
+        <td class="supplement-td-actions">
+          ${!inactive && isProductionRole() ? `<button class="btn-secondary supplement-action-in" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">입고</button>` : ''}
+          ${!inactive && isWriterRole() ? `<button class="btn-secondary supplement-action-adjust" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">수동조정</button>` : ''}
+        </td>
       </tr>
     `;
   }).join('');
@@ -225,6 +229,7 @@ function renderSupplementTable() {
           <th class="supplement-th-qty">현재 재고</th>
           <th class="supplement-th-status">상태</th>
           <th class="supplement-th-recent">최근 변동</th>
+          <th class="supplement-th-actions">작업</th>
         </tr>
       </thead>
       <tbody>
@@ -371,6 +376,14 @@ function bindSupplementEvents() {
 }
 
 function bindSupplementCellEvents() {
+  document.querySelectorAll('.supplement-action-in').forEach(btn => {
+    btn.addEventListener('click', () => openIncomingModal(btn.dataset.id, btn.dataset.name));
+  });
+
+  document.querySelectorAll('.supplement-action-adjust').forEach(btn => {
+    btn.addEventListener('click', () => openAdjustModal(btn.dataset.id, btn.dataset.name));
+  });
+
   // 입고 셀: 비어있는 입력칸만 존재. blur 시 저장.
   document.querySelectorAll('.supplement-cell-input[data-cell="in"]').forEach(input => {
     input.addEventListener('blur', (e) => handleIncomingCellBlur(e.target));
@@ -389,6 +402,129 @@ function bindSupplementCellEvents() {
       const sum = getCellSum(typeId, date, 'in');
       alert(`이미 ${sum}봉 입고 기록이 있습니다. 추가·정정은 수동조정을 사용해주세요.`);
     });
+  });
+}
+
+function renderStaffOptions(menuKey) {
+  const members = getSupplementStaffMembers(getSupplementStaffGroupKeys(menuKey));
+  return members
+    .map(member => `<option value="${escapeHtml(member.name)}">${escapeHtml(member.name)}</option>`)
+    .join('');
+}
+
+async function refreshSupplementTable() {
+  await loadSupplementData();
+  const wrap = document.getElementById('supplementTableWrap');
+  if (wrap) {
+    wrap.innerHTML = renderSupplementTable();
+    bindSupplementCellEvents();
+  }
+}
+
+function openIncomingModal(typeId, typeName) {
+  showModal(`
+    <h3 class="modal-title">영양제 입고 — ${escapeHtml(typeName)}</h3>
+    <div class="form-group">
+      <label>수량(봉) *</label>
+      <input type="number" id="sup_in_qty" min="1" step="1" placeholder="봉 수" />
+    </div>
+    <div class="form-group">
+      <label>담당자 *</label>
+      <select id="sup_in_staff">
+        <option value="">선택</option>
+        ${renderStaffOptions('supplementStockIn')}
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">취소</button>
+      <button class="btn-primary" id="btnSaveSupIn">저장</button>
+    </div>
+  `);
+
+  document.getElementById('btnSaveSupIn')?.addEventListener('click', async () => {
+    const qty = Number(document.getElementById('sup_in_qty')?.value || '');
+    const staffName = document.getElementById('sup_in_staff')?.value || '';
+    if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) {
+      alert('입고 수량은 1 이상의 정수로 입력해주세요.');
+      return;
+    }
+    if (!staffName) {
+      alert('입고 담당자를 선택해주세요.');
+      return;
+    }
+
+    const button = document.getElementById('btnSaveSupIn');
+    button.disabled = true;
+    try {
+      await saveIncomingCell(typeId, getTodayKST(), qty, staffName);
+      closeModal();
+      await refreshSupplementTable();
+      alert('입고 완료');
+    } catch (err) {
+      console.error('[supplement] incoming modal save failed:', err);
+      alert(`입고 등록 중 오류가 발생했습니다: ${err.message || err}`);
+      button.disabled = false;
+    }
+  });
+}
+
+function openAdjustModal(typeId, typeName) {
+  showModal(`
+    <h3 class="modal-title">영양제 수동조정 — ${escapeHtml(typeName)}</h3>
+    <div class="form-group">
+      <label>증감(봉) *</label>
+      <input type="number" id="sup_adj_qty" step="1" placeholder="증가: +5  감소: -3" />
+    </div>
+    <div class="form-group">
+      <label>사유 *</label>
+      <input type="text" id="sup_adj_reason" maxlength="200" placeholder="사유" />
+    </div>
+    <div class="form-group">
+      <label>담당자 *</label>
+      <select id="sup_adj_staff">
+        <option value="">선택</option>
+        ${renderStaffOptions('supplementAdjust')}
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">취소</button>
+      <button class="btn-primary" id="btnSaveSupAdj">저장</button>
+    </div>
+  `);
+
+  document.getElementById('btnSaveSupAdj')?.addEventListener('click', async () => {
+    const signedQty = Number(document.getElementById('sup_adj_qty')?.value || '');
+    const reason = document.getElementById('sup_adj_reason')?.value.trim() || '';
+    const staffName = document.getElementById('sup_adj_staff')?.value || '';
+    if (!Number.isFinite(signedQty) || signedQty === 0 || !Number.isInteger(signedQty)) {
+      alert('수동조정 수량은 0이 아닌 정수로 입력해주세요. (예: +5, -3)');
+      return;
+    }
+    if (!reason) {
+      alert('수동조정 사유를 입력해주세요.');
+      return;
+    }
+    if (!staffName) {
+      alert('수동조정 담당자를 선택해주세요.');
+      return;
+    }
+
+    const button = document.getElementById('btnSaveSupAdj');
+    button.disabled = true;
+    try {
+      await saveAdjustCell(typeId, getTodayKST(), signedQty, reason, staffName);
+      closeModal();
+      await refreshSupplementTable();
+      alert('조정 완료');
+    } catch (err) {
+      console.error('[supplement] adjust modal save failed:', err);
+      if (err.message === 'NEGATIVE_SUPPLEMENT_STOCK') {
+        alert('재고가 마이너스가 됩니다. 조정 수량을 확인해주세요.');
+      } else {
+        alert(`수동 조정 중 오류가 발생했습니다: ${err.message || err}`);
+      }
+      button.disabled = false;
+    }
   });
 }
 

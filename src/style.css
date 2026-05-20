@@ -980,6 +980,21 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   padding: 6px 10px;
 }
 
+.supplement-th-actions,
+.supplement-td-actions {
+  min-width: 140px;
+  text-align: right;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.supplement-action-in,
+.supplement-action-adjust {
+  margin-left: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
 .supplement-td-name {
   font-weight: 500;
   color: #222;
