@@ -188,6 +188,18 @@ New in v26.
 - Performs a dry-run safety check before deploy.
 - Requires GitHub secret `FIREBASE_RULES_SERVICE_ACCOUNT`.
 
+### Operational data scripts
+
+- `scripts/backupFirestorePreWipe.mjs` — pre-wipe Firestore backup (`npm run backup:prewipe`).
+- `scripts/wipeFirestoreOperationalData.mjs` / `...Admin.mjs` — operational-data wipe, dry-run default (`npm run wipe:dry-run` / `wipe:execute`, plus `:admin` variants).
+
+### Seed / cutover scripts (PR #2, 2026-05-21)
+
+- `scripts/seedCleanup.mjs` — targeted handoff_v28 cleanup (test recipes, settings verification docs, supplementTypes test prefix, conversionHistory/activityLogs verification entries, deleted productions, orphan supplementStock). Dry-run default; `npm run seed-cleanup:dry` / `:execute`.
+- `scripts/seedDataInput.mjs` — seeds existing recipes' unitPresets/labels and freeze-dry supplementTypes (+ paired supplementStock). Dry-run default; `npm run seed-data-input:dry` / `:execute`.
+- `scripts/claimsBackupRestore.mjs` — backup/restore Auth custom claims for cutover rollback (`npm run claims:backup` / `claims:restore:dry` / `claims:restore`).
+- `scripts/fixSupplementNames.mjs` — normalize mojibake in `supplementTypes.name` (`npm run fix:supplement-names:dry` / `:execute`).
+
 ## Important Files
 
 ### `src/pages/main.js`
@@ -340,6 +352,9 @@ v26 / Phase 2b:
 - Manual `unitToBox` changes create `recipes/{recipeId}/conversionHistory/{historyId}` docs and write `activityLogs` as `conversion/manualEdit`.
 - Freeze-dry recipes hide the production-method conversion section.
 
+PR #2 / pre-launch (2026-05-21):
+- Recipe master edit affordances are gated to admin/office. The `+ 신규 추가` button, detail-form 저장/삭제 buttons, and the list active toggle are hidden or disabled for the `production` role; `saveRecipe` and the active-toggle handler also guard defensively. Detail-form inputs stay visible to production but have no persist path (운영 발견사항 #20).
+
 ?덉떆??愿由?
 
 沅뚰븳/湲곕뒫 蹂寃?
@@ -421,6 +436,9 @@ Firestore ?쎄린:
   - ?먯쑁 ?ш퀬 ?곷떒 ?쒕ぉ/??二쇱슂 踰꾪듉/?쇰? ???ㅻ뜑
 - ??源⑥쭚? 7F-2 ??湲곕뒫 ?뚮Ц???앷릿 寃껋씠 ?꾨땲??湲곗〈 ?뚯씪???덈뜕 源⑥쭊 臾몄옄?댁씠 鍮뚮뱶 寃利?以??쒕윭??寃?
 - ?⑥? `meat.js` ?쒓? ?쇰꺼 ?꾩껜 ?먭?? 臾띠쓬 9 ?꾨낫濡??④?.
+
+PR #2 / meat types management (2026-05-21):
+- The meat-types management modal (admin/office only) now supports inline editing of `defaultUnitWeightG` and `minimumQtyG` per row, alongside the existing showInStats and active toggles.
 
 ### `src/pages/bag.js`
 
@@ -546,6 +564,9 @@ v28 / 5th bundle E-7:
 - The section renders five draggable items: `rawCat`, `rawDog`, `freezeCat`, `freezeDog`, `freezeCommon`.
 - Sort order is stored at `settings/copySheetOrder` with `{ order, updatedAt, updatedBy }`.
 - Firestore rules did not need a new match block because existing `settings/{settingId}` writer rules cover this document.
+
+PR #2 / packs-per-plate (2026-05-21):
+- Settings has a packs-per-plate (판당 팩수) section storing cat/dog/common values; admin/office only.
 
 臾띠쓬 c:
 - spec_v20 湲곗??쇰줈 settings 硫붾돱??production?먭쾶 蹂댁씠寃??좎?.
@@ -1033,10 +1054,10 @@ Build warnings:
 Phase 1 notes:
 - B/codebase update for supplement units and Work A is complete.
 - D-1/D-2/D-3 settings UI work is complete as of v26: closing flags, menu staff groups, and system values are editable in settings.
-- E-2/E-5 drag-sort master ordering for bag, frozen product, meat type, and recipe lists remains a candidate. Supplement SKU ordering remains derived from recipe order and unit preset order; no separate supplement drag-sort UI.
+- E-2~E-7 drag-sort master ordering (bag, frozen product, meat type, recipe lists, production cards, copy-sheet category) is COMPLETE as of the 4th/5th bundles (see Current Status). Supplement SKU ordering remains derived from recipe order and unit preset order; no separate supplement drag-sort UI.
 
 Next implementation candidate:
-- Phase 2b conversion table work from spec_v26 §2-1~2-4.
+- Phase 2b conversion table work (spec_v26 §2-1~2-4) is COMPLETE. Next is Phase 2c (in-app wipe, conversion-difference recommendations/stats, planned production).
 
 Operational discoveries to carry into spec_v25:
 - `productions` delete is soft-delete (`status: 'deleted'`), not hard delete.
