@@ -14,6 +14,7 @@ dist-ssr
 .env
 .env.*
 backup_pre_wipe_*/
+claims-backup-*.json
 *adminsdk*.json
 *service-account*.json
 fantapet-*-key.json

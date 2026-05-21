@@ -38,7 +38,7 @@ export async function recordActivity(entry) {
     uid,
     timestamp: serverTimestamp(),
     message: entry.message || '',
-    details: entry.details || {},
+    details: { ...(entry.details || {}), app: 'production' },
     read: false,
     acknowledged: false,
     acknowledgedAt: null,

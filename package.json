@@ -13,9 +13,18 @@
     "wipe:execute": "node scripts/wipeFirestoreOperationalData.mjs --execute",
     "wipe:dry-run:admin": "node scripts/wipeFirestoreOperationalDataAdmin.mjs --dry-run",
     "wipe:execute:admin": "node scripts/wipeFirestoreOperationalDataAdmin.mjs --execute",
+    "seed-cleanup:dry": "node scripts/seedCleanup.mjs",
+    "seed-cleanup:execute": "node scripts/seedCleanup.mjs --execute",
+    "seed-data-input:dry": "node scripts/seedDataInput.mjs",
+    "seed-data-input:execute": "node scripts/seedDataInput.mjs --execute",
     "claims:dry-run": "node scripts/setCustomClaims.mjs",
     "claims:execute": "node scripts/setCustomClaims.mjs --execute",
-    "fetch:holidays": "node scripts/fetchKoreanPublicHolidays.mjs"
+    "claims:backup": "node scripts/claimsBackupRestore.mjs --backup",
+    "claims:restore:dry": "node scripts/claimsBackupRestore.mjs --restore",
+    "claims:restore": "node scripts/claimsBackupRestore.mjs --restore --execute",
+    "fetch:holidays": "node scripts/fetchKoreanPublicHolidays.mjs",
+    "fix:supplement-names:dry": "node scripts/fixSupplementNames.mjs",
+    "fix:supplement-names:execute": "node scripts/fixSupplementNames.mjs --execute"
   },
   "devDependencies": {
     "firebase-admin": "^13.10.0",
