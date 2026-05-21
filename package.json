@@ -15,6 +15,9 @@
     "wipe:execute:admin": "node scripts/wipeFirestoreOperationalDataAdmin.mjs --execute",
     "claims:dry-run": "node scripts/setCustomClaims.mjs",
     "claims:execute": "node scripts/setCustomClaims.mjs --execute",
+    "claims:backup": "node scripts/claimsBackupRestore.mjs --backup",
+    "claims:restore:dry": "node scripts/claimsBackupRestore.mjs --restore",
+    "claims:restore": "node scripts/claimsBackupRestore.mjs --restore --execute",
     "fetch:holidays": "node scripts/fetchKoreanPublicHolidays.mjs"
   },
   "devDependencies": {
