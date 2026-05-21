@@ -13,6 +13,8 @@
     "wipe:execute": "node scripts/wipeFirestoreOperationalData.mjs --execute",
     "wipe:dry-run:admin": "node scripts/wipeFirestoreOperationalDataAdmin.mjs --dry-run",
     "wipe:execute:admin": "node scripts/wipeFirestoreOperationalDataAdmin.mjs --execute",
+    "seed-cleanup:dry": "node scripts/seedCleanup.mjs",
+    "seed-cleanup:execute": "node scripts/seedCleanup.mjs --execute",
     "claims:dry-run": "node scripts/setCustomClaims.mjs",
     "claims:execute": "node scripts/setCustomClaims.mjs --execute",
     "claims:backup": "node scripts/claimsBackupRestore.mjs --backup",
