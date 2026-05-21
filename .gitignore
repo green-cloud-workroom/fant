@@ -20,6 +20,13 @@ claims-backup-*.json
 fantapet-*-key.json
 fantapet-temp-key.json
 
+# Local tooling state (Claude Code / Codex)
+.claude/
+.gcloud-codex/
+
+# Seed / cleanup operational run logs (kept local, not tracked)
+seed-*.txt
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
