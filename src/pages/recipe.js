@@ -53,13 +53,14 @@ async function loadRecipes() {
 
 function renderRecipeLayout() {
   const content = document.getElementById('mainContent');
+  const canEdit = currentUserRole === 'admin' || currentUserRole === 'office';
   content.innerHTML = `
     <div class="recipe-wrap">
       <!-- 왼쪽: 레시피 목록 -->
       <div class="recipe-list-panel">
         <div class="panel-header">
           <span class="panel-title">레시피 목록</span>
-          <button class="btn-primary" id="btnNewRecipe">+ 신규 추가</button>
+          ${canEdit ? '<button class="btn-primary" id="btnNewRecipe">+ 신규 추가</button>' : ''}
         </div>
         <div class="recipe-list" id="recipeList">
           ${renderRecipeList()}
@@ -75,7 +76,7 @@ function renderRecipeLayout() {
 
   bindRecipeListEvents();
   initRecipeSortables();
-  document.getElementById('btnNewRecipe').addEventListener('click', showNewRecipeForm);
+  document.getElementById('btnNewRecipe')?.addEventListener('click', showNewRecipeForm);
 }
 
 function renderRecipeListItem(r) {
@@ -91,7 +92,7 @@ function renderRecipeListItem(r) {
         </div>
       </div>
       <label class="toggle-switch">
-        <input type="checkbox" class="recipe-active-toggle" data-id="${r.id}" ${r.active ? 'checked' : ''}>
+        <input type="checkbox" class="recipe-active-toggle" data-id="${r.id}" ${r.active ? 'checked' : ''} ${canReorder ? '' : 'disabled'}>
         <span class="toggle-slider"></span>
       </label>
     </div>
@@ -425,6 +426,7 @@ function bindRecipeListEvents() {
 
   document.querySelectorAll('.recipe-active-toggle').forEach(toggle => {
     toggle.addEventListener('change', async (e) => {
+      if (currentUserRole !== 'admin' && currentUserRole !== 'office') return;
       const id = e.target.dataset.id;
       const active = e.target.checked;
       const recipe = recipes.find(r => r.id === id);
@@ -570,6 +572,7 @@ function showNewRecipeForm() {
 function showRecipeDetail(recipe) {
   const detail = document.getElementById('recipeDetail');
   const isNew = !recipe;
+  const canEdit = currentUserRole === 'admin' || currentUserRole === 'office';
   currentUnitPresets = Array.isArray(recipe?.unitPresets) ? [...recipe.unitPresets] : [];
   currentProductionMethods = normalizeProductionMethods(recipe?.productionMethods);
 
@@ -577,8 +580,8 @@ function showRecipeDetail(recipe) {
     <div class="detail-header">
       <span class="detail-title">${isNew ? '새 레시피' : getDisplayName(recipe)}</span>
       <div class="detail-actions">
-        <button class="btn-primary" id="btnSaveRecipe">저장</button>
-        ${!isNew ? '<button class="btn-danger" id="btnDeleteRecipe">삭제</button>' : ''}
+        ${canEdit ? '<button class="btn-primary" id="btnSaveRecipe">저장</button>' : ''}
+        ${!isNew && canEdit ? '<button class="btn-danger" id="btnDeleteRecipe">삭제</button>' : ''}
       </div>
     </div>
 
@@ -735,7 +738,7 @@ function showRecipeDetail(recipe) {
   bindIngredientEvents();
 
   // 저장
-  document.getElementById('btnSaveRecipe').addEventListener('click', () => saveRecipe(recipe?.id));
+  document.getElementById('btnSaveRecipe')?.addEventListener('click', () => saveRecipe(recipe?.id));
 
   // 삭제
   document.getElementById('btnDeleteRecipe')?.addEventListener('click', () => deleteRecipe(recipe));
@@ -1020,6 +1023,10 @@ function getIngredients() {
 }
 
 async function saveRecipe(id) {
+  if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+    alert('레시피 저장은 대표/사무실 계정만 가능합니다.');
+    return;
+  }
   const name = document.getElementById('recipeName').value.trim();
   const category = document.getElementById('recipeCategory').value;
   const target = document.getElementById('recipeTarget').value;
