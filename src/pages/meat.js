@@ -942,8 +942,18 @@ function showMeatTypesModal() {
                   ${m.name}
                   ${active ? '' : '<span class="tag tag-inactive" style="margin-left:6px;">\uBE44\uD65C\uC131</span>'}
                 </td>
-                <td>${m.defaultUnitWeightG}g</td>
-                <td>${((m.minimumQtyG || 0) / 1000).toFixed(1)}kg</td>
+                <td>
+                  <input type="number" class="m-unit-weight" data-id="${m.id}"
+                         value="${m.defaultUnitWeightG}" min="1" step="any"
+                         style="width:80px;padding:4px;text-align:right;" />
+                  <span style="margin-left:4px;color:#666;font-size:12px;">g</span>
+                </td>
+                <td>
+                  <input type="number" class="m-min-qty" data-id="${m.id}"
+                         value="${((m.minimumQtyG || 0) / 1000).toFixed(1)}" min="0" step="any"
+                         style="width:80px;padding:4px;text-align:right;" />
+                  <span style="margin-left:4px;color:#666;font-size:12px;">kg</span>
+                </td>
                 <td>
                   <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;">
                     <input type="checkbox" class="m-show-in-stats" data-id="${m.id}" ${showInStats ? 'checked' : ''}>
@@ -1008,6 +1018,57 @@ function showMeatTypesModal() {
         console.error('[meat] showInStats 저장 실패:', err);
         alert('저장 실패: ' + (err.message || err));
         e.target.checked = !showInStats;
+      }
+    });
+  });
+
+  document.querySelectorAll('.m-unit-weight').forEach(input => {
+    input.addEventListener('change', async (e) => {
+      const id = e.target.dataset.id;
+      const target = meatTypes.find(m => m.id === id);
+      const prev = target?.defaultUnitWeightG;
+      const value = parseFloat(e.target.value);
+      if (!isFinite(value) || value <= 0) {
+        alert('기본 단위중량은 양수(g)여야 합니다.');
+        e.target.value = prev ?? '';
+        return;
+      }
+      try {
+        await updateDoc(doc(db, 'meatTypes', id), {
+          defaultUnitWeightG: value,
+          updatedAt: new Date(),
+        });
+        if (target) target.defaultUnitWeightG = value;
+      } catch (err) {
+        console.error('[meat] defaultUnitWeightG 저장 실패:', err);
+        alert('저장 실패: ' + (err.message || err));
+        e.target.value = prev ?? '';
+      }
+    });
+  });
+
+  document.querySelectorAll('.m-min-qty').forEach(input => {
+    input.addEventListener('change', async (e) => {
+      const id = e.target.dataset.id;
+      const target = meatTypes.find(m => m.id === id);
+      const prevG = target?.minimumQtyG ?? 0;
+      const kg = parseFloat(e.target.value);
+      if (!isFinite(kg) || kg < 0) {
+        alert('최소재고는 0 이상(kg)이어야 합니다.');
+        e.target.value = (prevG / 1000).toFixed(1);
+        return;
+      }
+      const grams = Math.round(kg * 1000);
+      try {
+        await updateDoc(doc(db, 'meatTypes', id), {
+          minimumQtyG: grams,
+          updatedAt: new Date(),
+        });
+        if (target) target.minimumQtyG = grams;
+      } catch (err) {
+        console.error('[meat] minimumQtyG 저장 실패:', err);
+        alert('저장 실패: ' + (err.message || err));
+        e.target.value = (prevG / 1000).toFixed(1);
       }
     });
   });
