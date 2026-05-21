@@ -28,7 +28,6 @@ let copySheetOrderSortable = null;
 const PRODUCT_CONVERSION_FIELDS = [
   { key: 'cat', label: '고양이 판당 팩수' },
   { key: 'dog', label: '강아지 판당 팩수' },
-  { key: 'common', label: '공용 판당 팩수' },
 ];
 
 const CLOSING_FLAG_BLOCKS = [
