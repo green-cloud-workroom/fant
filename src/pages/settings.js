@@ -25,6 +25,12 @@ const COPY_SHEET_ORDER_LABELS = {
 
 let copySheetOrderSortable = null;
 
+const PRODUCT_CONVERSION_FIELDS = [
+  { key: 'cat', label: '고양이 판당 팩수' },
+  { key: 'dog', label: '강아지 판당 팩수' },
+  { key: 'common', label: '공용 판당 팩수' },
+];
+
 const CLOSING_FLAG_BLOCKS = [
   { key: 'blockTomorrowProd', label: '내일생산불러오기 미완료 시 마감 차단', desc: '다음 영업일 생산이 있는데 내일생산불러오기를 안 했으면 차단' },
   { key: 'blockFrozenOrder', label: '동결건조 발주 미확인 시 마감 차단', desc: '오늘 등록된 발주 행이 확인/취소되지 않으면 차단' },
@@ -57,6 +63,7 @@ export async function renderSettings() {
   const systemValues = await loadSystemValues();
   const menuStaffGroups = await loadMenuStaffGroups();
   const copySheetOrder = await loadCopySheetOrder();
+  const productConversion = await loadProductConversion();
   const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
 
   content.innerHTML = `
@@ -152,12 +159,26 @@ export async function renderSettings() {
         </div>
         </div>
       </details>
+
+      <details class="settings-section">
+        <summary class="settings-section-summary">
+          <span class="settings-section-title">판당 팩수</span>
+          <span class="settings-section-toggle">펼치기</span>
+        </summary>
+        <div class="settings-section-body">
+        <p class="settings-section-desc">
+          제품 입고 시 판수 → 팩수 환산 기준입니다. (대상별)
+        </p>
+        ${renderProductConversionSection(productConversion, isWriter)}
+        </div>
+      </details>
     </div>
   `;
 
   if (isWriter) bindStaffEvents(staffGroups);
   if (isWriter) bindClosingFlagEvents(closingFlags);
   if (isWriter) bindSystemValueEvents(systemValues);
+  if (isWriter) bindProductConversionEvents(productConversion);
   if (isWriter) bindMenuStaffGroupEvents(menuStaffGroups);
   bindCopySheetOrderEvents(isWriter);
   bindHolidayEvents();
@@ -181,6 +202,85 @@ async function loadCopySheetOrder() {
     console.warn('[settings] copySheetOrder load failed:', err);
     return [...COPY_SHEET_ORDER_DEFAULT];
   }
+}
+
+async function loadProductConversion() {
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'productConversion'));
+    return snap.exists() ? snap.data() : {};
+  } catch (err) {
+    console.warn('[settings] productConversion load failed:', err);
+    return {};
+  }
+}
+
+function renderProductConversionSection(conversion, isWriter) {
+  const disabled = isWriter ? '' : 'disabled';
+  return `
+    <div class="system-value-list">
+      ${PRODUCT_CONVERSION_FIELDS.map(field => `
+        <div class="closing-flag-row">
+          <div class="closing-flag-meta">
+            <div class="closing-flag-label">${field.label}</div>
+            <div class="closing-flag-desc">판 1개를 몇 팩으로 환산할지 설정합니다.</div>
+          </div>
+          <div class="system-value-input-wrap">
+            <input type="number" class="system-value-input product-conversion-input"
+              id="ppp_${field.key}"
+              data-conversion-key="${field.key}"
+              value="${conversion[field.key] ?? ''}" step="1" min="0" ${disabled}>
+            <span class="system-value-unit">팩/판</span>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    ${isWriter ? '<button class="btn-primary" id="btnSavePpp" style="margin-top:12px;">저장</button>' : ''}
+  `;
+}
+
+function bindProductConversionEvents(initialConversion) {
+  document.getElementById('btnSavePpp')?.addEventListener('click', async () => {
+    const next = {};
+    for (const field of PRODUCT_CONVERSION_FIELDS) {
+      const input = document.getElementById(`ppp_${field.key}`);
+      const raw = input?.value.trim() || '';
+      if (!raw) {
+        next[field.key] = null;
+        continue;
+      }
+
+      const parsed = parseInt(raw, 10);
+      if (!Number.isInteger(parsed) || parsed < 0 || String(parsed) !== raw) {
+        alert(`${field.label}는 0 이상의 정수로 입력해주세요.`);
+        input?.focus();
+        return;
+      }
+      next[field.key] = parsed;
+    }
+
+    const changed = PRODUCT_CONVERSION_FIELDS.some(field => {
+      const before = initialConversion[field.key] ?? null;
+      return before !== next[field.key];
+    });
+    if (!changed) {
+      alert('변경된 값이 없습니다.');
+      return;
+    }
+
+    try {
+      await setDoc(doc(db, 'settings', 'productConversion'), {
+        ...next,
+        updatedAt: serverTimestamp(),
+        updatedBy: currentUser?.uid || null,
+      }, { merge: true });
+      Object.assign(initialConversion, next);
+      alert('저장 완료');
+      await renderSettings();
+    } catch (err) {
+      console.error('[settings] productConversion save failed:', err);
+      alert('저장 실패: ' + err.message);
+    }
+  });
 }
 
 function renderCopySheetOrderSection(order, isWriter) {
