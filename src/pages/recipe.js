@@ -673,6 +673,15 @@ function showRecipeDetail(recipe) {
             </div>
           </div>
         </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="checkbox" id="recipeUsesSupplement" ${recipe?.usesSupplement === false ? '' : 'checked'}>
+              <span>영양제 사용</span>
+            </label>
+            <p class="hint-text" style="margin-top:4px;">체크 해제 시 이 레시피는 영양제 SKU·자동차감을 쓰지 않습니다 (예: 텐더동결).</p>
+          </div>
+        </div>
         ${renderProductionMethodsSection(recipe?.category)}
       </div>
 
@@ -1039,6 +1048,7 @@ async function saveRecipe(id) {
     return;
   }
 
+  const usesSupplement = document.getElementById('recipeUsesSupplement')?.checked ?? true;
   const targetPrefix = target === 'cat' ? '고양이 ' : target === 'dog' ? '강아지 ' : '';
   const data = {
     name,
@@ -1051,9 +1061,14 @@ async function saveRecipe(id) {
     sortOrder: id ? existingRecipe?.sortOrder ?? recipes.length : recipes.length,
     ingredients: getIngredients(),
     unitPresets: [...currentUnitPresets],
+    usesSupplement,
     version: 1,
     updatedAt: new Date(),
   };
+
+  // 영양제 미사용 레시피는 supplementType을 만들지 않음 (예: 텐더동결).
+  // toggle을 끄면 supplementUnits=[] → 기존 SKU/재고/이력이 removedUnits로 정리됨.
+  const supplementUnits = usesSupplement ? data.unitPresets : [];
 
   if (category === 'raw') {
     data.packWeightG = parseFloat(document.getElementById('packWeightG').value) || null;
@@ -1085,7 +1100,7 @@ async function saveRecipe(id) {
 
   try {
     if (id) {
-      const removedUnits = previousUnitPresets.filter(unit => !data.unitPresets.includes(unit));
+      const removedUnits = previousUnitPresets.filter(unit => !supplementUnits.includes(unit));
       const deleteSummaries = await confirmSupplementPresetDeletion({ id, ...existingRecipe }, removedUnits);
       if (deleteSummaries === false) {
         currentUnitPresets = [...previousUnitPresets];
@@ -1093,7 +1108,7 @@ async function saveRecipe(id) {
         return;
       }
 
-      const existingSkuStates = await Promise.all(data.unitPresets.map(async (unit) => {
+      const existingSkuStates = await Promise.all(supplementUnits.map(async (unit) => {
         const supplementTypeId = makeSupplementId(id, unit);
         const [typeSnap, stockSnap] = await Promise.all([
           getDoc(doc(db, 'supplementTypes', supplementTypeId)),
@@ -1108,7 +1123,7 @@ async function saveRecipe(id) {
       addConversionHistoryToBatch(batch, id, conversionChanges);
 
       const deleteSummaryMap = new Map((Array.isArray(deleteSummaries) ? deleteSummaries : []).map(s => [s.unit, s]));
-      data.unitPresets.forEach((unit, idx) => {
+      supplementUnits.forEach((unit, idx) => {
         const supplementTypeId = makeSupplementId(id, unit);
         const baseDoc = getSupplementBaseDoc(id, data, unit, idx);
         const skuState = existingSkuStateMap.get(unit);
@@ -1152,7 +1167,7 @@ async function saveRecipe(id) {
       const batch = writeBatch(db);
       batch.set(ref, data);
       addConversionHistoryToBatch(batch, ref.id, conversionChanges);
-      data.unitPresets.forEach((unit, idx) => {
+      supplementUnits.forEach((unit, idx) => {
         const supplementTypeId = makeSupplementId(ref.id, unit);
         const baseDoc = getSupplementBaseDoc(ref.id, data, unit, idx);
         batch.set(doc(db, 'supplementTypes', supplementTypeId), {

@@ -924,6 +924,42 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
 
     if (isNew) {
       data.createdAt = new Date();
+      if (recipe.usesSupplement === false) {
+        const productionRef = doc(collection(db, 'productions'));
+        const activityLogRef = doc(collection(db, 'activityLogs'));
+        try {
+          await runTransaction(db, async (transaction) => {
+            transaction.set(productionRef, data);
+            transaction.set(activityLogRef, {
+              action: 'production',
+              subAction: 'create',
+              date: selectedDate,
+              staff,
+              uid: currentUser?.uid || null,
+              timestamp: serverTimestamp(),
+              message: `생산 추가 — ${displayName} ${qty}${unitName} / 담당: ${staff}`,
+              details: {
+                productionId: productionRef.id,
+                recipeId,
+                recipeName: displayName,
+                category: recipe.category,
+                target: recipe.target,
+                productionUnitQty: qty,
+                productionUnitName: unitName,
+              },
+              read: false,
+              acknowledged: false,
+              acknowledgedAt: null,
+              acknowledgedBy: null,
+              acknowledgedByUid: null,
+            });
+          });
+        } catch (err) {
+          console.error('[production] save (no supplement) failed:', err);
+          alert('생산 저장 중 오류가 발생했습니다.');
+          return;
+        }
+      } else {
       const supplementTypeId = makeSupplementId(recipeId, qty);
       const productionRef = doc(collection(db, 'productions'));
       const supplementTypeRef = doc(db, 'supplementTypes', supplementTypeId);
@@ -1006,12 +1042,13 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
         alert(getSupplementSaveErrorMessage(err.message, err.supplementName));
         return;
       }
+      }
     } else {
       const prevSupplementTypeId = makeSupplementId(production.recipeId, production.productionUnitQty);
       const nextSupplementTypeId = makeSupplementId(recipeId, qty);
       const productionRef = doc(db, 'productions', production.id);
 
-      if (prevSupplementTypeId === nextSupplementTypeId) {
+      if (recipe.usesSupplement === false || prevSupplementTypeId === nextSupplementTypeId) {
         await updateDoc(productionRef, data);
       } else {
         const prevStockRef = doc(db, 'supplementStock', prevSupplementTypeId);
