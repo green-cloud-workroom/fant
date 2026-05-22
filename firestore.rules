@@ -76,11 +76,11 @@ service cloud.firestore {
     }
 
     match /recipes/{recipeId} {
-      allow read: if isProductionApp();
+      allow read: if isProductionApp() || isInventoryApp();
       allow write: if isProductionWriter();
 
       match /conversionHistory/{historyId} {
-        allow read: if isProductionApp();
+        allow read: if isProductionApp() || isInventoryApp();
         allow write: if isProductionWriter();
       }
     }
@@ -263,6 +263,26 @@ service cloud.firestore {
     match /wipeHistory/{historyId} {
       allow read: if isProductionAdmin();
       allow write: if isProductionAdmin();
+    }
+
+    match /forecastDaily/{docId} {
+      allow read, write: if isInventoryApp();
+    }
+
+    match /forecastAnalytics/{docId} {
+      allow read, write: if isInventoryApp();
+    }
+
+    match /forecastNotes/{docId} {
+      allow read, write: if isInventoryApp();
+    }
+
+    match /migrationLogs/{logId} {
+      allow read, write: if isInventoryApp();
+
+      match /{subcol}/{subId} {
+        allow read, write: if isInventoryApp();
+      }
     }
 
     match /{document=**} {
