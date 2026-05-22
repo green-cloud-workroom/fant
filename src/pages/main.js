@@ -1,6 +1,6 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy, setDoc, where, deleteDoc, serverTimestamp, limit, startAfter
+  collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy, setDoc, where, deleteDoc, serverTimestamp, limit, startAfter, writeBatch
 } from 'firebase/firestore';
 import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDayByType as getNextBusinessDay, loadHolidaysCache, getHolidaysCache, getHolidayDataNotice } from '../utils/date.js';
 import { getAllBlockingItems } from '../services/closingChecks.js';
@@ -199,6 +199,16 @@ function renderMainLayout() {
   document.getElementById('btnRefreshCompletion')?.addEventListener('click', handleRefreshCompletion);
   // [묶음 6E-4] 오늘로 돌아가기 버튼 — selectedDate 모드 해제
   document.getElementById('btnBackToToday')?.addEventListener('click', handleBackToToday);
+
+  // [spec_v27 P2] 생산 카드 클릭 → 제품 입고 모달 (생식 한정, 오늘 생산 모드, admin/office)
+  const canReceive = currentUserRole === 'admin' || currentUserRole === 'office';
+  if (canReceive && !isCompleted && !isViewingSelectedDate) {
+    document.querySelectorAll('.main-production-card.receivable').forEach(card => {
+      card.style.cursor = 'pointer';
+      card.title = '클릭하여 제품 입고';
+      card.addEventListener('click', () => openProductReceiptModal(card.dataset.id));
+    });
+  }
 
   // 차단 영역의 점프 버튼 (기존 알림 카드와 동일 동작)
   document.querySelectorAll('.alert-card-jump').forEach(btn => {
@@ -1700,7 +1710,7 @@ function renderProductionTableCard(p) {
     : (p.round > 1 ? ` <span>${p.round}회차</span>` : '');
 
   return `
-    <div class="main-production-card" style="--recipe-color:${p.color || '#ef7bd0'}">
+    <div class="main-production-card${p.category === 'raw' ? ' receivable' : ''}${p.received ? ' received' : ''}" data-id="${p.id}" style="--recipe-color:${p.color || '#ef7bd0'}">
       <div class="main-production-card-title">
         ${p.recipeName}${roundBadge}
       </div>
@@ -1730,9 +1740,141 @@ function renderProductionTableCard(p) {
       <div class="main-production-meta">
         ${p.category === 'raw' ? `<span>${p.rawBoxQty || 0}박스</span>` : ''}
         ${p.category === 'freezeDry' ? renderFreezeDryProductionMeta(p) : ''}
+        ${p.received ? `<span class="main-received-badge">✅ 입고완료 ${p.receivedBox || 0}박스${p.receivedRemainder ? ` +${p.receivedRemainder}낱개` : ''}</span>` : ''}
       </div>
     </div>
   `;
+}
+
+// [spec_v27 P2] 생식 제품 입고 모달 — 판수×판당팩수+낱개 → 박스/낱개 환산, productions 완료 + productTransferRequests outbox
+async function openProductReceiptModal(productionId) {
+  const p = [...productions, ...nextProductions].find(x => x.id === productionId);
+  if (!p || p.category !== 'raw') return; // 동결건조 제품입고는 Phase 3
+
+  const recipe = recipes.find(r => r.id === p.recipeId);
+  const target = recipe?.target || p.target || '';
+
+  let conv = {};
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'productConversion'));
+    if (snap.exists()) conv = snap.data();
+  } catch (err) {
+    console.error('[receipt] productConversion load failed:', err);
+  }
+  const packsPerPlate = Number(conv[target]);
+  if (!Number.isFinite(packsPerPlate) || packsPerPlate <= 0) {
+    const tgtLabel = target === 'cat' ? '고양이' : target === 'dog' ? '강아지' : '대상';
+    alert(`설정 > 판당 팩수에서 ${tgtLabel} 값을 먼저 등록해주세요.`);
+    return;
+  }
+
+  const methods = Array.isArray(recipe?.productionMethods)
+    ? recipe.productionMethods.filter(m => m && m.methodKey && m.active !== false)
+    : [];
+  const methodOptions = methods.length > 0
+    ? methods.map(m => `<option value="${m.methodKey}" ${p.receivedMethod === m.methodKey ? 'selected' : ''}>${m.label || m.methodKey}</option>`).join('')
+    : '<option value="">방식 없음</option>';
+
+  document.getElementById('productReceiptModal')?.remove();
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="modal-overlay" id="productReceiptModal">
+      <div class="modal-box" style="width:420px;">
+        <h3 class="modal-title">제품 입고 — ${p.recipeName}</h3>
+        <p style="font-size:12px;color:#888;margin:0 0 12px;">판당 팩수 ${packsPerPlate}팩/판 · 1박스 = 20팩</p>
+        <div class="form-group" style="margin-bottom:10px;">
+          <label style="display:block;font-size:12px;color:#555;margin-bottom:4px;">생산방식 (기록용)</label>
+          <select id="pr_method" style="width:100%;padding:8px;border:1px solid #d0d0d0;border-radius:4px;">${methodOptions}</select>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px;">
+          <div class="form-group" style="flex:1;">
+            <label style="display:block;font-size:12px;color:#555;margin-bottom:4px;">판수 *</label>
+            <input type="number" id="pr_plates" min="0" step="1" value="${p.receivedPlates ?? ''}" placeholder="판수" style="width:100%;padding:8px;border:1px solid #d0d0d0;border-radius:4px;box-sizing:border-box;" />
+          </div>
+          <div class="form-group" style="flex:1;">
+            <label style="display:block;font-size:12px;color:#555;margin-bottom:4px;">낱개(자투리 팩)</label>
+            <input type="number" id="pr_loose" min="0" step="1" value="${p.receivedLoosePacks ?? 0}" style="width:100%;padding:8px;border:1px solid #d0d0d0;border-radius:4px;box-sizing:border-box;" />
+          </div>
+        </div>
+        <div id="pr_result" style="font-size:13px;color:#1a1a1a;background:#f5f7f5;border-radius:6px;padding:10px;margin-bottom:14px;">판수를 입력하세요.</div>
+        <div class="modal-actions">
+          <button class="btn-secondary" id="pr_cancel">취소</button>
+          <button class="btn-primary" id="pr_confirm">제품 입고</button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  const overlay = document.getElementById('productReceiptModal');
+  const platesEl = document.getElementById('pr_plates');
+  const looseEl = document.getElementById('pr_loose');
+  const resultEl = document.getElementById('pr_result');
+  const cleanup = () => overlay?.remove();
+
+  function compute() {
+    const plates = parseInt(platesEl.value, 10);
+    const loose = parseInt(looseEl.value, 10) || 0;
+    if (!Number.isInteger(plates) || plates < 0 || loose < 0) {
+      resultEl.textContent = '판수를 입력하세요.';
+      return null;
+    }
+    const totalPacks = plates * packsPerPlate + loose;
+    const boxes = Math.floor(totalPacks / 20);
+    const remainder = totalPacks % 20;
+    resultEl.innerHTML = `총 <b>${totalPacks}</b>팩 → <b>${boxes}</b>박스 + <b>${remainder}</b>낱개`;
+    return { plates, loose, totalPacks, boxes, remainder };
+  }
+  platesEl.addEventListener('input', compute);
+  looseEl.addEventListener('input', compute);
+  compute();
+
+  document.getElementById('pr_cancel').addEventListener('click', cleanup);
+  document.getElementById('pr_confirm').addEventListener('click', async () => {
+    const r = compute();
+    if (!r) { platesEl.focus(); return; }
+    const method = document.getElementById('pr_method').value || null;
+    const revision = (p.receivedRevision || 0) + 1;
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'productions', p.id), {
+        received: true,
+        receivedMethod: method,
+        receivedPlates: r.plates,
+        receivedLoosePacks: r.loose,
+        receivedTotalPacks: r.totalPacks,
+        receivedBox: r.boxes,
+        receivedRemainder: r.remainder,
+        receivedRevision: revision,
+        receivedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      batch.set(doc(collection(db, 'productTransferRequests')), {
+        idempotencyKey: `productions:${p.id}:${revision}`,
+        sourceApp: 'production',
+        sourceCollection: 'productions',
+        sourceId: p.id,
+        eventType: 'productReceipt',
+        revision,
+        status: 'pending',
+        category: 'raw',
+        recipeId: p.recipeId,
+        recipeName: p.recipeName,
+        target,
+        plates: r.plates,
+        packs: r.totalPacks,
+        boxes: r.boxes,
+        remainderPacks: r.remainder,
+        producedDate: p.date,
+        staff: p.staffName || '',
+        createdAt: serverTimestamp(),
+      });
+      await batch.commit();
+      cleanup();
+      await renderMain();
+    } catch (err) {
+      console.error('[receipt] save failed:', err);
+      alert('제품 입고 저장 중 오류가 발생했습니다: ' + (err.message || err));
+    }
+  });
 }
 
 function getProductionUnitRowName(p, ingredients) {
