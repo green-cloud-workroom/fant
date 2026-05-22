@@ -1847,13 +1847,15 @@ async function openProductReceiptModal(productionId) {
         receivedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      batch.set(doc(collection(db, 'productTransferRequests')), {
-        idempotencyKey: `productions:${p.id}:${revision}`,
+      const idempotencyKey = `productions:${p.id}:${revision}`;
+      batch.set(doc(db, 'productTransferRequests', idempotencyKey), {
+        idempotencyKey,
         sourceApp: 'production',
         sourceCollection: 'productions',
         sourceId: p.id,
         eventType: 'productReceipt',
         revision,
+        supersedesRevision: revision > 1 ? revision - 1 : null,
         status: 'pending',
         category: 'raw',
         recipeId: p.recipeId,
