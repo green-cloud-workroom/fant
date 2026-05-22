@@ -354,6 +354,7 @@ v26 / Phase 2b:
 
 PR #2 / pre-launch (2026-05-21):
 - Recipe master edit affordances are gated to admin/office. The `+ 신규 추가` button, detail-form 저장/삭제 buttons, and the list active toggle are hidden or disabled for the `production` role; `saveRecipe` and the active-toggle handler also guard defensively. Detail-form inputs stay visible to production but have no persist path (운영 발견사항 #20).
+- Recipes have a `usesSupplement` boolean (default true; missing = true) with a "영양제 사용" checkbox in the recipe form. When false (e.g., 텐더동결 products with no supplement), `saveRecipe` creates no `supplementTypes`/`supplementStock` for the recipe (and deletes existing ones when toggled off via `removedUnits`), and `production.js` skips the supplement deduct/refund transaction on new/edit save. Delete refund is `supplementLogs`-driven, so it is already a no-op when none exist.
 
 ?덉떆??愿由?
 
