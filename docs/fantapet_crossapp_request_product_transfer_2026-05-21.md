@@ -52,15 +52,17 @@
 완제품 입고 전송 1건의 필드 스키마 합의. **생산앱 제안(안)**:
 
 ```js
-// productTransferRequests/{auto-id} — 완제품 입고 전송 1건 (생산 → 재고)
+// productTransferRequests/{idempotencyKey} — 완제품 입고 전송 1건 (생산 → 재고)
+//   문서 ID = idempotencyKey (deterministic). revision마다 새 문서 = create-only로 충분.
 {
   // --- 멱등/출처 (호두 2026-05-21 보강) ---
-  idempotencyKey: string,     // = `${sourceCollection}:${sourceId}:${revision}` — 재고 측 중복 차단 키
+  idempotencyKey: string,     // = `${sourceCollection}:${sourceId}:${revision}` = 문서 ID. 같은 revision 중복 write 불가
   sourceApp: 'production',
   sourceCollection: 'productions' | 'frozenProducts',
   sourceId: string,           // productions/{id}(생식) 또는 frozenProducts/{id}(동결)
   eventType: 'productReceipt',
   revision: number,           // 같은 sourceId 재전송(완료 카드 재입력/수정) 시 +1. 재고는 최신 revision만 반영
+  supersedesRevision: number | null, // revision>1이면 직전 revision(정정 입고), 1이면 null(최초). 재고가 "정정 vs 추가 입고" 구분용
   status: 'pending',          // 생산이 'pending'로 생성, 재고가 처리 후 'processed'/'rejected'로 update
   // --- 제품 식별 ---
   category: 'raw' | 'freezeDry',
