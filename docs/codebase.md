@@ -566,8 +566,8 @@ v28 / 5th bundle E-7:
 - Sort order is stored at `settings/copySheetOrder` with `{ order, updatedAt, updatedBy }`.
 - Firestore rules did not need a new match block because existing `settings/{settingId}` writer rules cover this document.
 
-PR #2 / packs-per-plate (2026-05-21):
-- Settings has a packs-per-plate (판당 팩수) section storing cat/dog values (`settings/productConversion`); admin/office only. Plate→pack is raw-only (호두 2026-05-21), so no common value. Setting is groundwork for the future product-receiving feature (spec_v27); not consumed by any code yet.
+packs-per-plate (판당 팩수):
+- Cat/dog packs-per-plate live in `settings/systemValues` as `packsPerPlateCat`/`packsPerPlateDog` (SYSTEM_VALUE_FIELDS, integer, default null), shown inside the 시스템 설정값 section. Plate→pack is raw-only (호두 2026-05-21), so no common value. Consumed by the raw product-receipt modal (`openProductReceiptModal`, main.js) to convert 판수 → 팩/박스. (Earlier a separate `settings/productConversion` doc/section held these; moved into systemValues 2026-05-23.)
 
 臾띠쓬 c:
 - spec_v20 湲곗??쇰줈 settings 硫붾돱??production?먭쾶 蹂댁씠寃??좎?.
