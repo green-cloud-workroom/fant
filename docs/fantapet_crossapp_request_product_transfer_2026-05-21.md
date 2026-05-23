@@ -25,10 +25,13 @@
 ## 1. 완제품 입고 전송 메커니즘 결정
 
 ### 1.1 무엇이 필요한가
-생산앱 완제품 입고를 재고앱이 받는 방식 결정:
-- (a) **공유 컬렉션** (예: `productReceipts`) — 생산 write, 재고 read·처리
-- (b) **재고앱 소유 컬렉션 직접 write** — 생산이 재고 컬렉션에 직접 addDoc
-- (c) **Cloud Function** — 재고앱 onCall/trigger로 수신 (재고앱 = Functions `asia-northeast3` 보유; **생산앱은 Cloud Functions 미사용** → 생산은 클라이언트 Firestore write만 가능)
+생산앱 완제품 입고를 재고앱이 받는 방식. **생산앱 결정(호두 2026-05-21) = outbox 패턴**:
+- **공유 요청 컬렉션 `productTransferRequests`** — 생산앱이 append-only write, 재고앱이 read·처리(완제품 재고 반영). 생산앱은 재고 소유 컬렉션을 **직접 건드리지 않음**(결합도·이중입고 사고 위험↓).
+- 대안(미채택): (b) 재고 컬렉션 직접 write, (c) 재고 Cloud Function 호출 — 생산앱은 Functions 미사용이라 (c)는 재고 측 트리거 구현 필요.
+- rules: `productTransferRequests` = 생산 write(create) · 재고 read(+처리 표시 update). 생산앱 firestore.rules에 추가 예정(계약 확정 후).
+- 재고앱은 이 컬렉션을 구독/폴링 → 멱등 체크(§4) → 자기 완제품 재고 입고.
+
+→ **확인 요청**: outbox 패턴 + 컬렉션명 `productTransferRequests` 수용 가능한지. 재고가 폴링 vs onSnapshot 구독 중 무엇을 쓸지(생산앱은 무관).
 
 ### 1.2 왜 필요한가
 - 생산앱은 Functions가 없어 서버측 호출 불가 → 클라이언트 Firestore write 또는 재고 Function 호출만 가능
@@ -49,29 +52,38 @@
 완제품 입고 전송 1건의 필드 스키마 합의. **생산앱 제안(안)**:
 
 ```js
-// 완제품 입고 전송 1건 (생산 → 재고)
+// productTransferRequests/{idempotencyKey} — 완제품 입고 전송 1건 (생산 → 재고)
+//   문서 ID = idempotencyKey (deterministic). revision마다 새 문서 = create-only로 충분.
 {
-  receiptId: string,          // 멱등 키 (생산앱 생성, 중복 방지)
-  source: 'production',
+  // --- 멱등/출처 (호두 2026-05-21 보강) ---
+  idempotencyKey: string,     // = `${sourceCollection}:${sourceId}:${revision}` = 문서 ID. 같은 revision 중복 write 불가
+  sourceApp: 'production',
+  sourceCollection: 'productions' | 'frozenProducts',
+  sourceId: string,           // productions/{id}(생식) 또는 frozenProducts/{id}(동결)
+  eventType: 'productReceipt',
+  revision: number,           // 같은 sourceId 재전송(완료 카드 재입력/수정) 시 +1. 재고는 최신 revision만 반영
+  supersedesRevision: number | null, // revision>1이면 직전 revision(정정 입고), 1이면 null(최초). 재고가 "정정 vs 추가 입고" 구분용
+  status: 'pending',          // 생산이 'pending'로 생성, 재고가 처리 후 'processed'/'rejected'로 update
+  // --- 제품 식별 ---
   category: 'raw' | 'freezeDry',
-  recipeId: string,           // 생산앱 recipes/{id} — 제품 식별 (§5 매핑)
+  recipeId: string,           // 생산앱 recipes/{id} (§5 매핑)
   recipeName: string,         // 스냅샷
-  target: 'cat' | 'dog' | '', // 고양이/강아지/공용
-  // 수량 (생식)
+  target: 'cat' | 'dog' | '',
+  // --- 수량 (생식): 완료 모달 입력값 = 입고 기준 ---
   plates?: number,            // 판수
-  packs?: number,             // 총 팩수 (판수×판당팩수 + 자투리)
+  packs?: number,             // 총 팩수 = 판수×판당팩수 + 낱개
   boxes?: number,             // floor(packs/20)
   remainderPacks?: number,    // packs % 20
-  // 수량 (동결제품)
-  frozenProductId?: string,   // 생산앱 frozenProducts/{id}
-  quantity?: number,          // 동결제품 수량(단위 합의 필요)
+  // --- 수량 (동결제품) ---
+  frozenProductId?: string,
+  quantity?: number,          // 단위 합의 필요
+  // --- 공통 ---
   producedDate: string,       // 'YYYY-MM-DD'
   staff: string,
-  productionId?: string,      // 생식: 트리거한 생산카드
   createdAt: <serverTimestamp>,
-  app: 'production'
 }
 ```
+> 멱등 모델: `idempotencyKey`로 중복 차단. 완료 카드 **재입력/admin override** 시 같은 `sourceId`로 `revision`을 올려 재전송 → 재고는 동일 sourceId의 **최신 revision으로 덮어쓰기(차분 아님)**. 이중입고·재시도·더블클릭 모두 방지.
 
 ### 2.2 왜 필요한가
 재고앱이 이 페이로드로 완제품 재고를 증가시켜야 하므로 필드·단위(박스 vs 팩 vs 개) 합의 필수.
@@ -107,7 +119,7 @@
 ## 4. 멱등 / 중복 방지
 
 ### 4.1 무엇이 필요한가
-같은 완제품 입고가 재전송돼도 중복 입고 안 되게 `receiptId` 기반 멱등 보장. 재고앱 수신 측에서 receiptId 중복 체크.
+같은 완제품 입고가 재전송돼도 중복 입고 안 되게 `idempotencyKey`(=`sourceCollection:sourceId:revision`) 기반 멱등 보장. 재고 수신 측은 동일 `sourceId`의 **최신 revision만 반영(덮어쓰기)**, 같은 idempotencyKey 재수신은 무시.
 
 ### 4.2 왜 필요한가
 네트워크 재시도·운영자 더블클릭·생산카드 수정 재전송 시 재고 이중 증가 방지.
@@ -116,8 +128,8 @@
 단계 4 구현 시.
 
 ### 4.4 응답 형태
-- receiptId 멱등 처리 방식(재고 측) 확인
-- 생산카드 수정으로 수량 변경 시 처리(취소+재전송 vs 차분 전송) 합의
+- idempotencyKey + revision 덮어쓰기 모델 수용 확인 (재고 측 구현)
+- 생산카드 수정으로 수량 변경 시 = 같은 sourceId·revision+1 재전송 → 재고는 최신값으로 재반영. 이 방식 합의 여부
 
 ---
 
@@ -158,10 +170,10 @@
 
 | # | 요청 | 핵심 |
 |---|---|---|
-| 1 | 전송 메커니즘 | 공유컬렉션 / 재고컬렉션 직접 / Function (생산앱 Functions 없음) |
-| 2 | 페이로드 스키마 | §2.1 안 + 수량 단위 합의 |
+| 1 | 전송 메커니즘 | **outbox 확정: `productTransferRequests`** (생산 write·재고 read). 재고 폴링/구독만 선택 |
+| 2 | 페이로드 스키마 | §2.1 안(멱등 필드 포함) + 수량 단위 합의 |
 | 3 | 수신 처리 | 자동 입고 vs 검수 |
-| 4 | 멱등/중복방지 | receiptId |
+| 4 | 멱등/중복방지 | idempotencyKey + revision(최신 덮어쓰기) |
 | 5 | 제품 식별 매핑 | recipeId → 재고 제품 |
 | 6 | 재고 Sprint 위치 | 완제품 수신 일정 |
 
