@@ -285,6 +285,14 @@ service cloud.firestore {
       }
     }
 
+    // [spec_v27] 완제품 입고 전송 outbox — 생산앱 write(create), 재고앱 read + 처리상태 update
+    match /productTransferRequests/{reqId} {
+      allow read: if isProductionApp() || isInventoryApp();
+      allow create: if isProductionWriter();
+      allow update: if isInventoryApp();
+      allow delete: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

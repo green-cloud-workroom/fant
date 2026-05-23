@@ -532,21 +532,10 @@ async function showProductionForm(production) {
       </div>
       <div class="production-conversion-control" id="pf_conversion_block" style="display:none;">
         <div class="production-conversion-row">
-          <label for="pf_methodKey">생산방식</label>
-          <select id="pf_methodKey"></select>
-        </div>
-        <div class="production-conversion-row">
           <label>예상 박스</label>
           <span class="production-conversion-expected" id="pf_expectedBox">-</span>
         </div>
-        <div class="production-conversion-future-notice" id="pf_conversion_future_notice" style="display:none;"></div>
-        <div class="production-conversion-row">
-          <label for="pf_actualBox">실제 박스</label>
-          <div class="production-conversion-actual">
-            <input type="number" id="pf_actualBox" min="0" step="1" value="${production?.actualBox ?? ''}" placeholder="선택 입력" />
-            <span>박스</span>
-          </div>
-        </div>
+        <div class="production-conversion-hint" style="font-size:11px;color:#888;">방식·실제 박스는 메인 화면에서 생산 완료(제품 입고) 시 입력합니다.</div>
         <div class="production-unit-message" id="pf_conversion_message" style="display:none;"></div>
       </div>
 
@@ -667,71 +656,34 @@ async function showProductionForm(production) {
     conversionFutureNotice.style.display = '';
   }
 
-  async function renderProductionConversionControl(recipe) {
-    conversionBlocked = false;
-    updateSaveButtonState();
-    if (!conversionBlock || !methodSelect || !expectedBoxEl) return;
-
-    conversionBlock.style.display = 'none';
-    methodSelect.innerHTML = '';
-    expectedBoxEl.textContent = '-';
-    setConversionMessage('');
-    setConversionFutureNotice(null, null);
-
+  function renderProductionConversionControl(recipe) {
+    if (!conversionBlock || !expectedBoxEl) return;
     if (recipe?.category !== 'raw') {
-      updateSaveButtonState();
+      conversionBlock.style.display = 'none';
+      expectedBoxEl.textContent = '-';
       return;
     }
-
     conversionBlock.style.display = '';
-    const activeMethods = normalizeProductionMethods(recipe.productionMethods).filter(method => method.active);
-    if (activeMethods.length === 0) {
-      conversionBlocked = true;
-      setConversionMessage('레시피 관리에서 생산 방식별 환산값을 먼저 등록해주세요.');
-      updateSaveButtonState();
-      return;
-    }
-
-    conversionBlocked = true;
-    methodSelect.innerHTML = activeMethods
-      .map(method => `<option value="${method.methodKey}">${method.label}</option>`)
-      .join('');
-    const currentMethodKey = production?.methodKey;
-    methodSelect.value = activeMethods.some(method => method.methodKey === currentMethodKey)
-      ? currentMethodKey
-      : activeMethods[0].methodKey;
-    updateSaveButtonState();
-    await updateConversionCalculation(recipe);
+    updateConversionCalculation(recipe);
   }
 
-  async function updateConversionCalculation(recipe) {
-    if (!conversionBlock || !methodSelect || !expectedBoxEl || recipe?.category !== 'raw') {
-      conversionBlocked = false;
-      setConversionFutureNotice(null, null);
-      updateSaveButtonState();
-      return;
-    }
-
-    const methodKey = methodSelect.value;
+  // [spec_v27] 예상 박스 = 레시피에 등록된 방식별(로터리/수동) unitToBox로 환산해 읽기전용 표시.
+  // 방식 선택·실제 박스는 입력 시점에 받지 않음(메인 생산완료 모달에서 입력).
+  function updateConversionCalculation(recipe) {
+    if (!expectedBoxEl || recipe?.category !== 'raw') return;
     const qty = getSelectedQty();
-    const history = await loadConversionHistory(recipe.id);
-    const applied = getApplicableConversion(recipe, methodKey, selectedDate, history);
-    const currentMethod = getCurrentProductionMethod(recipe, methodKey);
-
-    if (!applied) {
-      expectedBoxEl.textContent = '-';
-      conversionBlocked = true;
-      setConversionMessage('선택한 생산방식의 환산값 적용 시작일이 생산일 이후입니다. 다른 방식을 선택하거나 환산값 적용일을 조정해주세요.');
-      setConversionFutureNotice(null, null);
-      updateSaveButtonState();
+    const methods = normalizeProductionMethods(recipe.productionMethods).filter(method => method.active);
+    if (methods.length === 0) {
+      expectedBoxEl.textContent = '환산값 미등록';
       return;
     }
-
-    expectedBoxEl.textContent = qty > 0 ? `${getExpectedBox(qty, applied.unitToBox).toFixed(1)}박스` : '-';
-    conversionBlocked = false;
-    setConversionMessage('');
-    setConversionFutureNotice(currentMethod, applied);
-    updateSaveButtonState();
+    if (!(qty > 0)) {
+      expectedBoxEl.textContent = '-';
+      return;
+    }
+    expectedBoxEl.textContent = methods
+      .map(method => `${method.label} ${getExpectedBox(qty, method.unitToBox).toFixed(1)}`)
+      .join(' / ') + '박스';
   }
 
   refreshProductionFormConversion = async () => {
@@ -831,33 +783,7 @@ const ingHtml = (recipe.ingredients || []).map(ing => {
     if (!qty || qty <= 0) { alert('레시피와 생산단위는 필수입니다.'); return; }
     if (await blockIfClosed(selectedDate)) return;
 
-    let conversionPayload = null;
-    if (recipe.category === 'raw') {
-      const activeMethods = normalizeProductionMethods(recipe.productionMethods).filter(method => method.active);
-      if (activeMethods.length === 0) {
-        alert('레시피 관리에서 생산 방식별 환산값을 먼저 등록해주세요.');
-        return;
-      }
-      const methodKey = methodSelect?.value || activeMethods[0].methodKey;
-      const history = await loadConversionHistory(recipe.id);
-      const applied = getApplicableConversion(recipe, methodKey, selectedDate, history);
-      if (!applied) {
-        alert('선택한 생산방식의 환산값 적용 시작일이 생산일 이후입니다. 다른 방식을 선택하거나 환산값 적용일을 조정해주세요.');
-        return;
-      }
-      const actualBoxRaw = document.getElementById('pf_actualBox')?.value.trim() || '';
-      const actualBox = actualBoxRaw === '' ? null : Number(actualBoxRaw);
-      if (actualBox !== null && (!Number.isInteger(actualBox) || actualBox < 0)) {
-        alert('실제 박스는 0 이상의 정수로 입력해주세요.');
-        return;
-      }
-      conversionPayload = {
-        methodKey,
-        appliedUnitToBox: applied.unitToBox,
-        expectedBox: getExpectedBox(qty, applied.unitToBox),
-        actualBox,
-      };
-    }
+    // [spec_v27] 입력 시점엔 방식/실제박스를 받지 않음. 방식·판수·실제박스는 메인 생산완료(제품입고) 모달에서 기록.
 
     const unitName = recipe.ingredients?.find(i => i.isProductionUnit)?.unitName || '';
     const displayName = getRecipeDisplayName(recipe);
@@ -910,12 +836,7 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
       const totalG = (recipe.ingredients?.find(i => i.isProductionUnit)?.baseWeightG || 0) * qty;
       data.rawBoxQty = Math.ceil(totalG / recipe.packWeightG / 20);
     }
-    if (recipe.category === 'raw' && conversionPayload) {
-      data.methodKey = conversionPayload.methodKey;
-      data.expectedBox = conversionPayload.expectedBox;
-      data.actualBox = conversionPayload.actualBox;
-      data.appliedUnitToBox = conversionPayload.appliedUnitToBox;
-    }
+    // [spec_v27] raw 방식/예상/실제 박스는 생산완료 모달에서 기록 (입력 저장엔 미포함)
     if (recipe.category === 'freezeDry') {
       data.freezeDryBagQty = (recipe.freezeDryBagCountPerUnit || 0) * qty;
       data.breadPanQty = isTenderFreezeDry(recipe) ? 0 : (recipe.breadPanCountPerUnit || 0) * qty;
