@@ -1754,17 +1754,18 @@ async function openProductReceiptModal(productionId) {
   const recipe = recipes.find(r => r.id === p.recipeId);
   const target = recipe?.target || p.target || '';
 
-  let conv = {};
+  let sysVals = {};
   try {
-    const snap = await getDoc(doc(db, 'settings', 'productConversion'));
-    if (snap.exists()) conv = snap.data();
+    const snap = await getDoc(doc(db, 'settings', 'systemValues'));
+    if (snap.exists()) sysVals = snap.data();
   } catch (err) {
-    console.error('[receipt] productConversion load failed:', err);
+    console.error('[receipt] systemValues load failed:', err);
   }
-  const packsPerPlate = Number(conv[target]);
+  const pppKey = target === 'cat' ? 'packsPerPlateCat' : target === 'dog' ? 'packsPerPlateDog' : null;
+  const packsPerPlate = Number(pppKey ? sysVals[pppKey] : NaN);
   if (!Number.isFinite(packsPerPlate) || packsPerPlate <= 0) {
     const tgtLabel = target === 'cat' ? '고양이' : target === 'dog' ? '강아지' : '대상';
-    alert(`설정 > 판당 팩수에서 ${tgtLabel} 값을 먼저 등록해주세요.`);
+    alert(`설정 > 시스템 설정값에서 ${tgtLabel} 판당 팩수를 먼저 등록해주세요.`);
     return;
   }
 
