@@ -75,10 +75,7 @@ function renderProductList() {
         ${canReorder ? '<span class="drag-handle" title="순서 변경" aria-label="순서 변경">≡</span>' : ''}
         <div class="recipe-list-info">
           <span class="recipe-name">${p.name}</span>
-          <div class="recipe-tags">
-            <span style="font-size:11px;color:#888">${p.recipeTitleRef || '-'}</span>
-            ${active ? '' : '<span class="tag tag-inactive">\uBE44\uD65C\uC131</span>'}
-          </div>
+          ${active ? '' : '<div class="recipe-tags"><span class="tag tag-inactive">\uBE44\uD65C\uC131</span></div>'}
         </div>
         ${currentUserRole === 'admin' || currentUserRole === 'office' ? `
           <label class="toggle-switch" title="${active ? '활성' : '비활성'}" onclick="event.stopPropagation()">
@@ -204,13 +201,6 @@ async function showProductDetail(product) {
   const canManageFrozenProduct = currentUserRole === 'admin' || currentUserRole === 'office';
   const productActive = product.active !== false;
 
-  // 연결 봉투 정보
-  let bagName = '-';
-  if (product.bagTypeId) {
-    const bagSnap = await getDoc(doc(db, 'bagTypes', product.bagTypeId));
-    if (bagSnap.exists()) bagName = bagSnap.data().name;
-  }
-
   detail.innerHTML = `
     <div class="detail-header">
       <span class="detail-title">${product.name}</span>
@@ -220,24 +210,6 @@ async function showProductDetail(product) {
       </div>
     </div>
     <div class="detail-body">
-      <!-- 제품 정보 -->
-      <div class="form-section">
-        <div class="stat-row">
-          <div class="stat-item">
-            <span class="stat-label">연결 레시피</span>
-            <span class="stat-value">${product.recipeTitleRef || '-'}</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">연결 봉투</span>
-            <span class="stat-value">${bagName}</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">분리작업</span>
-            <span class="stat-value">${product.requiresSeparation ? '필요' : '불필요'}</span>
-          </div>
-        </div>
-      </div>
-
       <!-- 입고 이력 -->
       <div class="form-section">
         <div class="section-header">
@@ -664,30 +636,16 @@ function showIncomingModal(product) {
 
   showModal(`
     <h3 class="modal-title">입고 등록 — ${product.name}</h3>
-    <div class="form-row">
-      <div class="form-group">
-        <label>날짜</label>
-        <input type="date" id="m_date" value="${today}" />
-      </div>
-      <div class="form-group">
-        <label>유통기한</label>
-        <input type="date" id="m_expiry" value="${futureStr}" />
-      </div>
+    <div class="form-group">
+      <label>봉지수 *</label>
+      <input type="number" id="m_qty" placeholder="봉지수 입력" />
     </div>
     <div class="form-group">
-      <label>수량(개) *</label>
-      <input type="number" id="m_qty" placeholder="개수 입력" />
-    </div>
-    <div class="form-group">
-      <label>담당자</label>
+      <label>담당자 *</label>
       <select id="m_staff">
         <option value="">선택</option>
         ${getStaffOptions(['senior', 'lead', 'office'])}
       </select>
-    </div>
-    <div class="form-group">
-      <label>비고</label>
-      <input type="text" id="m_note" placeholder="비고" />
     </div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
@@ -696,13 +654,13 @@ function showIncomingModal(product) {
   `);
 
   document.getElementById('btnSaveIncoming').addEventListener('click', async () => {
-    const date = document.getElementById('m_date').value;
-    const expiry = document.getElementById('m_expiry').value;
+    const date = today;          // [입고 모달 간소화] 날짜=오늘 자동
+    const expiry = futureStr;    // 유통기한=+18개월 자동
     const qty = parseInt(document.getElementById('m_qty').value);
     const staff = document.getElementById('m_staff').value;
-    const note = document.getElementById('m_note').value;
+    const note = '';
 
-    if (!qty || !date) { alert('수량과 날짜는 필수입니다.'); return; }
+    if (!qty || qty <= 0) { alert('봉지수를 입력해주세요.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (await blockIfClosed(date)) return;
 
