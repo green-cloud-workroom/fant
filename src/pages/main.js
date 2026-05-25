@@ -1711,6 +1711,7 @@ function renderProductionTableCard(p) {
 
   return `
     <div class="main-production-card${p.category === 'raw' ? ' receivable' : ''}${p.received ? ' received' : ''}" data-id="${p.id}" style="--recipe-color:${p.color || '#ef7bd0'}">
+      ${p.received ? '<div class="main-received-stamp">입고완료</div>' : ''}
       <div class="main-production-card-title">
         ${p.recipeName}${roundBadge}
       </div>
