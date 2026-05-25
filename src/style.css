@@ -1871,6 +1871,24 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   overflow: hidden;
   min-width: 0;
   position: relative;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    filter 0.15s ease,
+    transform 0.15s ease;
+}
+
+.main-production-card.receivable {
+  cursor: pointer;
+}
+
+.main-production-card.receivable:not(.received):hover {
+  border-color: color-mix(in srgb, var(--recipe-color) 68%, #4a7c59);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--recipe-color) 36%, transparent),
+    0 8px 18px rgba(74, 124, 89, 0.18);
+  filter: brightness(1.04);
+  transform: translateY(-1px);
 }
 
 .main-production-card.received {
@@ -1880,7 +1898,12 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
 }
 
 .main-production-card.received:hover {
+  border-color: #bdbdbd;
+  box-shadow:
+    0 0 0 2px rgba(42, 112, 80, 0.12),
+    0 6px 14px rgba(0, 0, 0, 0.08);
   filter: brightness(1.02);
+  transform: translateY(-1px);
 }
 
 .main-production-card.received .main-production-card-title {
