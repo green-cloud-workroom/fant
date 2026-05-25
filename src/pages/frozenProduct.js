@@ -636,30 +636,16 @@ function showIncomingModal(product) {
 
   showModal(`
     <h3 class="modal-title">입고 등록 — ${product.name}</h3>
-    <div class="form-row">
-      <div class="form-group">
-        <label>날짜</label>
-        <input type="date" id="m_date" value="${today}" />
-      </div>
-      <div class="form-group">
-        <label>유통기한</label>
-        <input type="date" id="m_expiry" value="${futureStr}" />
-      </div>
+    <div class="form-group">
+      <label>봉지수 *</label>
+      <input type="number" id="m_qty" placeholder="봉지수 입력" />
     </div>
     <div class="form-group">
-      <label>수량(개) *</label>
-      <input type="number" id="m_qty" placeholder="개수 입력" />
-    </div>
-    <div class="form-group">
-      <label>담당자</label>
+      <label>담당자 *</label>
       <select id="m_staff">
         <option value="">선택</option>
         ${getStaffOptions(['senior', 'lead', 'office'])}
       </select>
-    </div>
-    <div class="form-group">
-      <label>비고</label>
-      <input type="text" id="m_note" placeholder="비고" />
     </div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
@@ -668,13 +654,13 @@ function showIncomingModal(product) {
   `);
 
   document.getElementById('btnSaveIncoming').addEventListener('click', async () => {
-    const date = document.getElementById('m_date').value;
-    const expiry = document.getElementById('m_expiry').value;
+    const date = today;          // [입고 모달 간소화] 날짜=오늘 자동
+    const expiry = futureStr;    // 유통기한=+18개월 자동
     const qty = parseInt(document.getElementById('m_qty').value);
     const staff = document.getElementById('m_staff').value;
-    const note = document.getElementById('m_note').value;
+    const note = '';
 
-    if (!qty || !date) { alert('수량과 날짜는 필수입니다.'); return; }
+    if (!qty || qty <= 0) { alert('봉지수를 입력해주세요.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (await blockIfClosed(date)) return;
 
