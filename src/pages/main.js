@@ -2,7 +2,7 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy, setDoc, where, deleteDoc, serverTimestamp, limit, startAfter, writeBatch
 } from 'firebase/firestore';
-import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDayByType as getNextBusinessDay, loadHolidaysCache, getHolidaysCache, getHolidayDataNotice } from '../utils/date.js';
+import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDayByType as getNextBusinessDay, loadHolidaysCache, getHolidaysCache, getHolidayInfoCache, getHolidayDataNotice } from '../utils/date.js';
 import { getAllBlockingItems } from '../services/closingChecks.js';
 import { setCurrentMenu, currentUserRole } from '../app.js';
 import { renderLayout } from '../layout.js';
@@ -304,6 +304,7 @@ function renderCalendar() {
   const { dates } = getCalendarRange(calendarWeekOffset);
   const today = getToday();
   const holidays = getHolidaysCache();
+  const holidayInfo = getHolidayInfoCache();
 
   // 월요일 시작 요일 헤더
   const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
@@ -322,18 +323,26 @@ function renderCalendar() {
         ${weekdays.map((w, i) => `<div class="cal-weekday ${i >= 5 ? 'cal-weekday-weekend' : ''}">${w}</div>`).join('')}
       </div>
       <div class="cal-grid">
-        ${dates.map(date => renderCalendarCell(date, today, holidays)).join('')}
+        ${dates.map(date => renderCalendarCell(date, today, holidays, holidayInfo)).join('')}
       </div>
     </div>
   `;
 }
 
 // 캘린더 셀 1개 (= 1일)
-function renderCalendarCell(date, today, holidays) {
+function renderCalendarCell(date, today, holidays, holidayInfo) {
   const d = new Date(date + 'T00:00:00');
   const dow = (d.getDay() + 6) % 7;  // 월=0, ..., 일=6
   const isWeekend = dow >= 5;
-  const isHoliday = isWeekend || holidays.includes(date);
+  const holiday = holidayInfo[date] || null;
+  const nextHoliday = holidayInfo[getCalendarOffsetDate(date, 1)] || null;
+  const isShippingOnlyClosed = !isWeekend
+    && holiday?.affectsProduction !== true
+    && (
+      holiday?.affectsShipping === true
+      || (nextHoliday?.affectsShipping === true && nextHoliday.shippingClosedFromEnabled === true)
+    );
+  const isHoliday = !isShippingOnlyClosed && (isWeekend || holiday?.affectsProduction === true || (!holiday && holidays.includes(date)));
   const isToday = (date === today);
 
   const events = calendarEvents.filter(e => e.date === date);
@@ -367,10 +376,12 @@ function renderCalendarCell(date, today, holidays) {
   const parts = date.split('-');
   const dayNum = parseInt(parts[2], 10);
   const dateLabel = dayNum === 1 ? `${parseInt(parts[1], 10)}/${dayNum}` : String(dayNum);
+  const shippingClosedLabel = isShippingOnlyClosed ? '배송불가일' : '';
 
   const cls = [
     'cal-cell',
     isHoliday ? 'cal-cell-holiday' : '',
+    isShippingOnlyClosed ? 'cal-cell-shipping-closed' : '',
     isToday ? 'cal-cell-today' : '',
   ].filter(Boolean).join(' ');
 
@@ -378,6 +389,7 @@ function renderCalendarCell(date, today, holidays) {
     <div class="${cls}" data-date="${date}">
       <div class="cal-cell-date-row">
         <span class="cal-cell-date">${dateLabel}</span>
+        ${shippingClosedLabel ? `<span class="cal-shipping-closed-label">(${shippingClosedLabel})</span>` : ''}
       </div>
       <div class="cal-cell-tags">${tagBlocks.join('')}</div>
     </div>
@@ -385,6 +397,15 @@ function renderCalendarCell(date, today, holidays) {
 }
 
 // 캘린더 좌우 이동 + 셀 클릭 바인딩
+function getCalendarOffsetDate(dateStr, days) {
+  const date = new Date(dateStr + 'T00:00:00');
+  date.setDate(date.getDate() + days);
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function bindCalendarEvents() {
   document.getElementById('btnCalPrev')?.addEventListener('click', () => {
     calendarWeekOffset -= 1;
