@@ -1,4 +1,4 @@
-﻿# Fantapet Management Codebase Notes
+# Fantapet Management Codebase Notes
 
 Last updated: 2026-05-19
 
@@ -65,8 +65,8 @@ Last updated: 2026-05-19
 
 - 2026-05-13 Phase 1 second bundle (C-2/C-3) completed:
   - C-2 closing warning popup unified with the closing blocker modal pattern. `showBlockingModal()` now supports `variant: 'block' | 'warning'`; warning mode uses the same item/detail layout, amber styling, no "go process" buttons, and `Cancel / Still close` actions before the staff close modal.
-  - C-3 mojibake sweep completed with no source changes needed. `src/**/*.js/html/css` had 0 hits for representative mojibake/BOM/NFD patterns (`창`, `횄`, `占?, `\u00`, `\xc3`, `챦쨩쩔`, Hangul Jamo range). The only dist hit is inside bundled xlsx/SheetJS internals and has no UI impact. Past `meat.js` mojibake found during 7F-2 was already restored.
-  - Removed the user-visible frozen-pan placeholder button: the unimplemented `?숆껐??lot ?붾웾` `+ ?섎룞 議곗젙` button and its "異뷀썑 異붽? ?덉젙" alert were removed. Bread-pan manual adjustment remains implemented and unchanged.
+  - C-3 mojibake sweep completed with no source changes needed. `src/**/*.js/html/css` had 0 hits for representative mojibake/BOM/NFD patterns. The only dist hit is inside bundled xlsx/SheetJS internals and has no UI impact. Past `meat.js` mojibake found during 7F-2 was already restored.
+  - Removed the user-visible frozen-pan placeholder button: the unimplemented `동결판 lot 용량` `+ 자동 조정` button and its "추후 추가 예정" alert were removed. Bread-pan manual adjustment remains implemented and unchanged.
   - Verification: `npm.cmd run build` passed. Expected build warnings remain chunk size and ineffective dynamic import warnings.
 
 - 2026-05-12 E2/E3 closeout:
@@ -97,53 +97,53 @@ Last updated: 2026-05-19
   - Existing mappings/history are preserved when editing: inactive linked bag/meat options remain selectable only for the already-linked record.
   - `meatTypes` delete UI was removed. Wrongly entered master data should be set inactive, not deleted.
   - Active toggles write `activityLogs` with `subAction: activeToggle`.
-- 臾띠쓬 b ?꾨즺.
-  - B1: 留덇컧 李⑤떒 4/5/6 諛?寃쎄퀬 1/2/3 異붽?.
-  - B1: `settings/closingFlags` ?쎄린 異붽?. 臾몄꽌 ?놁쑝硫??꾨? ON.
-  - B1: 李⑤떒 0嫄?+ 寃쎄퀬留??덉쓣 ??"洹몃옒??留덇컧?" ?뺤씤 ??留덇컧 吏꾪뻾 遺꾧린 異붽?.
-  - B2: ?댁씪?앹궛遺덈윭?ㅺ린 李⑤떒 5議곌굔 湲곗〈 援ы쁽 吏꾨떒 ?듦낵.
-  - B3: 怨꾨?/遊됲닾/?먯쑁 理쒖냼?ш퀬 ?먮룞 諛쒗뻾 留ㅼ씪 1??寃곗젙??doc id ?⑦꽩 ?뺤씤.
-  - B4: ?낃퀬?덉젙 以묐났 李⑤떒/?⑥쐞 ?쒗븳/?뺣젹 諛?frozenSep ?먮룞 寃곗젙/?먮룞 異붿젙 吏꾨떒 ?듦낵.
-  - B4-6-4: ?낃퀬?덉젙 ?섏젙 踰꾪듉/?섏젙 紐⑤떖/留덇컧 媛??異붽?.
-- 臾띠쓬 c ?꾨즺.
-  - 沅뚰븳 留ㅽ듃由?뒪 猷?B/C ???踰꾪듉 DOM ?쒓굅 1李??곸슜.
-  - production?먯꽌 ?④꺼???섎뒗 踰꾪듉? ?뚮뜑 ?④퀎?먯꽌 ?쒓굅.
-  - ?⑥닔 ?대? 沅뚰븳 泥댄겕???댁쨷 ?덉쟾留앹쑝濡??좎?.
-  - settings 硫붾돱??production?먭쾶 蹂댁씠吏留??대┃ ??alert ??吏꾩엯 李⑤떒.
-  - settings ?대떦???대깽??諛붿씤?⑹? admin/office???뚮쭔 ?ㅽ뻾?섎룄濡?蹂댁젙.
-- 臾띠쓬 a ?꾨즺.
-  - 怨꾨? ?꾩옱 ?ш퀬 移대뱶??FIFO 媛???붾웾 ?쇱묠/?묓옒 ?쒖떆 異붽?.
-  - `eggLogs` ?꾩껜瑜?timestamp ?쒓컙?쒖쑝濡??ъ깮??lot蹂??붾웾 怨꾩궛.
-  - FIFO 遺꾪빐 ?⑷퀎? `eggStock/global.currentQty` ?뺥빀??寃쎄퀬 ?쒖떆.
-- 臾띠쓬 9 沅뚰븳 留ㅽ듃由?뒪 1李??먭?/?뺣━ ?꾨즺.
-- 臾띠쓬 9 #9 ?먮룞 ?ы룷???뺤씤 紐⑤떖 諛?李⑥씠 泥섎━ ?댁쁺 寃利??꾨즺.
-- ?댁씪?앹궛遺덈윭?ㅺ린 / 留덇컧 / 留덇컧?댁젣 沅뚰븳 ?뺤콉???댁쁺??寃곗젙??留욊쾶 議곗젙??
-- ?덉떆????젣 湲곕뒫? spec??留욎떠 ?꾩쟾 ?쒓굅?? ?덉떆?쇰뒗 ?쒖꽦/鍮꾪솢???좉?留??ъ슜.
-- ?먯쑁 ?낃퀬 ?깅줉? ?꾩옣 ?묒뾽?쇰줈 ?먮떒?섏뿬 production??媛?ν븯寃?蹂寃쎈맖.
-- 臾띠쓬 7 ?듦퀎 湲곕뒫 ?꾨즺.
-- ?듦퀎 ?섏씠吏??5媛???쑝濡?援ъ꽦??
-  - ?앹궛??
-  - ?먮즺 ?뚮え??
-  - 遊됲닾 ?뚮え??
-  - 怨꾨? ?ъ슜??
-  - ?쇰퀎 ?앹궛 ?꾪솴
+- 묶음 b 완료.
+  - B1: 마감 차단 4/5/6 및 경고 1/2/3 추가.
+  - B1: `settings/closingFlags` 읽기 추가. 문서 없으면 전부 ON.
+  - B1: 차단 0건 + 경고만 있을 때 "그래도 마감?" 확인 후 마감 진행 분기 추가.
+  - B2: 내일생산불러오기 차단 5조건 기존 구현 진단 통과.
+  - B3: 계란/봉투/원육 최소재고 자동 발행 매일 1회 결정적 doc id 패턴 확인.
+  - B4: 입고예정 중복 차단/단위 제한/정렬 및 frozenSep 자동 결정/자동 추정 진단 통과.
+  - B4-6-4: 입고예정 수정 버튼/수정 모달/마감 가드 추가.
+- 묶음 c 완료.
+  - 권한 매트릭스 류 B/C 단계 버튼 DOM 제거 1차 적용.
+  - production에서 핸들 수 없는 버튼은 렌더 단계에서 제거.
+  - 함수 내부 권한 체크는 이중 안전망으로 유지.
+  - settings 메뉴는 production에게 보이지만 클릭 시 alert 후 진입 차단.
+  - settings 해당 이벤트 바인딩은 admin/office일 때만 실행하도록 보정.
+- 묶음 a 완료.
+  - 계란 현재 재고 카드에 FIFO 가용 용량 일괄/낱개 표시 추가.
+  - `eggLogs` 전체를 timestamp 시간순으로 재생해 lot별 용량 계산.
+  - FIFO 분해 합계와 `eggStock/global.currentQty` 정합성 경고 표시.
+- 묶음 9 권한 매트릭스 1차 검토/정리 완료.
+- 묶음 9 #9 자동 재포장 확인 모달 및 차이 처리 운영 검증 완료.
+- 내일생산불러오기 / 마감 / 마감해제 권한 정책을 운영 결정에 맞게 조정함.
+- 레시피 삭제 기능은 spec에 맞춰 완전 제거함. 레시피는 활성/비활성 토글만 사용.
+- 원육 입고 등록은 현장 작업으로 판단하여 production도 가능하게 변경됨.
+- 묶음 7 통계 기능 완료.
+- 통계 페이지는 5개 탭으로 구성됨.
+  - 생산량
+  - 원료 소모량
+  - 봉투 소모량
+  - 계란 사용량
+  - 일별 생산 현황
 - 영양제
-- 李⑦듃 4醫??곸슜 ?꾨즺.
-  - ?앹궛?? ?덉떆?쇰퀎 爰얠???
-  - ?먮즺 ?뚮え?? ?먮즺蹂?爰얠???
-  - 遊됲닾 ?뚮え?? 遊됲닾蹂?stacked 留됰?
-  - 怨꾨? ?ъ슜?? ?⑥씪 爰얠???
-- Excel ?ㅼ슫濡쒕뱶 ?꾨즺.
-  - ?쒖꽦 ??媛쒕퀎 ?ㅼ슫濡쒕뱶
-  - 6???꾩껜 ?쇨큵 ?ㅼ슫濡쒕뱶
+- 차트 4종 적용 완료.
+  - 생산량: 레시피별 꺾은선
+  - 원료 소모량: 원료별 꺾은선
+  - 봉투 소모량: 봉투별 stacked 막대
+  - 계란 사용량: 단일 꺾은선
+- Excel 다운로드 완료.
+  - 활성 탭 개별 다운로드
+  - 6탭 전체 일괄 다운로드
 
 ## New Dependencies
 
 - `chart.js`
-  - ?듦퀎 李⑦듃 ?뚮뜑留?
-  - `Chart.register(...registerables)` ?ъ슜.
+  - 통계 차트 렌더링.
+  - `Chart.register(...registerables)` 사용.
 - `xlsx`
-  - Excel ?뚯씪 ?앹꽦 諛??ㅼ슫濡쒕뱶.
+  - Excel 파일 생성 및 다운로드.
 - `firebase-admin`
   - Dev dependency for `scripts/setCustomClaims.mjs`.
 - `gh-pages`
@@ -215,44 +215,44 @@ spec_v24 / Work A:
 - Auto alert doc id follows the existing per-item pattern: `auto_minStock_alert_{date}_{dedupKey}`.
 - `OFFICE_LOG_ACTIONS` includes both `supplementStock` and `recipe`; recipe active-toggle logs now appear in the office log category.
 
-硫붿씤 ?붾㈃, ?댁씪?앹궛遺덈윭?ㅺ린, ?앹궛 濡쒓렇, 罹섎┛?? 留덇컧 愿???먮쫫.
+메인 화면, 내일생산불러오기, 생산 로그, 캘린더, 마감 관련 흐름.
 
-臾띠쓬 9 #9:
-- ?먮룞 ?ы룷??trigger 濡쒓렇 ?뺤씤 ???꾩슜 紐⑤떖 ?쒖떆.
-- ?ㅼ젣 ?ы룷??媛쒖닔 ?낅젰 ??g ?섏궛 諛??쒖뒪???섎웾怨?李⑥씠 ?쒖떆.
-- 李⑥씠 ?놁쓬: trigger 濡쒓렇 ack留?泥섎━?섍퀬 lot ?붾웾? 蹂寃쏀븯吏 ?딆쓬.
-- 李⑥씠 ?덉쓬: `meatStocks/{repackedStockId}.remaining` 蹂댁젙 ??`activityLogs`??`autoRepack:diff` 濡쒓렇 諛쒗뻾.
-- 0媛??낅젰: ?뺤씤 ?앹뾽 ??lot `remaining: 0`, `closed: true` 泥섎━.
-- `autoRepack:diff`???뺤씤 ?꾩닔 濡쒓렇濡??쒖떆.
-- ?댁씪?앹궛遺덈윭?ㅺ린 李⑤떒 5議곌굔 #4???먮룞 ?ы룷??誘명솗??濡쒓렇 ?ы븿.
+묶음 9 #9:
+- 자동 재포장 trigger 로그 확인 후 전용 모달 표시.
+- 실제 재포장 개수 입력 시 g 환산 및 시스템 수량과 차이 표시.
+- 차이 없음: trigger 로그 ack만 처리하고 lot 용량은 변경하지 않음.
+- 차이 있음: `meatStocks/{repackedStockId}.remaining` 보정 후 `activityLogs`에 `autoRepack:diff` 로그 발행.
+- 0개 입력: 확인 팝업 후 lot `remaining: 0`, `closed: true` 처리.
+- `autoRepack:diff`는 확인 필수 로그로 표시.
+- 내일생산불러오기 차단 5조건 #4에 자동 재포장 미확인 로그 포함.
 
-沅뚰븳 蹂寃?
-- ?댁씪?앹궛遺덈윭?ㅺ린: ?꾩껜 怨꾩젙 媛??
-- ?댁씪?앹궛遺덈윭?ㅺ린 痍⑥냼: ?꾩껜 怨꾩젙 媛?? ?ъ쑀/?대떦???쒕룞 濡쒓렇???좎?.
-- 硫붿씤 ?덈줈怨좎묠(`handleRefreshCompletion`): admin/office留?媛?? production 李⑤떒 + DOM ?쒓굅.
-- 罹섎┛???대깽???깅줉/?섏젙/??젣: admin/office留?媛??+ production DOM ?쒓굅.
+권한 변경:
+- 내일생산불러오기: 전체 계정 가능.
+- 내일생산불러오기 취소: 전체 계정 가능. 사유/담당자/수동 로그는 유지.
+- 메인 새로고침(`handleRefreshCompletion`): admin/office만 가능. production 차단 + DOM 제거.
+- 캘린더 이벤트 등록/수정/삭제: admin/office만 가능 + production DOM 제거.
 
-臾띠쓬 b/c:
-- ?댁씪?앹궛遺덈윭?ㅺ린 李⑤떒 5議곌굔? `gatherTomorrowLoadBlockers(today)`?먯꽌 ?뺤씤.
-- 理쒖냼?ш퀬 ?먮룞 諛쒗뻾? `triggerMinStockLogs(today)` / `ensureAutoLog()`??寃곗젙??doc id濡?留ㅼ씪 1??蹂댁옣.
-- `minStock:alert`???쇰컲 ?앹궛/?щТ 濡쒓렇 李⑤떒???ы븿?섏? ?딄퀬 寃쎄퀬 ?꾨떞?쇰줈 泥섎━.
+묶음 b/c:
+- 내일생산불러오기 차단 5조건은 `gatherTomorrowLoadBlockers(today)`에서 확인.
+- 최소재고 자동 발행은 `triggerMinStockLogs(today)` / `ensureAutoLog()`의 결정적 doc id로 매일 1회 보장.
+- `minStock:alert`는 일반 생산/사무 로그 차단에 포함하지 않고 경고 전담으로 처리.
 
-二쇱쓽:
-- `activityLogs` ?뚯뒪??濡쒓렇??Firestore rules??delete媛 留됲옄 ???덉쓬. 寃利?以??앹꽦??濡쒓렇???꾩슂 ??acknowledged 泥섎━濡??뺣━.
+주의:
+- `activityLogs` 테스트 로그는 Firestore rules에서 delete가 막힐 수 있음. 검증 중 생성된 로그는 필요 시 acknowledged 처리로 정리.
 
 ### `src/layout.js`
 
-留덇컧/留덇컧?댁젣 踰꾪듉 諛??꾩뿭 layout.
+마감/마감해제 버튼 및 전역 layout.
 
-沅뚰븳 蹂寃?
-- 留덇컧/留덇컧?댁젣 沅뚰븳 泥댄겕 ?쒓굅. ?꾩껜 怨꾩젙 媛??
-- 湲곗〈 李⑤떒 議곌굔, ?ъ쑀/?대떦???낅젰, ?쒕룞 濡쒓렇???좎?.
-- production??settings 硫붾돱 ?대┃ ??alert ??吏꾩엯 李⑤떒.
+권한 변경:
+- 마감/마감해제 권한 체크 제거. 전체 계정 가능.
+- 기존 차단 조건, 사유/담당자 입력, 수동 로그는 유지.
+- production이 settings 메뉴 클릭 시 alert 후 진입 차단.
 
-臾띠쓬 b:
-- 留덇컧 泥댄겕 寃곌낵??`warnings` / `totalWarnings` / `flags`媛 異붽???
-- 李⑤떒 ??ぉ???덉쑝硫?湲곗〈 李⑤떒 ?앹뾽?쇰줈 留덇컧 以묐떒.
-- 李⑤떒 0嫄?+ 寃쎄퀬留??덉쑝硫??⑥씪 confirm ???대떦???좏깮 紐⑤떖濡?吏꾪뻾.
+묶음 b:
+- 마감 체크 결과에 `warnings` / `totalWarnings` / `flags`가 추가됨.
+- 차단 항목이 있으면 기존 차단 팝업으로 마감 중단.
+- 차단 0건 + 경고만 있으면 단일 confirm 후 담당자 선택 모달로 진행.
 
 ### `src/services/closingChecks.js`
 
@@ -261,17 +261,17 @@ spec_v24:
 - Loads `supplementTypes` and `supplementStock`, then passes them to supplement minimum-stock judgment.
 - Supplement minimum warnings are warnings only, not closing blockers.
 
-留덇컧 李⑤떒/寃쎄퀬 泥댄겕 Firestore wrapper.
+마감 차단/경고 체크 Firestore wrapper.
 
-臾띠쓬 b:
-- `settings/closingFlags` 臾몄꽌 ?쎄린 異붽?.
-- 臾몄꽌媛 ?녾굅???쇰? ?꾨뱶媛 ?놁쑝硫?湲곕낯媛?ON.
-- 湲곗〈 諛섑솚 ?꾨뱶瑜??좎??섎㈃??`warnings`, `totalWarnings`, `flags` 異붽?.
-- autoRepack 誘명솗??濡쒓렇, ?쇰컲 ?앹궛 濡쒓렇 誘명솗?? ?쇰컲 ?щТ 濡쒓렇 誘명솗?? ?댁씪 ?앹궛 ?놁쓬, 遊됲닾 理쒖냼?ш퀬, ?먯쑁 理쒖냼?ш퀬 ??ぉ??議고쉶.
+묶음 b:
+- `settings/closingFlags` 문서 읽기 추가.
+- 문서가 없거나 일부 필드가 없으면 기본값 ON.
+- 기존 반환 필드를 유지하면서 `warnings`, `totalWarnings`, `flags` 추가.
+- autoRepack 미확인 로그, 일반 생산 로그 미확인, 일반 사무 로그 미확인, 내일 생산 없음, 봉투 최소재고, 원육 최소재고 항목을 조회.
 
-二쇱쓽:
-- B5 ?ㅼ젙 UI???꾩쭅 ?놁쓬. 諛깆뿏???쎄린留?以鍮꾨맖.
-- B5 吏꾪뻾 ??理쒖냼?ш퀬 ?먮룞 諛쒗뻾??`warnBagMin` / `warnMeatMin` flag false????skip?섎룄濡??곌껐 ?꾩슂.
+주의:
+- B5 설정 UI는 아직 없음. 백엔드 읽기만 준비됨.
+- B5 진행 시 최소재고 자동 발행을 `warnBagMin` / `warnMeatMin` flag false일 때 skip하도록 연결 필요.
 
 ### `src/services/closingChecksLogic.js`
 
@@ -280,40 +280,40 @@ spec_v24:
 - `judgeSupplementMinimumStock()` treats active supplement SKUs under 5 bags as warning items.
 - Warning slot 4 is supplement minimum stock; it uses the same warning-modal detail pattern as bag/meat minimum warnings.
 
-留덇컧 李⑤떒/寃쎄퀬 ?쒖닔 ?먯젙 濡쒖쭅.
+마감 차단/경고 순수 판정 로직.
 
-臾띠쓬 b:
-- 李⑤떒 4/5/6 諛?寃쎄퀬 1/2/3 ?먯젙 異붽?.
-- 李⑤떒 4 autoRepack ?꾩슜 ??ぉ怨?李⑤떒 5 ?쇰컲 ?앹궛 濡쒓렇 ??ぉ 遺꾨━.
-- 李⑤떒 5?먯꽌??`autoRepack:trigger`, `autoRepack:diff`, `minStock:alert` ?쒖쇅.
-- 李⑤떒 6?먯꽌??`minStock:alert` ?쒖쇅.
+묶음 b:
+- 차단 4/5/6 및 경고 1/2/3 판정 추가.
+- 차단 4 autoRepack 전용 항목과 차단 5 일반 생산 로그 항목 분리.
+- 차단 5에서는 `autoRepack:trigger`, `autoRepack:diff`, `minStock:alert` 제외.
+- 차단 6에서는 `minStock:alert` 제외.
 
 ### `src/pages/frozenPan.js`
 
-?숆껐??鍮듯뙋 ?ш퀬 諛?諛쒖＜ ?먮쫫.
+동결판/빵판 재고 및 발주 흐름.
 
-沅뚰븳 蹂寃?
-- 諛쒖＜ 痍⑥냼(`cancelOrder`): admin/office留?媛?? production 李⑤떒.
-- ?뺤씤 ?꾨즺??諛쒖＜ 痍⑥냼 踰꾪듉? production?먯꽌 DOM ?쒓굅.
-- 鍮듯뙋/?먮뜑?숆껐 ?낃퀬 諛??섎룞議곗젙 怨꾩뿴? production 媛??
+권한 변경:
+- 발주 취소(`cancelOrder`): admin/office만 가능. production 차단.
+- 확인 완료된 발주 취소 버튼은 production에서 DOM 제거.
+- 빵판/텐더동결 입고 및 수동조정 계열은 production 가능.
 
-spec_v20 13???댁꽍:
-- ?뺤씤 ??諛쒖＜?됱쓽 "諛쒖＜ ??젣"???ш퀬 李④컧 ????젣?대ŉ production 媛?μ쑝濡??좎?.
-- ?뺤씤 ?꾨즺??諛쒖＜?됱쓽 "諛쒖＜ 痍⑥냼"??ledger 濡ㅻ갚 痍⑥냼?대ŉ admin/office留?媛??
+spec_v20 13번 해석:
+- 확인 전 발주행의 "발주 삭제"는 재고 차감 전 삭제이며 production 가능으로 유지.
+- 확인 완료된 발주행의 "발주 취소"는 ledger 롤백 취소이며 admin/office만 가능.
 
 ### `src/pages/frozenProduct.js`
 
-?숆껐?쒗뭹 ?낃퀬.
+동결제품 입고.
 
-沅뚰븳 蹂寃?
-- ?숆껐?쒗뭹 醫낅쪟 master 異붽?/?섏젙: admin/office留?媛?? production DOM ?쒓굅.
-- ?숆껐?쒗뭹 ?낃퀬 ?섏젙: admin/office留?媛?? production 李⑤떒.
-- ?숆껐?쒗뭹 ?낃퀬 ??젣: admin/office留?媛?? production 李⑤떒.
-- ?숆껐?쒗뭹 ?낃퀬 ?섏젙/??젣 踰꾪듉? production?먯꽌 DOM ?쒓굅.
+권한 변경:
+- 동결제품 종류 master 추가/수정: admin/office만 가능. production DOM 제거.
+- 동결제품 입고 수정: admin/office만 가능. production 차단.
+- 동결제품 입고 삭제: admin/office만 가능. production 차단.
+- 동결제품 입고 수정/삭제 버튼은 production에서 DOM 제거.
 
 ### `src/pages/schedule.js`
 
-?낃퀬 ?덉젙愿由?
+입고 예정관리.
 
 v26 / Phase 2a:
 - Incoming schedule registration/edit resolves dates through `resolveScheduleBusinessDate(date)`.
@@ -321,22 +321,22 @@ v26 / Phase 2a:
 - Shipping business-day logic considers Sunday plus holidays where `affectsShipping === true`; `shippingClosedFromEnabled === true` also blocks shipping on the preceding day.
 - Smoke test passed with `2026-05-17` (Sunday) changing to `2026-05-18`.
 
-臾띠쓬 b:
-- 媛숈? ?좎쭨/援щ텇/?덈ぉ 以묐났 ?깅줉 李⑤떒 ?뺤씤.
-- ?⑥쐞 ?쒗븳 ?뺤씤.
-  - ?먯쑁: g/kg
-  - 遊됲닾: ??諛뺤뒪
-  - 怨꾨?: 媛???
-- ?뺣젹 ?뺤씤: ?좎쭨 ?ㅻ쫫李⑥닚, 媛숈? ?좎쭨??理쒖떊 ?깅줉 ??
-- ?낃퀬?덉젙 ?섏젙 踰꾪듉 諛??섏젙 紐⑤떖 異붽?.
-  - ?섏젙 ?덉슜: ?덉젙?? ?섎웾, ?⑥쐞, ?대떦?? 硫붾え.
-  - 援щ텇/type 諛??덈ぉ/itemId???섏젙 遺덇?.
-  - ?섏젙 ??湲곗〈 ?좎쭨? ???좎쭨 以??섎굹?쇰룄 留덇컧?대㈃ 李⑤떒.
-  - ?섏젙 ??`activityLogs` 諛쒗뻾.
+묶음 b:
+- 같은 날짜/구분/항목 중복 등록 차단 확인.
+- 단위 제한 확인.
+  - 원육: g/kg
+  - 봉투: 장/박스
+  - 계란: 개/판
+- 정렬 확인: 날짜 오름차순, 같은 날짜는 최신 등록 순.
+- 입고예정 수정 버튼 및 수정 모달 추가.
+  - 수정 허용: 예정일, 수량, 단위, 담당자, 메모.
+  - 구분/type 및 항목/itemId는 수정 불가.
+  - 수정 시 기존 날짜나 새 날짜 중 하나라도 마감되면 차단.
+  - 수정 시 `activityLogs` 발행.
 
-臾띠쓬 c:
-- ?낃퀬?덉젙 ?깅줉/?섏젙/痍⑥냼 踰꾪듉? admin/office留??뚮뜑.
-- ?꾨즺 踰꾪듉? 湲곗〈 ?댁쁺 ?먮쫫?濡??좎?.
+묶음 c:
+- 입고예정 등록/수정/취소 버튼은 admin/office만 렌더.
+- 완료 버튼은 기존 운영 흐름대로 유지.
 
 ### `src/pages/recipe.js`
 
@@ -356,13 +356,13 @@ PR #2 / pre-launch (2026-05-21):
 - Recipe master edit affordances are gated to admin/office. The `+ 신규 추가` button, detail-form 저장/삭제 buttons, and the list active toggle are hidden or disabled for the `production` role; `saveRecipe` and the active-toggle handler also guard defensively. Detail-form inputs stay visible to production but have no persist path (운영 발견사항 #20).
 - Recipes have a `usesSupplement` boolean (default true; missing = true) with a "영양제 사용" checkbox in the recipe form. When false (e.g., 텐더동결 products with no supplement), `saveRecipe` creates no `supplementTypes`/`supplementStock` for the recipe (and deletes existing ones when toggled off via `removedUnits`), and `production.js` skips the supplement deduct/refund transaction on new/edit save. Delete refund is `supplementLogs`-driven, so it is already a no-op when none exist.
 
-?덉떆??愿由?
+레시피 관리.
 
-沅뚰븳/湲곕뒫 蹂寃?
-- ?덉떆????젣 踰꾪듉 ?쒓굅.
-- `deleteRecipe()` ?⑥닔 ?쒓굅.
-- `deleteDoc` / `showConfirmModal` ??젣 愿??import ?쒓굅.
-- spec 7??湲곗?: ?덉떆?쇰뒗 ??젣?섏? ?딄퀬 ?쒖꽦/鍮꾪솢???좉?濡?愿由?
+권한/기능 변경:
+- 레시피 삭제 버튼 제거.
+- `deleteRecipe()` 함수 제거.
+- `deleteDoc` / `showConfirmModal` 삭제 관련 import 제거.
+- spec 7번 기준: 레시피는 삭제하지 않고 활성/비활성 토글로 관리.
 
 ### `src/pages/stats.js`
 
@@ -372,19 +372,19 @@ spec_v24:
 - Aggregates stock-in, net usage from `autoDeduct`, manual adjustment, and current stock by supplement SKU.
 - Excel all-download now exports 6 sheets including supplement data.
 
-?듦퀎 ?섏씠吏 ?꾩껜 援ы쁽 ?뚯씪.
+통계 페이지 전체 구현 파일.
 
-二쇱슂 湲곕뒫:
-- 湲곌컙 紐⑤뱶: 二쇨컙 / ?붽컙 / 吏곸젒
-- 吏묎퀎 ?⑥쐞: ?쇰퀎 / 二쇰퀎 / ?붾퀎 / ?곕퀎
-- Firestore ?대씪?댁뼵??吏묎퀎
-- Chart.js 李⑦듃 ?앹꽦 諛?destroy ?쇱씠?꾩궗?댄겢 愿由?
-- ?덉떆??/ ?먮즺 / 遊됲닾 泥댄겕諛뺤뒪 ?좉?
-- ?곗씠???녿뒗 湲곌컙 泥섎━
-- 媛쒕퀎 Excel ?ㅼ슫濡쒕뱶
-- ?꾩껜 Excel ?ㅼ슫濡쒕뱶
+주요 기능:
+- 기간 모드: 주간 / 월간 / 직접
+- 집계 단위: 일별 / 주별 / 월별 / 연별
+- Firestore 클라이언트 집계
+- Chart.js 차트 생성 및 destroy 라이프사이클 관리
+- 레시피 / 원료 / 봉투 체크박스 토글
+- 데이터 없는 기간 처리
+- 개별 Excel 다운로드
+- 전체 Excel 다운로드
 
-Firestore ?쎄린:
+Firestore 읽기:
 - `productions`
 - `bagLogs`
 - `eggLogs`
@@ -392,7 +392,7 @@ Firestore ?쎄린:
 - `bagTypes`
 - `meatTypes`
 
-罹먯떆/?곹깭:
+캐시/상태:
 - `lastProductionAgg`
 - `lastMeatAgg`
 - `lastBagAgg`
@@ -408,47 +408,47 @@ Firestore ?쎄린:
 - `meatTypeShowInStatsMap`
 - `meatTypeAutoDeductMap`
 
-二쇱쓽:
-- Chart.js ?몄뒪?댁뒪?????꾪솚 / ?섏씠吏 ?ъ쭊??/ ???뚮뜑留??꾩뿉 `destroyAllCharts()`濡??뺣━?댁빞 ??
-- 泥댄겕諛뺤뒪 ?좉?? Firestore ?ъ옘由??놁씠 罹먯떆??吏묎퀎 ?곗씠?곕줈 李⑦듃 dataset留??ъ깮??
-- `bagLogs`?먮뒗 `piecesPerBox` ?ㅻ깄?룹씠 ?놁쓬. ?듦퀎?먯꽌???꾩옱 `bagTypes.piecesPerBox` 媛믪쓣 ?ъ슜??
-- ?곕씪??`piecesPerBox`瑜??섏쨷??諛붽씀硫?怨쇨굅 遊됲닾 ?듦퀎????湲곗??쇰줈 ?섏궛??
+주의:
+- Chart.js 인스턴스는 탭 전환 / 페이지 재진입 / 재렌더링 전에 `destroyAllCharts()`로 정리해야 함.
+- 체크박스 토글은 Firestore 재쿼리 없이 캐시된 집계 데이터로 차트 dataset만 재생성.
+- `bagLogs`에는 `piecesPerBox` 스냅샷이 없음. 통계에서는 현재 `bagTypes.piecesPerBox` 값을 사용함.
+- 따라서 `piecesPerBox`를 나중에 바꾸면 과거 봉투 통계도 새 기준으로 환산됨.
 
 ### `src/pages/meat.js`
 
-?먯쑁 ?ш퀬 諛??먯쑁 醫낅쪟 愿由?
+원육 재고 및 원육 종류 관리.
 
-沅뚰븳 蹂寃?
-- ?먯쑁 醫낅쪟 master 愿由? admin/office留?媛?? production DOM ?쒓굅.
-- ?먯쑁 ?낃퀬 ?깅줉: ?꾩껜 怨꾩젙 媛?? ?꾩옣?먯꽌 ?ㅼ젣 ?낃퀬 ?섎웾 ?뺤씤 ???깅줉?섎뒗 ?묒뾽?쇰줈 production ?덉슜.
-- ?꾩쿂由??ы룷???섎룞議곗젙 怨꾩뿴: production 媛??
+권한 변경:
+- 원육 종류 master 관리: admin/office만 가능. production DOM 제거.
+- 원육 입고 등록: 전체 계정 가능. 현장에서 실제 입고 수량 확인 후 등록하는 작업으로 production 허용.
+- 전처리/재포장/수동조정 계열: production 가능.
 
-臾띠쓬 7F-2 蹂寃?
-- ?먯쑁 醫낅쪟 愿由?紐⑤떖??`?듦퀎 ?쒖떆` 泥댄겕諛뺤뒪 而щ읆 異붽?.
-- 泥댄겕諛뺤뒪 蹂寃???`meatTypes/{id}.showInStats` 利됱떆 ???
-- ?좉퇋 ?먯쑁 異붽? ??`showInStats: true` ???
-- 湲곗〈 臾몄꽌??`showInStats`媛 ?놁쑝硫??듦퀎?먯꽌??`true`濡?泥섎━.
+묶음 7F-2 변경:
+- 원육 종류 관리 모달에 `통계 표시` 체크박스 추가.
+- 체크박스 변경 시 `meatTypes/{id}.showInStats` 즉시 저장.
+- 신규 원육 추가 시 `showInStats: true` 저장.
+- 기존 문서에 `showInStats`가 없으면 통계에서는 `true`로 처리.
 
-異붽? 蹂듦뎄:
-- 7F-2 ?묒뾽 以?湲곗〈 ?쒓? ?몄퐫??源⑥쭚 ?쇰?媛 鍮뚮뱶 ?ㅻ쪟濡??몄텧?섏뼱 蹂듦뎄??
-- 蹂듦뎄??踰붿쐞:
-  - `getMeatLogTypeLabel()` ?쇰꺼
-  - ?섎룞議곗젙 湲곕줉??`stageKor`
-  - ?먯쑁 ?ш퀬 ?곷떒 ?쒕ぉ/??二쇱슂 踰꾪듉/?쇰? ???ㅻ뜑
-- ??源⑥쭚? 7F-2 ??湲곕뒫 ?뚮Ц???앷릿 寃껋씠 ?꾨땲??湲곗〈 ?뚯씪???덈뜕 源⑥쭊 臾몄옄?댁씠 鍮뚮뱶 寃利?以??쒕윭??寃?
-- ?⑥? `meat.js` ?쒓? ?쇰꺼 ?꾩껜 ?먭?? 臾띠쓬 9 ?꾨낫濡??④?.
+추가 복구:
+- 7F-2 작업 중 기존 한글 인코딩 깨짐 일부가 빌드 오류로 노출되어 복구함.
+- 복구한 범위:
+  - `getMeatLogTypeLabel()` 라벨
+  - 수동조정 기록의 `stageKor`
+  - 원육 재고 상단 제목/탭/주요 버튼/일부 표 헤더
+- 이 깨짐은 7F-2 새 기능 때문에 생긴 것이 아니라 기존 파일에 있던 깨진 문자열이 빌드 검증 중 드러난 것.
+- 남은 `meat.js` 한글 라벨 전체 재검토는 묶음 9 후보로 남김.
 
 PR #2 / meat types management (2026-05-21):
 - The meat-types management modal (admin/office only) now supports inline editing of `defaultUnitWeightG` and `minimumQtyG` per row, alongside the existing showInStats and active toggles.
 
 ### `src/pages/bag.js`
 
-遊됲닾 ?ш퀬 諛?遊됲닾 醫낅쪟 愿由?
+봉투 재고 및 봉투 종류 관리.
 
-臾띠쓬 c:
-- 遊됲닾 醫낅쪟 異붽?/?섏젙? admin/office留?媛??
-- production?먯꽌??遊됲닾 醫낅쪟 異붽?/?섏젙 踰꾪듉 DOM ?쒓굅.
-- 遊됲닾 ?낃퀬 ?깅줉怨??섎룞議곗젙? 湲곗〈 ?댁쁺 ?먮쫫?濡??좎?.
+묶음 c:
+- 봉투 종류 추가/수정은 admin/office만 가능.
+- production에서는 봉투 종류 추가/수정 버튼 DOM 제거.
+- 봉투 입고 등록과 수동조정은 기존 운영 흐름대로 유지.
 
 ### `src/pages/production.js`
 
@@ -471,12 +471,12 @@ v28 / 5th bundle E-6/E-7:
 - `showCopySheetModal()` reads `settings/copySheetOrder`; missing or invalid settings fall back to `rawCat`, `rawDog`, `freezeCat`, `freezeDog`, `freezeCommon`.
 - Production sheet grouping is still derived from production `category` and `target`; E-7 changes output order only.
 
-?앹궛 移대뱶 愿由?
+생산 카드 관리.
 
-臾띠쓬 c:
-- ???앹궛 異붽?, ?앹궛 移대뱶 ????섏젙, ?앹궛 移대뱶 ??젣 UI??admin/office留?媛??
-- production?먯꽌??愿??踰꾪듉 DOM ?쒓굅.
-- 湲곗〈 ?⑥닔 ?대? 沅뚰븳 泥댄겕???댁쨷 ?덉쟾留앹쑝濡??좎?.
+묶음 c:
+- 새 생산 추가, 생산 카드 저장/수정, 생산 카드 삭제 UI는 admin/office만 가능.
+- production에서는 관련 버튼 DOM 제거.
+- 기존 함수 내부 권한 체크는 이중 안전망으로 유지.
 
 ### `src/pages/supplement.js`
 
@@ -545,7 +545,7 @@ v26 / Phase 2a:
 
 ### `src/pages/settings.js`
 
-?ㅼ젙 ?붾㈃.
+설정 화면.
 
 v26 / Phase 2a:
 - Settings sections are rendered as collapsible `details.settings-section` cards and default to collapsed.
@@ -569,35 +569,35 @@ v28 / 5th bundle E-7:
 packs-per-plate (판당 팩수):
 - Cat/dog packs-per-plate live in `settings/systemValues` as `packsPerPlateCat`/`packsPerPlateDog` (SYSTEM_VALUE_FIELDS, integer, default null), shown inside the 시스템 설정값 section. Plate→pack is raw-only (호두 2026-05-21), so no common value. Consumed by the raw product-receipt modal (`openProductReceiptModal`, main.js) to convert 판수 → 팩/박스. (Earlier a separate `settings/productConversion` doc/section held these; moved into systemValues 2026-05-23.)
 
-臾띠쓬 c:
-- spec_v20 湲곗??쇰줈 settings 硫붾돱??production?먭쾶 蹂댁씠寃??좎?.
-- production??硫붾돱 ?대┃ ??`layout.js`?먯꽌 alert ??吏꾩엯 李⑤떒.
-- `renderSettings()` ?대??먯꽌??production 利됱떆 李⑤떒.
-- ?대떦??異붽?/??젣 踰꾪듉怨??대깽??諛붿씤?⑹? admin/office???뚮쭔 ?쒖꽦??
+묶음 c:
+- spec_v20 기준으로 settings 메뉴는 production에게 보이게 유지.
+- production이 메뉴 클릭 시 `layout.js`에서 alert 후 진입 차단.
+- `renderSettings()` 내부에서도 production 즉시 차단.
+- 해당 추가/삭제 버튼과 이벤트 바인딩은 admin/office일 때만 활성화.
 
-二쇱쓽:
+주의:
 - Older notes saying closingFlags/menu-staff/system settings UI is missing are obsolete as of v26.
 
 ### `src/pages/egg.js`
 
-怨꾨? ?ш퀬.
+계란 재고.
 
-臾띠쓬 a:
-- ?꾩옱 ?ш퀬 移대뱶??FIFO ?붾웾 蹂닿린 ?좉? 異붽?.
-- 湲곕낯 ?곹깭???ロ옒. ?덈줈怨좎묠 ???ロ옒.
-- ?쇱튂硫?`eggLogs` ?꾩껜瑜?timestamp ?ㅻ쫫李⑥닚?쇰줈 ?ъ깮??FIFO 媛???붾웾 ?쒖떆.
-- 媛숈? ?좎쭨 ?낃퀬??媛?濡쒓렇瑜?蹂꾨룄 lot?쇰줈 ?쒖떆.
-- `type === 'in'`: ?낃퀬 lot ?앹꽦.
-- `type === 'out'`: ?ㅻ옒??lot遺??李④컧.
-- `type === 'adjust' && qty < 0`: ?ㅻ옒??lot遺??李④컧.
-- `type === 'adjust' && qty > 0`: "議곗젙" lot?쇰줈 蹂꾨룄 ?쒖떆.
-- FIFO 遺꾪빐 ?⑷퀎? `eggStock/global.currentQty`媛 ?ㅻⅤ硫?寃쎄퀬 ?쒖떆.
-- ?낃퀬 lot蹂대떎 癒쇱? 湲곕줉??異쒓퀬/媛먯냼媛 ?덉쑝硫?諛곕텇 遺덇? ?섎웾 ?쒖떆.
-- ?대젰 ?뚯씠釉붿? 湲곗〈泥섎읆 理쒓렐 50嫄대쭔 ?쒖떆?섎릺, FIFO 怨꾩궛? ?꾩껜 濡쒓렇瑜??ъ슜.
+묶음 a:
+- 현재 재고 카드에 FIFO 용량 보기 토글 추가.
+- 기본 상태는 닫힘. 새로고침 후 닫힘.
+- 펼치면 `eggLogs` 전체를 timestamp 오름차순으로 재생해 FIFO 가용 용량 표시.
+- 같은 날짜 입고도 각 로그를 별도 lot으로 표시.
+- `type === 'in'`: 입고 lot 생성.
+- `type === 'out'`: 오래된 lot부터 차감.
+- `type === 'adjust' && qty < 0`: 오래된 lot부터 차감.
+- `type === 'adjust' && qty > 0`: "조정" lot으로 별도 표시.
+- FIFO 분해 합계가 `eggStock/global.currentQty`와 다르면 경고 표시.
+- 입고 lot보다 먼저 기록된 출고/감소가 있으면 배분 불가 수량 표시.
+- 이력 테이블은 기존처럼 최근 50건만 표시하되, FIFO 계산은 전체 로그를 사용.
 
 ### `src/style.css`
 
-?듦퀎 ?ㅽ????ы븿.
+통계 스타일 포함.
 
 v26 / Phase 2a:
 - Settings accordion styles:
@@ -627,17 +627,17 @@ v26 / Phase 2a:
   - `.holiday-month-list`
 - Important CSS note: `.cell-input` is a shared table-cell class. Holiday form inputs must be styled through `.holiday-field .cell-input` to avoid inheriting transparent table-cell input behavior.
 
-臾띠쓬 7B:
+묶음 7B:
 - `.stats-recipe-toggles`
 - `.stats-recipe-chip`
 - `.stats-chart-canvas-wrap`
 
-臾띠쓬 7F-2:
+묶음 7F-2:
 - `.stats-expected-tag`
 - `.stats-expected-note`
 - `.stats-download-btn-all`
 
-臾띠쓬 a:
+묶음 a:
 - `.egg-fifo-toggle`
 - `.egg-fifo-panel`
 - `.egg-fifo-row`
@@ -680,7 +680,7 @@ Notes:
 
 ### `settings/closingFlags`
 
-臾띠쓬 b?먯꽌 ?쎄린 濡쒖쭅 異붽?. 臾몄꽌 ?놁쑝硫??꾨? ON.
+묶음 b에서 읽기 로직 추가. 문서 없으면 전부 ON.
 
 ```js
 {
@@ -698,7 +698,7 @@ Notes:
 }
 ```
 
-二쇱쓽:
+주의:
 - v26 settings UI can edit these flags.
 - Missing fields still use default ON semantics.
 
@@ -712,14 +712,14 @@ Newer settings UI stores which staff groups are exposed per menu. Each menu must
 
 ### `eggLogs`
 
-怨꾨? ?낃퀬/異쒓퀬/?섎룞議곗젙 濡쒓렇.
+계란 입고/출고/수동조정 로그.
 
 ```js
 {
   date: string,
   timestamp: Timestamp,
   type: 'in' | 'out' | 'adjust',
-  qty: number, // 遺???ы븿. 異쒓퀬/媛먯냼???뚯닔.
+  qty: number, // 부호 포함. 출고/감소는 음수.
   before: number,
   after: number,
   staffName: string,
@@ -728,43 +728,43 @@ Newer settings UI stores which staff groups are exposed per menu. Each menu must
 }
 ```
 
-臾띠쓬 a FIFO ?쒖떆:
-- `timestamp` 湲곗? ?쒓컙???ъ깮.
-- ?뚮윭??議곗젙? 蹂꾨룄 議곗젙 lot.
-- 留덉씠?덉뒪 議곗젙? FIFO 李④컧.
+묶음 a FIFO 표시:
+- `timestamp` 기준 시간순 재생.
+- 플러스 조정은 별도 조정 lot.
+- 마이너스 조정은 FIFO 차감.
 
 ### `meatTypes`
 
-異붽? ?꾨뱶:
+추가 필드:
 
 ```js
 showInStats: boolean
 ```
 
-?섎?:
-- `true`: ?듦퀎 ?? ?먮즺 ?뚮え?됱뿉 ?쒖떆
-- `false`: ?듦퀎 ?? ?먮즺 ?뚮え?됱뿉???쒖쇅
-- ?꾨뱶 ?놁쓬: `true`濡?泥섎━
+의미:
+- `true`: 통계 탭 원료 소모량에 표시
+- `false`: 통계 탭 원료 소모량에서 제외
+- 필드 없음: `true`로 처리
 
-?좉퇋 ?먯쑁:
-- `showInStats: true`濡????
+신규 원육:
+- `showInStats: true`로 저장
 
 ### `bagTypes`
 
-?ъ슜 ?꾨뱶:
+사용 필드:
 
 ```js
 piecesPerBox: number
 ```
 
-?섎?:
-- 遊됲닾 ?뚮え???듦퀎?먯꽌 ???섎? 諛뺤뒪 ?⑥쐞濡??섏궛.
-- `0`, `null`, ?꾨뱶 ?놁쓬?대㈃ 諛뺤뒪 蹂??遺덇?.
-- 蹂??遺덇? 遊됲닾???붾㈃/Excel?먯꽌 蹂꾪몴 ?쒖떆?섍퀬 珥????섎쭔 ?쒖떆.
+의미:
+- 봉투 소모량 통계에서 이 값으로 박스 단위 환산.
+- `0`, `null`, 필드 없음이면 박스 변환 불가.
+- 변환 불가 봉투는 화면/Excel에서 별표 표시하고 총 장수만 표시.
 
-二쇱쓽:
-- `bagLogs`?먮뒗 `piecesPerBox` ?ㅻ깄?룹씠 ?놁쓬.
-- ?꾩옱 `bagTypes` 媛믪쓣 ?ъ슜??怨쇨굅 濡쒓렇源뚯? ?섏궛??
+주의:
+- `bagLogs`에는 `piecesPerBox` 스냅샷이 없음.
+- 현재 `bagTypes` 값을 사용해 과거 로그까지 환산함.
 
 ### `recipes.unitPresets`
 
@@ -908,84 +908,84 @@ Notes:
 
 ## Stats Tab Behavior
 
-### ??: ?앹궛??
+### 탭 1: 생산량
 
-- `productions.status === 'active'`留??ы븿.
-- ?덉떆?쇰퀎 爰얠???李⑦듃.
-- ?덉떆??泥댄겕諛뺤뒪濡??쇱씤 ?쒖떆/?④?.
-- ?좉퇋 ?덉떆?쇰뒗 ?먮룞 ON.
-- 0??湲곌컙??X異뺤뿉 ?쒖떆?섍퀬 0?먯쑝濡??곌껐.
+- `productions.status === 'active'`만 포함.
+- 레시피별 꺾은선 차트.
+- 레시피 체크박스로 라인 표시/숨김.
+- 신규 레시피는 자동 ON.
+- 0인 기간도 X축에 표시하고 0으로 연결.
 
-### ??: ?먮즺 ?뚮え??
+### 탭 2: 원료 소모량
 
-- `productions.ingredientsSnapshot` 湲곗?.
-- g ?⑥쐞 ??κ컪??kg濡?蹂?섑빐 ?쒖떆.
-- `meatTypes.showInStats === false` ?먮즺???쒖쇅.
-- `autoDeductInventory === false` ?먮즺??`?덉긽` / `?덉긽 ?ъ슜??(?ш퀬 李④컧 ?놁쓬)` ?쇰꺼 ?쒖떆.
-- ???먮즺媛 ?щ윭 ?덉떆?쇱뿉???쒕줈 ?ㅻⅨ `autoDeductInventory` 媛믪쓣 媛吏硫???踰덉씠?쇰룄 `false`??寃쎌슦 ?덉긽 ?ъ슜?됱쑝濡??쒖떆.
+- `productions.ingredientsSnapshot` 기준.
+- g 단위 저장값을 kg로 변환해 표시.
+- `meatTypes.showInStats === false` 원료는 제외.
+- `autoDeductInventory === false` 원료는 `예상` / `예상 사용량 (재고 차감 없음)` 라벨 표시.
+- 한 원료가 여러 레시피에서 서로 다른 `autoDeductInventory` 값을 가지면 한 번이라도 `false`인 경우 예상 사용량으로 표시.
 
-### ??: 遊됲닾 ?뚮え??
+### 탭 3: 봉투 소모량
 
-- `bagLogs.type`??`autoDeduct` ?먮뒗 `autoDeductReverse`??濡쒓렇留??ы븿.
-- `abs(net)` 湲곗?.
-- ?섎룞議곗젙 ?쒖쇅.
-- 李⑦듃 Y異뺤? 諛뺤뒪 ?⑥쐞 ?뚯닔.
-- ?댄똻怨??뚯씠釉붿? `50諛뺤뒪 27??(5,027??` ?뺤떇.
-- ?⑷퀎 諛뺤뒪??`諛뺤뒪 ?섏궛 ?⑷퀎: N諛뺤뒪 / 珥?N?? ?뺤떇.
-- `piecesPerBox` 誘몄꽕??遊됲닾??蹂꾪몴 ?쒖떆.
+- `bagLogs.type`이 `autoDeduct` 또는 `autoDeductReverse`인 로그만 포함.
+- `abs(net)` 기준.
+- 수동조정 제외.
+- 차트 Y축은 박스 단위 소수.
+- 툴팁과 테이블은 `50박스 27장 (5,027장)` 형식.
+- 합계 박스는 `박스 환산 합계: N박스 / 총 N장` 형식.
+- `piecesPerBox` 미설정 봉투는 별표 표시.
 
-### ??: 怨꾨? ?ъ슜??
+### 탭 4: 계란 사용량
 
-- `eggLogs.type === 'out'`留??ы븿.
-- ?⑥씪 爰얠???李⑦듃.
-- ?⑥쐞??媛?
+- `eggLogs.type === 'out'`만 포함.
+- 단일 꺾은선 차트.
+- 단위는 개.
 
-### ??: ?쇰퀎 ?앹궛 ?꾪솴
+### 탭 5: 일별 생산 현황
 
-- 李⑦듃 ?놁쓬. ?뚯씠釉??꾩슜.
-- ?앹떇: `productions.category === 'raw'`
-- ?숆껐嫄댁“: `frozenLogs.status === 'active'`
-- `(date, type, name)` ?ㅻ줈 媛숈? ??媛숈? ?쒗뭹???⑹궛.
+- 차트 없음. 테이블 전용.
+- 생식: `productions.category === 'raw'`
+- 동결건조: `frozenLogs.status === 'active'`
+- `(date, type, name)` 키로 같은 날 같은 제품은 합산.
 
-### ??: ?곸뼇??
-- Chart ?놁쓬. Table 以묒떖.
-- `supplementLogs.type === 'in'` ?낃퀬 ?⑷퀎.
-- `supplementLogs.type === 'autoDeduct'` ?ъ슜?됱? net 怨꾩궛: 李④컧(-1)? ?ъ슜??利앷?, ?섎텋(+1)? ?ъ슜??李④컧.
-- `supplementLogs.type === 'adjust'` ?섎룞議곗젙? signed sum.
-- `supplementStock.currentQty`??湲곌컙怨?臾닿????꾩옱媛?
-- 湲곕낯? active SKU留??쒖떆?섍퀬, inactive ?ы븿 ?좉?濡?怨쇨굅 SKU源뚯? 蹂????덉쓬.
-- ?뺣젹? `supplementTypes.sortOrder` ?ㅻ쫫李⑥닚.
+### 탭 6: 영양제
+- Chart 없음. Table 중심.
+- `supplementLogs.type === 'in'` 입고 합계.
+- `supplementLogs.type === 'autoDeduct'` 사용량은 net 계산: 차감(-1)은 사용량 증가, 반환(+1)은 사용량 차감.
+- `supplementLogs.type === 'adjust'` 수동조정은 signed sum.
+- `supplementStock.currentQty`는 기간과 무관한 현재값.
+- 기본은 active SKU만 표시하고, inactive 포함 토글로 과거 SKU까지 볼 수 있음.
+- 정렬은 `supplementTypes.sortOrder` 오름차순.
 
 ## Excel Download
 
-### 媛쒕퀎 ?ㅼ슫濡쒕뱶
+### 개별 다운로드
 
-- 踰꾪듉: `?뱿 Excel ?ㅼ슫濡쒕뱶`
-- ?쒖꽦 ??1媛쒕쭔 ?ㅼ슫濡쒕뱶.
-- ?뚯씪紐?
-
-```text
-?듦퀎_{??씪踰?_{?쒖옉??~{醫낅즺??.xlsx
-```
-
-### ?꾩껜 ?ㅼ슫濡쒕뱶
-
-- 踰꾪듉: `?뱿 ?꾩껜 ?ㅼ슫濡쒕뱶`
-- ?대┃ ??6???꾩껜 ?곗씠?곕? ?덈줈 荑쇰━.
-- 1媛??뚯씪??6媛??쒗듃 ?앹꽦.
-- 鍮???룄 `?곗씠???놁쓬` ?쒗듃 ?ы븿.
-- ?뚯씪紐?
+- 버튼: `Excel 다운로드`
+- 활성 탭 1개만 다운로드.
+- 파일명:
 
 ```text
-Fantapet_?듦퀎_{?쒖옉??~{醫낅즺??.xlsx
+통계_{탭이름}_{시작일}~{종료일}.xlsx
 ```
 
-?쒗듃:
-- ?앹궛??
-- ?먮즺 ?뚮え??
-- 遊됲닾 ?뚮え??
-- 怨꾨? ?ъ슜??
-- ?쇰퀎 ?앹궛 ?꾪솴
+### 전체 다운로드
+
+- 버튼: `전체 Excel 다운로드`
+- 클릭 시 6탭 전체 데이터를 새로 쿼리.
+- 1개 파일에 6개 시트 생성.
+- 빈 탭도 `데이터 없음` 시트 포함.
+- 파일명:
+
+```text
+Fantapet_통계_{시작일}~{종료일}.xlsx
+```
+
+시트:
+- 생산량
+- 원료 소모량
+- 봉투 소모량
+- 계란 사용량
+- 일별 생산 현황
 - 영양제
 
 ## Verification Done
@@ -1005,50 +1005,50 @@ Fantapet_?듦퀎_{?쒖옉??~{醫낅즺??.xlsx
   - Unit 12: supplement stats tab and Excel 6th sheet verified.
   - `npm.cmd run build` passed at each relevant bundle point. Expected warnings remain chunk size and ineffective dynamic import warnings.
 
-- 臾띠쓬 b:
-  - `npm.cmd run build` ?듦낵.
-  - B1 留덇컧 李⑤떒/寃쎄퀬 肄붾뱶 援ы쁽 ?꾨즺.
-  - B2 ?댁씪?앹궛遺덈윭?ㅺ린 李⑤떒 5議곌굔 肄붾뱶 吏꾨떒 ?듦낵.
-  - B3 理쒖냼?ш퀬 ?먮룞 諛쒗뻾 留ㅼ씪 1??寃곗젙??doc id ?⑦꽩 吏꾨떒 ?듦낵.
-  - B4 schedule/frozenSep spec gap ??ぉ 吏꾨떒 ?듦낵.
-  - B4-6-4 ?낃퀬?덉젙 ?섏젙 湲곕뒫 異붽? ??build ?듦낵.
-- 臾띠쓬 c:
-  - `npm.cmd run build` ?듦낵.
-  - 沅뚰븳 留ㅽ듃由?뒪 DOM ?쒓굅 ???9?뚯씪 ?곸슜.
-  - static grep?쇰줈 二쇱슂 踰꾪듉 議곌굔遺 ?뚮뜑 ?뺤씤.
-  - `frozenPan.js` 諛쒖＜ ??젣/痍⑥냼 ?뺤콉 spec 13???뺤씤.
-  - settings ?대떦???대깽??沅뚰븳 媛??蹂댁젙 ??build ?듦낵.
-- 臾띠쓬 a:
-  - `npm.cmd run build` ?듦낵.
-  - 怨꾨? FIFO ?붾웾 ?쒖떆 援ы쁽.
-  - ?ㅼ젣 釉뚮씪?곗? ?대┃ 寃利앹? 臾띠쓬 e濡??댁썡.
-- 臾띠쓬 9 沅뚰븳/?먮룞 ?ы룷??
-  - `npm.cmd run build` ?듦낵.
-  - ?먮룞 ?ы룷??trigger 濡쒓렇 ???뺤씤 紐⑤떖 ?쒖떆 寃利?
-  - 媛쒖닔 ?낅젰 ??g ?먮룞 ?쒖떆 諛?李⑥씠 ?쒖떆 寃利?
-  - 李⑥씠 ?놁쓬 ??trigger ack留?泥섎━, lot ?붾웾 蹂寃??놁쓬 寃利?
-  - 李⑥씠 ?덉쓬 ??lot remaining 蹂댁젙 諛?`autoRepack:diff` 濡쒓렇 諛쒗뻾 寃利?
-  - diff 濡쒓렇 鍮④컙 以??뺤씤 ?꾩닔 ?쒖떆 寃利?
-  - 0媛??낅젰 ??confirm ??lot `remaining: 0`, `closed: true` 寃利?
-  - 痍⑥냼 ??誘명솗???곹깭 ?좎? 寃利?
-  - ?먮룞 ?ы룷??誘명솗???곹깭?먯꽌 ?댁씪?앹궛遺덈윭?ㅺ린 李⑤떒 寃利?
-  - qc/office 怨꾩젙?먯꽌 ?댁씪?앹궛遺덈윭?ㅺ린 諛?留덇컧 沅뚰븳 李⑤떒 ?쒓굅 ?뺤씤.
-  - qc 怨꾩젙?먯꽌 ?먯쑁 ?낃퀬 ?깅줉 紐⑤떖 吏꾩엯 諛??ㅼ젣 ???媛???뺤씤.
-  - ?뚯뒪?몄슜 `meatStocks` / `meatLogs` 臾몄꽌????젣 ?꾨즺. ??젣 遺덇????뚯뒪??`activityLogs`??acknowledged 泥섎━.
-- `npm.cmd run build` ?듦낵.
-- 釉뚮씪?곗??먯꽌 ?뺤씤:
-  - ?듦퀎 ?붾㈃ 吏꾩엯
-  - ?꾩껜 ?ㅼ슫濡쒕뱶 踰꾪듉 ?쒖떆
-  - ?? ?듦퀎 鍮꾪몴???덈궡 ?쒖떆
-  - ?? ?덉긽 ?쇰꺼 ?쒖떆
-  - ?? ?⑷퀎 `諛뺤뒪 ?섏궛 ?⑷퀎: 28諛뺤뒪 / 珥?143,250?? ?쒖떆
-  - ?? 媛쒕퀎 ??諛뺤뒪+???쒖떆 ?좎?
-  - ?먯쑁 醫낅쪟 愿由?紐⑤떖 `?듦퀎 ?쒖떆` 泥댄겕諛뺤뒪 ?쒖떆
+- 묶음 b:
+  - `npm.cmd run build` 통과.
+  - B1 마감 차단/경고 코드 구현 완료.
+  - B2 내일생산불러오기 차단 5조건 코드 진단 통과.
+  - B3 최소재고 자동 발행 매일 1회 결정적 doc id 패턴 진단 통과.
+  - B4 schedule/frozenSep spec gap 항목 진단 통과.
+  - B4-6-4 입고예정 수정 기능 추가 후 build 통과.
+- 묶음 c:
+  - `npm.cmd run build` 통과.
+  - 권한 매트릭스 DOM 제거 등 9파일 적용.
+  - static grep으로 주요 버튼 조건부 렌더 확인.
+  - `frozenPan.js` 발주 삭제/취소 정책 spec 13번 확인.
+  - settings 해당 이벤트 권한 가드 보정 후 build 통과.
+- 묶음 a:
+  - `npm.cmd run build` 통과.
+  - 계란 FIFO 용량 표시 구현.
+  - 실제 브라우저 클릭 검증은 묶음 e로 이월.
+- 묶음 9 권한/자동 재포장:
+  - `npm.cmd run build` 통과.
+  - 자동 재포장 trigger 로그 후 확인 모달 표시 검증.
+  - 개수 입력 시 g 자동 표시 및 차이 표시 검증.
+  - 차이 없음 시 trigger ack만 처리, lot 용량 변경 없음 검증.
+  - 차이 있음 시 lot remaining 보정 및 `autoRepack:diff` 로그 발행 검증.
+  - diff 로그 빨간 줄 확인 필수 표시 검증.
+  - 0개 입력 시 confirm 후 lot `remaining: 0`, `closed: true` 검증.
+  - 취소 시 미확인 상태 유지 검증.
+  - 자동 재포장 미확인 상태에서 내일생산불러오기 차단 검증.
+  - qc/office 계정에서 내일생산불러오기 및 마감 권한 차단 제거 확인.
+  - qc 계정에서 원육 입고 등록 모달 진입 및 실제 저장 가능 확인.
+  - 테스트용 `meatStocks` / `meatLogs` 문서들 삭제 완료. 삭제 불가한 테스트 `activityLogs`는 acknowledged 처리.
+- `npm.cmd run build` 통과.
+- 브라우저에서 확인:
+  - 통계 화면 진입
+  - 전체 다운로드 버튼 표시
+  - 통계 별표 안내 표시
+  - 예상 라벨 표시
+  - 합계 `박스 환산 합계: 28박스 / 총 143,250장` 표시
+  - 개별 탭 박스+장 표시 유지
+  - 원육 종류 관리 모달 `통계 표시` 체크박스 표시
 
 Build warnings:
 - chunk size warning
 - ineffective dynamic import warning
-- ?꾩옱 鍮뚮뱶 ?ㅽ뙣 ?붿씤? ?꾨떂.
+- 현재 빌드 실패 원인은 아님.
 
 ## Follow-Up Candidates
 
