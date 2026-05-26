@@ -121,6 +121,11 @@ service cloud.firestore {
     match /meatTypes/{typeId} {
       allow read: if isProductionApp();
       allow write: if isProductionWriter();
+
+      match /priceHistory/{priceId} {
+        allow read: if isProductionApp();
+        allow write: if isProductionAdmin();
+      }
     }
 
     match /meatStocks/{stockId} {

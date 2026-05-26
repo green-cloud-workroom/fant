@@ -7,6 +7,7 @@ import { currentUser, currentUserRole } from '../app.js';
 import { getTodayKST, loadHolidaysCache } from '../utils/date.js';
 import { DEFAULT_CLOSING_FLAGS } from '../services/closingChecksLogic.js';
 import { loadSystemValues, SYSTEM_VALUE_FIELDS } from '../services/systemValues.js';
+import { addMeatPriceHistory, loadMeatPriceRows, pickLatestMeatPrice } from '../services/meatPrices.js';
 import {
   loadMenuStaffGroups, MENU_STAFF_GROUP_FIELDS, STAFF_GROUP_KEYS, STAFF_GROUP_LABELS
 } from '../services/menuStaffGroups.js';
@@ -43,7 +44,7 @@ const CLOSING_FLAG_WARNS = [
 ];
 
 export async function renderSettings() {
-  if (currentUserRole === 'production') {
+  if (false && currentUserRole === 'production') {
     alert('설정은 대표/사무 계정만 가능합니다.');
     return;
   }
@@ -57,7 +58,9 @@ export async function renderSettings() {
   const systemValues = await loadSystemValues();
   const menuStaffGroups = await loadMenuStaffGroups();
   const copySheetOrder = await loadCopySheetOrder();
+  const meatPriceRows = await loadMeatPriceRows(getTodayKST());
   const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
+  const isAdmin = currentUserRole === 'admin';
 
   content.innerHTML = `
     <div class="settings-wrap">
@@ -152,6 +155,17 @@ export async function renderSettings() {
         </div>
         </div>
       </details>
+
+      <details class="settings-section">
+        <summary class="settings-section-summary">
+          <span class="settings-section-title">원료 단가 관리</span>
+          <span class="settings-section-toggle">펼치기</span>
+        </summary>
+        <div class="settings-section-body">
+          <p class="settings-section-desc">원육 단가를 원/kg 기준 effectiveDate 이력으로 관리합니다.</p>
+          ${renderMeatPriceSection(meatPriceRows, isAdmin)}
+        </div>
+      </details>
     </div>
   `;
 
@@ -161,6 +175,7 @@ export async function renderSettings() {
   if (isWriter) bindMenuStaffGroupEvents(menuStaffGroups);
   bindCopySheetOrderEvents(isWriter);
   bindHolidayEvents();
+  bindMeatPriceEvents(meatPriceRows, isAdmin);
 }
 
 function normalizeCopySheetOrder(order) {
@@ -195,6 +210,146 @@ function renderCopySheetOrderSection(order, isWriter) {
       `).join('')}
     </ul>
   `;
+}
+
+function escapeSettingsHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function formatUnitPrice(value) {
+  return typeof value === 'number'
+    ? `${value.toLocaleString('ko-KR')}원/kg`
+    : '-';
+}
+
+function renderMeatPriceSection(rows, isAdmin) {
+  if (!rows.length) {
+    return '<div class="cal-modal-empty">활성 원육 없음</div>';
+  }
+
+  return `
+    <div class="meat-price-list">
+      ${rows.map(row => {
+        const meat = row.meatType;
+        const latest = row.latest;
+        return `
+          <div class="closing-flag-row meat-price-row" data-meat-id="${meat.id}">
+            <div class="closing-flag-meta">
+              <div class="closing-flag-label">${escapeSettingsHtml(meat.name)}</div>
+              <div class="closing-flag-desc">현재 적용일: ${escapeSettingsHtml(latest?.effectiveDate || '-')}</div>
+            </div>
+            <div class="meat-price-current">${formatUnitPrice(latest?.unitPrice)}</div>
+            ${isAdmin ? `<button class="btn-secondary btn-edit-meat-price" data-meat-id="${meat.id}">수정</button>` : ''}
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function bindMeatPriceEvents(rows, isAdmin) {
+  if (!isAdmin) return;
+  document.querySelectorAll('.btn-edit-meat-price').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = rows.find(item => item.meatType.id === btn.dataset.meatId);
+      if (row) openMeatPriceModal(row);
+    });
+  });
+}
+
+function openMeatPriceModal(row) {
+  const meat = row.meatType;
+  const latest = row.latest;
+  const today = getTodayKST();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <h3 class="modal-title">원료 단가 수정</h3>
+      <div class="modal-form">
+        <label class="modal-field">
+          <span>원료명</span>
+          <input class="cell-input" value="${escapeSettingsHtml(meat.name)}" readonly>
+        </label>
+        <label class="modal-field">
+          <span>새 단가 (원/kg)</span>
+          <input class="cell-input" id="meatPriceUnitPrice" type="number" min="0" step="1" value="${latest?.unitPrice ?? ''}">
+        </label>
+        <label class="modal-field">
+          <span>적용일</span>
+          <input class="cell-input" id="meatPriceEffectiveDate" type="date" value="${today}">
+        </label>
+        <label class="modal-field">
+          <span>사유</span>
+          <input class="cell-input" id="meatPriceReason" value="manual">
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="meatPriceCancel">취소</button>
+        <button class="btn-primary" id="meatPriceSave">저장</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector('#meatPriceCancel').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+
+  overlay.querySelector('#meatPriceSave').addEventListener('click', async () => {
+    const unitPrice = Number(overlay.querySelector('#meatPriceUnitPrice').value);
+    const effectiveDate = overlay.querySelector('#meatPriceEffectiveDate').value;
+    const reason = overlay.querySelector('#meatPriceReason').value.trim() || 'manual';
+
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      alert('0 이상의 단가를 입력해주세요.');
+      return;
+    }
+    if (!effectiveDate) {
+      alert('적용일을 입력해주세요.');
+      return;
+    }
+
+    try {
+      const historySnap = await getDocs(collection(db, 'meatTypes', meat.id, 'priceHistory'));
+      const freshHistory = historySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const prev = pickLatestMeatPrice(freshHistory, effectiveDate);
+      await addMeatPriceHistory(meat.id, {
+        unitPrice,
+        effectiveDate,
+        prevUnitPrice: prev?.unitPrice ?? null,
+        reason,
+        createdBy: currentUser?.email || currentUser?.uid || '',
+      });
+      await addDoc(collection(db, 'activityLogs'), {
+        date: getTodayKST(),
+        timestamp: serverTimestamp(),
+        action: 'meatPrice',
+        subAction: 'manualEdit',
+        details: {
+          meatTypeId: meat.id,
+          meatTypeName: meat.name || '',
+          prevUnitPrice: prev?.unitPrice ?? null,
+          newUnitPrice: unitPrice,
+          effectiveDate,
+        },
+        staffName: currentUser?.email || currentUser?.uid || '',
+        acknowledged: false,
+      });
+      close();
+      await renderSettings();
+    } catch (err) {
+      console.error('[settings] meat price save failed:', err);
+      alert('원료 단가 저장 실패: ' + err.message);
+    }
+  });
 }
 
 function bindCopySheetOrderEvents(isWriter) {

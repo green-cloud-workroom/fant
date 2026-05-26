@@ -148,6 +148,40 @@
 }
 
 /* 네비게이션 바 */
+.meat-price-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.meat-price-row {
+  align-items: center;
+}
+
+.meat-price-current {
+  min-width: 120px;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 700;
+  color: #2f5f3d;
+}
+
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #555;
+}
+
 .navbar {
   display: flex;
   align-items: center;
