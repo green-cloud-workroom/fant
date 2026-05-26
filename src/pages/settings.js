@@ -60,7 +60,7 @@ export async function renderSettings() {
   const copySheetOrder = await loadCopySheetOrder();
   const meatPriceRows = await loadMeatPriceRows(getTodayKST());
   const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
-  const isAdmin = currentUserRole === 'admin';
+  const canEditMeatPrice = isWriter;
 
   content.innerHTML = `
     <div class="settings-wrap">
@@ -163,7 +163,7 @@ export async function renderSettings() {
         </summary>
         <div class="settings-section-body">
           <p class="settings-section-desc">원육 단가를 원/kg 기준 effectiveDate 이력으로 관리합니다.</p>
-          ${renderMeatPriceSection(meatPriceRows, isAdmin)}
+          ${renderMeatPriceSection(meatPriceRows, canEditMeatPrice)}
         </div>
       </details>
     </div>
@@ -175,7 +175,7 @@ export async function renderSettings() {
   if (isWriter) bindMenuStaffGroupEvents(menuStaffGroups);
   bindCopySheetOrderEvents(isWriter);
   bindHolidayEvents();
-  bindMeatPriceEvents(meatPriceRows, isAdmin);
+  bindMeatPriceEvents(meatPriceRows, canEditMeatPrice);
 }
 
 function normalizeCopySheetOrder(order) {
@@ -227,7 +227,7 @@ function formatUnitPrice(value) {
     : '-';
 }
 
-function renderMeatPriceSection(rows, isAdmin) {
+function renderMeatPriceSection(rows, canEditMeatPrice) {
   if (!rows.length) {
     return '<div class="cal-modal-empty">활성 원육 없음</div>';
   }
@@ -244,7 +244,7 @@ function renderMeatPriceSection(rows, isAdmin) {
               <div class="closing-flag-desc">현재 적용일: ${escapeSettingsHtml(latest?.effectiveDate || '-')}</div>
             </div>
             <div class="meat-price-current">${formatUnitPrice(latest?.unitPrice)}</div>
-            ${isAdmin ? `<button class="btn-secondary btn-edit-meat-price" data-meat-id="${meat.id}">수정</button>` : ''}
+            ${canEditMeatPrice ? `<button class="btn-secondary btn-edit-meat-price" data-meat-id="${meat.id}">수정</button>` : ''}
           </div>
         `;
       }).join('')}
@@ -252,8 +252,8 @@ function renderMeatPriceSection(rows, isAdmin) {
   `;
 }
 
-function bindMeatPriceEvents(rows, isAdmin) {
-  if (!isAdmin) return;
+function bindMeatPriceEvents(rows, canEditMeatPrice) {
+  if (!canEditMeatPrice) return;
   document.querySelectorAll('.btn-edit-meat-price').forEach(btn => {
     btn.addEventListener('click', () => {
       const row = rows.find(item => item.meatType.id === btn.dataset.meatId);
