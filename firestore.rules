@@ -124,7 +124,7 @@ service cloud.firestore {
 
       match /priceHistory/{priceId} {
         allow read: if isProductionApp();
-        allow write: if isProductionAdmin();
+        allow write: if isProductionWriter();
       }
     }
 
