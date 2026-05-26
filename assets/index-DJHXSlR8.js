@@ -2541,11 +2541,11 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
         ${e.map(e=>tg(e,t,n,r)).join(``)}
       </div>
     </div>
-  `}function tg(e,t,n,r){let i=(new Date(e+`T00:00:00`).getDay()+6)%7>=5,a=r[e]||null,o=r[ng(e,1)]||null,s=!i&&a?.affectsProduction!==!0&&(a?.affectsShipping===!0||o?.affectsShipping===!0&&o.shippingClosedFromEnabled===!0),c=!s&&(i||a?.affectsProduction===!0||!a&&n.includes(e)),l=e===t,u=Vh.filter(t=>t.date===e),d=zh.filter(t=>t.date===e),f=Bh.filter(t=>t.date===e),p=[];u.forEach(e=>{let t=e.title||``;p.push(`<div class="cal-tag cal-tag-event" title="${cg(t)}">📌 ${cg(t)}</div>`)}),d.forEach(e=>{let t=og(e);p.push(`<div class="cal-tag cal-tag-schedule" title="${cg(t)}">📦 ${cg(t)}</div>`)}),f.slice(0,3).forEach(e=>{let t=e.productionUnitQty==null?``:` ${s_(e.productionUnitQty)}${e.productionUnitName||``}`,n=`${e.recipeName||``}${t}`;p.push(`<div class="cal-tag cal-tag-production" title="${cg(n)}">🏭 ${cg(n)}</div>`)}),f.length>3&&p.push(`<div class="cal-tag-more">+${f.length-3}</div>`);let m=e.split(`-`),h=parseInt(m[2],10),g=h===1?`${parseInt(m[1],10)}/${h}`:String(h),_=parseInt(ng(e,1).slice(-2),10),v=s?a?.affectsShipping===!0?`배송불가일`:`${_} 배송불가일`:``;return`
+  `}function tg(e,t,n,r){let i=(new Date(e+`T00:00:00`).getDay()+6)%7>=5,a=r[e]||null,o=r[ng(e,1)]||null,s=!i&&a?.affectsProduction!==!0&&(a?.affectsShipping===!0||o?.affectsShipping===!0&&o.shippingClosedFromEnabled===!0),c=!s&&(i||a?.affectsProduction===!0||!a&&n.includes(e)),l=e===t,u=Vh.filter(t=>t.date===e),d=zh.filter(t=>t.date===e),f=Bh.filter(t=>t.date===e),p=[];u.forEach(e=>{let t=e.title||``;p.push(`<div class="cal-tag cal-tag-event" title="${cg(t)}">📌 ${cg(t)}</div>`)}),d.forEach(e=>{let t=og(e);p.push(`<div class="cal-tag cal-tag-schedule" title="${cg(t)}">📦 ${cg(t)}</div>`)}),f.slice(0,3).forEach(e=>{let t=e.productionUnitQty==null?``:` ${s_(e.productionUnitQty)}${e.productionUnitName||``}`,n=`${e.recipeName||``}${t}`;p.push(`<div class="cal-tag cal-tag-production" title="${cg(n)}">🏭 ${cg(n)}</div>`)}),f.length>3&&p.push(`<div class="cal-tag-more">+${f.length-3}</div>`);let m=e.split(`-`),h=parseInt(m[2],10),g=h===1?`${parseInt(m[1],10)}/${h}`:String(h),_=s?`배송불가일`:``;return`
     <div class="${[`cal-cell`,c?`cal-cell-holiday`:``,s?`cal-cell-shipping-closed`:``,l?`cal-cell-today`:``].filter(Boolean).join(` `)}" data-date="${e}">
       <div class="cal-cell-date-row">
         <span class="cal-cell-date">${g}</span>
-        ${v?`<span class="cal-shipping-closed-label">(${v})</span>`:``}
+        ${_?`<span class="cal-shipping-closed-label">(${_})</span>`:``}
       </div>
       <div class="cal-cell-tags">${p.join(``)}</div>
     </div>
