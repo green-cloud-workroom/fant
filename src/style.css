@@ -151,19 +151,36 @@
 .meat-price-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 3px;
 }
 
 .meat-price-row {
   align-items: center;
+  min-height: 34px;
+  padding: 3px 10px;
 }
 
 .meat-price-current {
   min-width: 120px;
   text-align: right;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   color: #2f5f3d;
+}
+
+.meat-price-row .closing-flag-label {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.meat-price-row .closing-flag-desc {
+  font-size: 10px;
+  margin-top: 1px;
+}
+
+.meat-price-row .btn-secondary {
+  padding: 4px 11px;
+  font-size: 11px;
 }
 
 .modal-form {
@@ -483,7 +500,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
+  padding: 10px 14px;
   border-bottom: 1px solid #f0f0f0;
 }
 
@@ -496,7 +513,7 @@
 .recipe-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 6px 8px;
 }
 
 .recipe-list-item {
@@ -504,12 +521,13 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
-  border-radius: 6px;
+  min-height: 44px;
+  padding: 4px 8px 4px 0;
+  border-radius: 5px;
   cursor: pointer;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
   transition: background 0.15s;
-  border-left: 15px solid transparent;
+  border-left: 8px solid transparent;
 }
 
 .recipe-list-item:hover {
@@ -532,6 +550,14 @@
 .recipe-list-info {
   flex: 1;
   min-width: 0;
+}
+
+.recipe-list-item .drag-handle {
+  align-self: center;
+  justify-content: center;
+  width: 28px;
+  padding: 0;
+  font-size: 16px;
 }
 
 .sortable-master-list {
@@ -600,10 +626,11 @@
 }
 
 .recipe-name {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   display: block;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
+  line-height: 1.25;
 }
 
 .recipe-tags {
@@ -615,7 +642,7 @@
 
 .tag {
   font-size: 10px;
-  padding: 1px 6px;
+  padding: 0 6px;
   border-radius: 10px;
   font-weight: 500;
 }
@@ -1756,9 +1783,9 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   font-size: 11px;
   font-weight: 600;
   color: #888;
-  padding: 8px 12px 4px;
+  padding: 6px 10px 3px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0;
 }
 /* 메인 대시보드 */
 /* [묶음 6A] 메인 6구간 분할: 1번(좌 전체) / 2번(우상-좌, 원육) / 3번(우상-우, 로그) / 4번(우하, 캘린더) */
