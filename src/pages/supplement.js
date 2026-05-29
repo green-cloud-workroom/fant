@@ -134,6 +134,52 @@ function getFilteredSupplementTypes() {
   });
 }
 
+function getSupplementUnit(type) {
+  const unit = Number(type.unit);
+  return Number.isFinite(unit) ? unit : 0;
+}
+
+function getSupplementRecipeSort(type) {
+  const sortOrder = Number(type.sortOrder);
+  return Number.isFinite(sortOrder) ? Math.floor(sortOrder / 100) : 999999;
+}
+
+function buildSupplementRecipeGroups(types) {
+  const map = new Map();
+  for (const type of types) {
+    const recipeId = type.recipeId || `__ungrouped_${type.id}`;
+    if (!map.has(recipeId)) {
+      map.set(recipeId, {
+        recipeId,
+        recipeName: type.recipeName || type.name || recipeId,
+        sortOrder: getSupplementRecipeSort(type),
+        types: [],
+      });
+    }
+    const group = map.get(recipeId);
+    group.types.push(type);
+    group.sortOrder = Math.min(group.sortOrder, getSupplementRecipeSort(type));
+    if (type.recipeName) group.recipeName = type.recipeName;
+  }
+
+  return [...map.values()]
+    .map(group => ({
+      ...group,
+      types: group.types.sort((a, b) => getSupplementUnit(a) - getSupplementUnit(b)),
+    }))
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.recipeName.localeCompare(b.recipeName));
+}
+
+function getSupplementGroupSummary(types) {
+  return types.reduce((summary, type) => {
+    const qty = getStockQty(type.id);
+    summary.totalStock += qty;
+    if (type.active !== false && qty < supplementThresholdRed) summary.danger += 1;
+    else if (type.active !== false && qty < supplementThresholdYellow) summary.warning += 1;
+    return summary;
+  }, { totalStock: 0, danger: 0, warning: 0 });
+}
+
 // 해당 날짜+SKU+유형의 로그 합계. 입고/자동차감/수동조정 모두 사용.
 function getCellSum(typeId, date, type) {
   return supplementLogs
@@ -178,6 +224,68 @@ function renderRecentChange(typeId) {
   `;
 }
 
+function renderSupplementTypeRow(type) {
+  const qty = getStockQty(type.id);
+  const inactive = type.active === false;
+  const qtyClass = inactive ? ''
+    : qty < supplementThresholdRed ? 'supplement-qty--danger'
+    : qty < supplementThresholdYellow ? 'supplement-qty--warning'
+    : '';
+
+  return `
+    <tr class="${inactive ? 'supplement-row--inactive' : ''}">
+      <td class="supplement-td-name">
+        ${escapeHtml(type.name || type.id)}
+        ${inactive ? '<span class="tag tag-inactive">鍮꾪솢??/span>' : ''}
+      </td>
+      <td class="supplement-td-qty ${qtyClass}">${qty}遊?/td>
+      <td class="supplement-td-status">${renderStockStatus(qty, inactive)}</td>
+      <td class="supplement-td-recent">${renderRecentChange(type.id)}</td>
+      <td class="supplement-td-actions">
+        ${!inactive && isProductionRole() ? `<button class="btn-secondary supplement-action-in" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">?낃퀬</button>` : ''}
+        ${!inactive && isWriterRole() ? `<button class="btn-secondary supplement-action-adjust" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">?섎룞議곗젙</button>` : ''}
+      </td>
+    </tr>
+  `;
+}
+
+function renderSupplementGroup(group) {
+  const summary = getSupplementGroupSummary(group.types);
+  const hasAlert = summary.danger > 0 || summary.warning > 0;
+  const alertText = [
+    summary.danger > 0 ? `부족 ${summary.danger}` : '',
+    summary.warning > 0 ? `주의 ${summary.warning}` : '',
+  ].filter(Boolean).join(' · ');
+  const openAttr = supplementFilter === 'all' ? '' : ' open';
+
+  return `
+    <details class="supplement-recipe-group"${openAttr} data-recipe-id="${escapeHtml(group.recipeId)}">
+      <summary class="supplement-recipe-header ${hasAlert ? 'supplement-recipe-header--has-alert' : ''}">
+        <span class="recipe-name">${escapeHtml(group.recipeName)}</span>
+        <span class="preset-count">${group.types.length} 프리셋</span>
+        <span class="total-stock">합계 ${summary.totalStock}봉</span>
+        ${hasAlert ? `<span class="alert-summary">⚠ ${alertText}</span>` : ''}
+      </summary>
+      <div class="supplement-list">
+        <table class="supplement-table">
+          <thead>
+            <tr>
+              <th class="supplement-th-name">?곸뼇??SKU</th>
+              <th class="supplement-th-qty">?꾩옱 ?ш퀬</th>
+              <th class="supplement-th-status">?곹깭</th>
+              <th class="supplement-th-recent">理쒓렐 蹂??/th>
+              <th class="supplement-th-actions">?묒뾽</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${group.types.map(type => renderSupplementTypeRow(type)).join('')}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  `;
+}
+
 function isWriterRole() {
   return currentUserRole === 'admin' || currentUserRole === 'office';
 }
@@ -187,7 +295,7 @@ function isProductionRole() {
 }
 
 // 표 렌더링. 운영 기본 화면은 현재 재고와 최근 변동만 보여준다.
-function renderSupplementTable() {
+function renderSupplementFlatTable() {
   const filtered = getFilteredSupplementTypes();
   if (supplementTypes.length === 0) {
     return '<div class="list-empty">등록된 영양제가 없습니다. 레시피 관리에서 생산단위 프리셋을 설정해주세요.</div>';
@@ -240,6 +348,22 @@ function renderSupplementTable() {
 }
 
 // 한 SKU × 한 날짜의 3개 셀 (입고/수동조정/자동차감).
+function renderSupplementTable() {
+  const filtered = getFilteredSupplementTypes();
+  if (supplementTypes.length === 0) {
+    return '<div class="list-empty">?깅줉???곸뼇?쒓? ?놁뒿?덈떎. ?덉떆??愿由ъ뿉???앹궛?⑥쐞 ?꾨━?뗭쓣 ?ㅼ젙?댁＜?몄슂.</div>';
+  }
+  if (filtered.length === 0) {
+    return '<div class="list-empty">?꾪꽣 議곌굔??留욌뒗 ?곸뼇?쒓? ?놁뒿?덈떎</div>';
+  }
+
+  return `
+    <div class="supplement-recipe-groups">
+      ${buildSupplementRecipeGroups(filtered).map(group => renderSupplementGroup(group)).join('')}
+    </div>
+  `;
+}
+
 function renderDateCells(type, date, inactive) {
   const typeId = type.id;
   const inSum = getCellSum(typeId, date, 'in');
