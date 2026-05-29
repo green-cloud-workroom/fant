@@ -236,14 +236,14 @@ function renderSupplementTypeRow(type) {
     <tr class="${inactive ? 'supplement-row--inactive' : ''}">
       <td class="supplement-td-name">
         ${escapeHtml(type.name || type.id)}
-        ${inactive ? '<span class="tag tag-inactive">鍮꾪솢??/span>' : ''}
+        ${inactive ? '<span class="tag tag-inactive">비활성</span>' : ''}
       </td>
-      <td class="supplement-td-qty ${qtyClass}">${qty}遊?/td>
+      <td class="supplement-td-qty ${qtyClass}">${qty}봉</td>
       <td class="supplement-td-status">${renderStockStatus(qty, inactive)}</td>
       <td class="supplement-td-recent">${renderRecentChange(type.id)}</td>
       <td class="supplement-td-actions">
-        ${!inactive && isProductionRole() ? `<button class="btn-secondary supplement-action-in" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">?낃퀬</button>` : ''}
-        ${!inactive && isWriterRole() ? `<button class="btn-secondary supplement-action-adjust" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">?섎룞議곗젙</button>` : ''}
+        ${!inactive && isProductionRole() ? `<button class="btn-secondary supplement-action-in" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">입고</button>` : ''}
+        ${!inactive && isWriterRole() ? `<button class="btn-secondary supplement-action-adjust" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">수동조정</button>` : ''}
       </td>
     </tr>
   `;
@@ -270,10 +270,10 @@ function renderSupplementGroup(group) {
         <table class="supplement-table">
           <thead>
             <tr>
-              <th class="supplement-th-name">?곸뼇??SKU</th>
-              <th class="supplement-th-qty">?꾩옱 ?ш퀬</th>
-              <th class="supplement-th-status">?곹깭</th>
-              <th class="supplement-th-recent">理쒓렐 蹂??/th>
+              <th class="supplement-th-name">영양제 SKU</th>
+              <th class="supplement-th-qty">현재 재고</th>
+              <th class="supplement-th-status">상태</th>
+              <th class="supplement-th-recent">최근 변동</th>
               <th class="supplement-th-actions">?묒뾽</th>
             </tr>
           </thead>
@@ -351,10 +351,10 @@ function renderSupplementFlatTable() {
 function renderSupplementTable() {
   const filtered = getFilteredSupplementTypes();
   if (supplementTypes.length === 0) {
-    return '<div class="list-empty">?깅줉???곸뼇?쒓? ?놁뒿?덈떎. ?덉떆??愿由ъ뿉???앹궛?⑥쐞 ?꾨━?뗭쓣 ?ㅼ젙?댁＜?몄슂.</div>';
+    return '<div class="list-empty">등록된 영양제가 없습니다. 레시피 관리에서 생산단위 프리셋을 설정해주세요.</div>';
   }
   if (filtered.length === 0) {
-    return '<div class="list-empty">?꾪꽣 議곌굔??留욌뒗 ?곸뼇?쒓? ?놁뒿?덈떎</div>';
+    return '<div class="list-empty">필터 조건에 맞는 영양제가 없습니다</div>';
   }
 
   return `
