@@ -274,7 +274,7 @@ function renderSupplementGroup(group) {
               <th class="supplement-th-qty">현재 재고</th>
               <th class="supplement-th-status">상태</th>
               <th class="supplement-th-recent">최근 변동</th>
-              <th class="supplement-th-actions">?묒뾽</th>
+              <th class="supplement-th-actions">작업</th>
             </tr>
           </thead>
           <tbody>
