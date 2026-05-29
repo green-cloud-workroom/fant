@@ -1176,14 +1176,14 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
     <tr class="${n?`supplement-row--inactive`:``}">
       <td class="supplement-td-name">
         ${zf(e.name||e.id)}
-        ${n?`<span class="tag tag-inactive">鍮꾪솢??/span>`:``}
+        ${n?`<span class="tag tag-inactive">비활성</span>`:``}
       </td>
-      <td class="supplement-td-qty ${r}">${t}遊?/td>
+      <td class="supplement-td-qty ${r}">${t}봉</td>
       <td class="supplement-td-status">${ff(t,n)}</td>
       <td class="supplement-td-recent">${pf(e.id)}</td>
       <td class="supplement-td-actions">
-        ${!n&&_f()?`<button class="btn-secondary supplement-action-in" data-id="${zf(e.id)}" data-name="${zf(e.name||e.id)}">?낃퀬</button>`:``}
-        ${!n&&gf()?`<button class="btn-secondary supplement-action-adjust" data-id="${zf(e.id)}" data-name="${zf(e.name||e.id)}">?섎룞議곗젙</button>`:``}
+        ${!n&&_f()?`<button class="btn-secondary supplement-action-in" data-id="${zf(e.id)}" data-name="${zf(e.name||e.id)}">입고</button>`:``}
+        ${!n&&gf()?`<button class="btn-secondary supplement-action-adjust" data-id="${zf(e.id)}" data-name="${zf(e.name||e.id)}">수동조정</button>`:``}
       </td>
     </tr>
   `}function hf(e){let t=sf(e.types),n=t.danger>0||t.warning>0,r=[t.danger>0?`부족 ${t.danger}`:``,t.warning>0?`주의 ${t.warning}`:``].filter(Boolean).join(` · `);return`
@@ -1198,10 +1198,10 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
         <table class="supplement-table">
           <thead>
             <tr>
-              <th class="supplement-th-name">?곸뼇??SKU</th>
-              <th class="supplement-th-qty">?꾩옱 ?ш퀬</th>
-              <th class="supplement-th-status">?곹깭</th>
-              <th class="supplement-th-recent">理쒓렐 蹂??/th>
+              <th class="supplement-th-name">영양제 SKU</th>
+              <th class="supplement-th-qty">현재 재고</th>
+              <th class="supplement-th-status">상태</th>
+              <th class="supplement-th-recent">최근 변동</th>
               <th class="supplement-th-actions">?묒뾽</th>
             </tr>
           </thead>
@@ -1211,7 +1211,7 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
         </table>
       </div>
     </details>
-  `}function gf(){return R===`admin`||R===`office`}function _f(){return R===`production`}function vf(){let e=nf();return Bd.length===0?`<div class="list-empty">?깅줉???곸뼇?쒓? ?놁뒿?덈떎. ?덉떆??愿由ъ뿉???앹궛?⑥쐞 ?꾨━?뗭쓣 ?ㅼ젙?댁＜?몄슂.</div>`:e.length===0?`<div class="list-empty">?꾪꽣 議곌굔??留욌뒗 ?곸뼇?쒓? ?놁뒿?덈떎</div>`:`
+  `}function gf(){return R===`admin`||R===`office`}function _f(){return R===`production`}function vf(){let e=nf();return Bd.length===0?`<div class="list-empty">등록된 영양제가 없습니다. 레시피 관리에서 생산단위 프리셋을 설정해주세요.</div>`:e.length===0?`<div class="list-empty">필터 조건에 맞는 영양제가 없습니다</div>`:`
     <div class="supplement-recipe-groups">
       ${of(e).map(e=>hf(e)).join(``)}
     </div>
