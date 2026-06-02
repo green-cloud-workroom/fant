@@ -736,10 +736,13 @@ async function showProductionForm(production) {
       alert('⚠ 이 레시피의 생산단위 중량이 비정상입니다. 레시피 관리에서 확인해주세요.');
     }
 
+    // ratio 기반: 각 ingredient의 총합은 (그 ingredient의 baseWeightG / PU의 baseWeightG) × totalProductionG.
+    // PU 자기 자신은 ratio=1이므로 자연스럽게 totalProductionG.
+    const puBaseWeightForRatio = Number(productionUnitIng?.baseWeightG) || 1;
+
     const ingHtml = (recipe.ingredients || []).map(ing => {
-      const totalG = ing.isProductionUnit
-        ? productionUnitTotalG
-        : (ing.baseWeightG || 0) * qty;
+      const ratio = (Number(ing.baseWeightG) || 0) / puBaseWeightForRatio;
+      const totalG = ratio * productionUnitTotalG;
       let displayText;
       if (ing.isProductionUnit && puIsCountUnit) {
         // 생산단위가 count 단위(마리/봉 등): 단위명으로 표시
@@ -851,16 +854,17 @@ async function showProductionForm(production) {
       batchNo,
       productionUnitQty: qty,
       productionUnitName: unitName,
-      ingredientsSnapshot: (recipe.ingredients || []).map(ing => ({
-        name: ing.name,
-        meatTypeId: ing.meatTypeId || null,
-        // PU는 unit 종류에 따른 환산값. 그 외는 baseWeightG × qty.
-        requiredQtyG: ing.isProductionUnit
-          ? savePuTotalG
-          : (ing.baseWeightG || 0) * qty,
-        autoDeductInventory: ing.autoDeductInventory !== false,
-        linkedToInventory: ing.linkedToInventory !== false,
-      })),
+      ingredientsSnapshot: (function() {
+        const savePuBaseWeight = Number(productionUnitIng?.baseWeightG) || 1;
+        return (recipe.ingredients || []).map(ing => ({
+          name: ing.name,
+          meatTypeId: ing.meatTypeId || null,
+          // ratio 기반 계산. PU는 ratio=1이므로 savePuTotalG와 같음.
+          requiredQtyG: ((Number(ing.baseWeightG) || 0) / savePuBaseWeight) * savePuTotalG,
+          autoDeductInventory: ing.autoDeductInventory !== false,
+          linkedToInventory: ing.linkedToInventory !== false,
+        }));
+      })(),
       staffName: staff,
       sortOrder: isNew ? productions.length : production.sortOrder,
       lockedByCompletion: false,
