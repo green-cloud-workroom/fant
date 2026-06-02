@@ -1,10 +1,12 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc
+  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, writeBatch
 } from 'firebase/firestore';
+import { currentUserRole } from '../app.js';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
+import { showConfirmModal } from '../utils/modal.js';
 import { recordActivity } from '../services/activityLogs.js';
 
 let freezeDryRecipes = [];
@@ -35,9 +37,26 @@ function getSummary(stocks) {
   return summary;
 }
 
+function canDeleteFrozenSepStock() {
+  return currentUserRole === 'admin' || currentUserRole === 'office';
+}
+
+function getStockTypeLabel(stockType) {
+  if (stockType === 'notSeparated') return '분리X';
+  if (stockType === 'separated') return '분리O';
+  return '소분X';
+}
+
+function getStockTypeTagClass(stockType) {
+  if (stockType === 'notSeparated') return 'tag-cat';
+  if (stockType === 'separated') return 'tag-raw';
+  return 'tag-freezeDry';
+}
+
 function renderFrozenSepLayout(stocks) {
   const content = document.getElementById('mainContent');
   const summary = getSummary(stocks);
+  const canDelete = canDeleteFrozenSepStock();
 
   content.innerHTML = `
     <div class="page-wrap">
@@ -77,23 +96,29 @@ function renderFrozenSepLayout(stocks) {
               <th>수량</th>
               <th>담당자</th>
               <th>비고</th>
+              ${canDelete ? '<th>작업</th>' : ''}
             </tr>
           </thead>
           <tbody>
             ${stocks.length === 0 ?
-              `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">등록된 재고 없음</td></tr>` :
+              `<tr><td colspan="${canDelete ? 7 : 6}" style="text-align:center;color:#aaa;padding:20px;">등록된 재고 없음</td></tr>` :
               stocks.map(s => `
                 <tr>
                   <td>${s.date}</td>
                   <td>${s.productName}</td>
                   <td>
-                    <span class="tag ${s.stockType === 'notSeparated' ? 'tag-cat' : s.stockType === 'separated' ? 'tag-raw' : 'tag-freezeDry'}">
-                      ${s.stockType === 'notSeparated' ? '분리X' : s.stockType === 'separated' ? '분리O' : '소분X'}
+                    <span class="tag ${getStockTypeTagClass(s.stockType)}">
+                      ${getStockTypeLabel(s.stockType)}
                     </span>
                   </td>
                   <td style="font-weight:600">${s.remaining}개</td>
                   <td>${s.staffName || '-'}</td>
                   <td>${s.note || '-'}</td>
+                  ${canDelete ? `
+                    <td>
+                      <button class="btn-del-row btnDeleteFrozenSep" data-id="${s.id}">삭제</button>
+                    </td>
+                  ` : ''}
                 </tr>
               `).join('')}
           </tbody>
@@ -106,6 +131,92 @@ function renderFrozenSepLayout(stocks) {
   document.getElementById('btnSeparate').addEventListener('click', () => showSeparateModal(stocks));
   document.getElementById('btnOut').addEventListener('click', () => showOutModal(stocks));
   document.getElementById('btnAdjust').addEventListener('click', () => showAdjustModal(stocks));
+  document.querySelectorAll('.btnDeleteFrozenSep').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const stock = stocks.find(s => s.id === btn.dataset.id);
+      if (stock) deleteFrozenSepStock(stock);
+    });
+  });
+}
+
+async function deleteFrozenSepStock(stock) {
+  if (!canDeleteFrozenSepStock()) {
+    alert('삭제 권한이 없습니다.');
+    return;
+  }
+
+  if (await blockIfClosed(stock.date)) return;
+
+  const initialQty = Number(stock.initialQty || 0);
+  const remainingQty = Number(stock.remaining || 0);
+  if (remainingQty <= 0) {
+    alert('삭제할 남은 수량이 없습니다.');
+    return;
+  }
+  if (initialQty !== remainingQty) {
+    alert('이미 일부 사용된 항목은 바로 삭제할 수 없습니다.\n관련 출고/분리 작업을 먼저 되돌리거나 수동 조정을 사용해주세요.');
+    return;
+  }
+
+  const staff = window.prompt('삭제 담당자 이름을 입력해주세요.');
+  if (!staff || !staff.trim()) return;
+
+  const stockTypeLabel = getStockTypeLabel(stock.stockType);
+  const ok = await showConfirmModal({
+    title: '동결 분리작업 삭제',
+    message: `${stock.productName} / ${stockTypeLabel} / ${remainingQty}개 항목을 삭제합니다.\n잘못 입력한 항목일 때만 진행해주세요.`,
+    confirmText: '삭제',
+    cancelText: '취소',
+    danger: true,
+  });
+  if (!ok) return;
+
+  const batch = writeBatch(db);
+  const stockRef = doc(db, 'frozenSeparation', stock.id);
+  const logRef = doc(collection(db, 'frozenSeparationLogs'));
+  const now = new Date();
+  const deleteStaff = staff.trim();
+
+  batch.update(stockRef, {
+    remaining: 0,
+    closed: true,
+    status: 'deleted',
+    deletedAt: now,
+    deletedBy: deleteStaff,
+    updatedAt: now,
+  });
+  batch.set(logRef, {
+    date: getToday(),
+    timestamp: now,
+    type: 'delete',
+    productName: stock.productName,
+    fromStockType: stock.stockType,
+    qty: -remainingQty,
+    staffName: deleteStaff,
+    note: 'wrong input delete',
+    sourceStockId: stock.id,
+  });
+
+  await batch.commit();
+
+  await recordActivity({
+    action: 'frozenSep',
+    subAction: 'delete',
+    date: getToday(),
+    staff: deleteStaff,
+    message: `동결 분리작업 삭제 — ${stock.productName} ${remainingQty}개 (${stockTypeLabel}) / 담당: ${deleteStaff}`,
+    details: {
+      frozenSeparationId: stock.id,
+      productName: stock.productName,
+      qty: remainingQty,
+      stockType: stock.stockType,
+      note: stock.note || null,
+    },
+  });
+
+  const newStocks = await loadFrozenSepStocks();
+  renderFrozenSepLayout(newStocks);
+  alert('삭제 완료!');
 }
 
 function showIncomingModal(stocks) {
