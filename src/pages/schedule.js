@@ -173,7 +173,7 @@ function renderScheduleRow(s, today, canManageSchedule = false) {
       <td style="color:${isOverdue ? '#e67e22' : '#1a1a1a'}">${s.date} ${isOverdue ? '⚠️' : ''}</td>
       <td><span class="tag tag-raw">${getTypeLabel(s.type)}</span></td>
       <td>${s.itemNameSnapshot}</td>
-      <td>${s.orderedQty}${s.orderedUnit}</td>
+      <td>${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)}</td>
       <td>${s.orderStaffName || '-'}</td>
       <td>${s.orderMemo || '-'}</td>
       <td><span style="color:#e67e22;font-size:12px">⏳ 예정</span></td>
@@ -193,8 +193,8 @@ function renderDoneRow(s) {
       <td>${s.date}</td>
       <td><span class="tag tag-raw">${getTypeLabel(s.type)}</span></td>
       <td>${s.itemNameSnapshot}</td>
-      <td>${s.orderedQty}${s.orderedUnit}</td>
-      <td>${s.actualQty || '-'}</td>
+      <td>${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)}</td>
+      <td>${s.actualQty ? formatScheduleQty(s.actualQty, s.actualUnit || s.orderedUnit, s.orderedUnitGrams) : '-'}</td>
       <td>${s.incomingStaffName || '-'}</td>
       <td>
         <span style="color:${isComplete ? '#2d7a3a' : '#e53e3e'};font-size:12px">
@@ -204,6 +204,20 @@ function renderDoneRow(s) {
       <td>${s.completeMemo || s.cancelReason || '-'}</td>
     </tr>
   `;
+}
+
+function isCountIncomingUnit(unit) {
+  return unit === '마리';
+}
+
+function formatGrams(value) {
+  return `${Number(value || 0).toLocaleString()}g`;
+}
+
+function formatScheduleQty(qty, unit, unitGrams) {
+  const base = `${qty}${unit}`;
+  if (!isCountIncomingUnit(unit) || !unitGrams) return base;
+  return `${base} (${formatGrams(Number(qty || 0) * Number(unitGrams || 0))})`;
 }
 
 function getTypeLabel(type) {
@@ -250,6 +264,10 @@ async function showScheduleModal(editingSchedule = null) {
         </select>
       </div>
     </div>
+    <div class="form-group" id="unitGramsWrap" style="display:none;">
+      <label>1마리당 g *</label>
+      <input type="number" id="m_unit_grams" placeholder="예: 1500" min="0" step="1" value="${editingSchedule?.orderedUnitGrams ?? ''}" />
+    </div>
     <div class="form-group">
       <label>발주 담당자</label>
       <select id="m_staff">
@@ -276,7 +294,7 @@ async function showScheduleModal(editingSchedule = null) {
     // [묶음 5D] 구분에 따라 단위 옵션 자동 제한
     // 원육 = g/kg (디폴트 kg), 봉투 = 장/박스 (디폴트 박스), 계란 = 개/판 (디폴트 개)
     const unitMap = {
-      meat: { options: [['kg', 'kg'], ['g', 'g']], default: 'kg' },
+      meat: { options: [['kg', 'kg'], ['g', 'g'], ['마리', '마리']], default: 'kg' },
       bag:  { options: [['박스', '박스'], ['장', '장']], default: '박스' },
       egg:  { options: [['개', '개'], ['판', '판']], default: '개' },
     };
@@ -293,6 +311,7 @@ async function showScheduleModal(editingSchedule = null) {
 
     if (type === 'egg') {
       wrap.style.display = 'none';
+      updateUnitGramsVisibility();
       return;
     }
 
@@ -304,7 +323,18 @@ async function showScheduleModal(editingSchedule = null) {
     items.forEach(item => {
       select.innerHTML += `<option value="${item.id}" data-name="${item.name}">${item.name}</option>`;
     });
+    updateUnitGramsVisibility();
   };
+
+  const updateUnitGramsVisibility = () => {
+    const wrap = document.getElementById('unitGramsWrap');
+    const gramsInput = document.getElementById('m_unit_grams');
+    const show = document.getElementById('m_type')?.value === 'meat' && document.getElementById('m_unit')?.value === '마리';
+    if (wrap) wrap.style.display = show ? '' : 'none';
+    if (!show && gramsInput) gramsInput.value = '';
+  };
+
+  document.getElementById('m_unit')?.addEventListener('change', updateUnitGramsVisibility);
 
   if (isEdit) {
     document.getElementById('m_type').value = editingSchedule.type || '';
@@ -313,6 +343,8 @@ async function showScheduleModal(editingSchedule = null) {
       document.getElementById('m_item').value = editingSchedule.itemId || '';
     }
     document.getElementById('m_unit').value = editingSchedule.orderedUnit || '';
+    document.getElementById('m_unit_grams').value = editingSchedule.orderedUnitGrams || '';
+    updateUnitGramsVisibility();
     document.getElementById('m_staff').value = editingSchedule.orderStaffName || '';
   }
 
@@ -325,11 +357,18 @@ async function showScheduleModal(editingSchedule = null) {
     const type = isEdit ? editingSchedule.type : document.getElementById('m_type').value;
     const qty = parseFloat(document.getElementById('m_qty').value);
     const unit = document.getElementById('m_unit').value;
+    const orderedUnitGrams = isCountIncomingUnit(unit)
+      ? parseFloat(document.getElementById('m_unit_grams')?.value)
+      : null;
     const staff = document.getElementById('m_staff').value;
     const memo = document.getElementById('m_memo').value;
 
     if (!date || !type || !qty) { alert('날짜, 구분, 수량은 필수입니다.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
+    if (isCountIncomingUnit(unit) && (!orderedUnitGrams || orderedUnitGrams <= 0)) {
+      alert('1마리당 g을 입력해주세요.');
+      return;
+    }
     if (isEdit) {
       if (await blockIfClosed(editingSchedule.date)) return;
       if (date !== editingSchedule.date && await blockIfClosed(date)) return;
@@ -382,6 +421,7 @@ async function showScheduleModal(editingSchedule = null) {
         date,
         orderedQty: qty,
         orderedUnit: unit,
+        orderedUnitGrams,
         orderStaffName: staff,
         orderMemo: memo,
         updatedAt: new Date(),
@@ -404,6 +444,7 @@ async function showScheduleModal(editingSchedule = null) {
             date,
             orderedQty: qty,
             orderedUnit: unit,
+            orderedUnitGrams,
             orderStaffName: staff,
             orderMemo: memo || '',
           },
@@ -423,6 +464,7 @@ async function showScheduleModal(editingSchedule = null) {
       itemNameSnapshot: itemName,
       orderedQty: qty,
       orderedUnit: unit,
+      orderedUnitGrams,
       status: 'scheduled',
       orderStaffName: staff,
       orderMemo: memo,
@@ -448,6 +490,7 @@ async function showScheduleModal(editingSchedule = null) {
         itemName,
         orderedQty: qty,
         orderedUnit: unit,
+        orderedUnitGrams,
         scheduledDate: date,
         memo: memo || null,
       },
@@ -463,7 +506,7 @@ async function showScheduleModal(editingSchedule = null) {
 function showCancelScheduleModal(s) {
   showModal(`
     <h3 class="modal-title">입고예정 취소 — ${s.itemNameSnapshot}</h3>
-    <p style="font-size:12px;color:#888;margin-bottom:16px;">발주수량: ${s.orderedQty}${s.orderedUnit}</p>
+    <p style="font-size:12px;color:#888;margin-bottom:16px;">발주수량: ${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)}</p>
     <div class="form-group">
       <label>취소 사유 *</label>
       <input type="text" id="m_reason" placeholder="사유 입력" />
@@ -524,13 +567,23 @@ function showCancelScheduleModal(s) {
 }
 
 function showCompleteModal(s) {
+  const isCountMeatOrder = s.type === 'meat' && isCountIncomingUnit(s.orderedUnit);
   showModal(`
     <h3 class="modal-title">입고 완료 처리 — ${s.itemNameSnapshot}</h3>
-    <p style="font-size:12px;color:#888;margin-bottom:16px;">발주수량: ${s.orderedQty}${s.orderedUnit}</p>
+    <p style="font-size:12px;color:#888;margin-bottom:16px;">발주수량: ${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)}</p>
     <div class="form-group">
       <label>실제 수량 *</label>
       <input type="number" id="m_actual" placeholder="실제 입고 수량 입력" />
     </div>
+    ${isCountMeatOrder ? `
+      <div class="form-group">
+        <label>실제 단위</label>
+        <select id="m_actual_unit">
+          <option value="${s.orderedUnit}">${s.orderedUnit}</option>
+          <option value="g">g</option>
+        </select>
+      </div>
+    ` : ''}
     <div class="form-group">
       <label>입고 담당자 *</label>
       <select id="m_staff">
@@ -550,18 +603,26 @@ function showCompleteModal(s) {
 
   document.getElementById('btnSaveComplete').addEventListener('click', async () => {
     const actual = parseFloat(document.getElementById('m_actual').value);
+    const actualUnit = document.getElementById('m_actual_unit')?.value || s.orderedUnit;
     const staff = document.getElementById('m_staff').value;
     const memo = document.getElementById('m_memo').value;
 
     if (!actual || !staff) { alert('실제 수량과 담당자는 필수입니다.'); return; }
+    if (isCountMeatOrder && (!s.orderedUnitGrams || s.orderedUnitGrams <= 0)) {
+      alert('이 발주의 1마리당 g 정보가 없습니다. 발주를 수정해 1마리당 g을 입력해주세요.');
+      return;
+    }
     const today = getToday();
     if (await blockIfClosed(today)) return;
 
     // 발주/실제 수량 차이 시 한 번 더 확인
-    if (actual !== s.orderedQty) {
+    const orderedCompareQty = isCountIncomingUnit(s.orderedUnit) && actualUnit === 'g'
+      ? Number(s.orderedQty || 0) * Number(s.orderedUnitGrams || 0)
+      : Number(s.orderedQty || 0);
+    if (actual !== orderedCompareQty) {
       const proceed = await showConfirmModal({
         title: '수량 차이 확인',
-        message: `발주 수량과 실제 수량이 다릅니다.\n\n발주: ${s.orderedQty}${s.orderedUnit}\n실제: ${actual}${s.orderedUnit}\n\n이대로 완료 처리하시겠습니까?`,
+        message: `발주 수량과 실제 수량이 다릅니다.\n\n발주: ${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)}\n실제: ${formatScheduleQty(actual, actualUnit, s.orderedUnitGrams)}\n\n이대로 완료 처리하시겠습니까?`,
         confirmText: '완료 처리',
       });
       if (!proceed) return;
@@ -573,7 +634,9 @@ function showCompleteModal(s) {
     if (s.type === 'meat' && s.itemId) {
       const meatSnap = await getDoc(doc(db, 'meatTypes', s.itemId));
       if (meatSnap.exists()) {
-        const qtyG = s.orderedUnit === 'kg' ? actual * 1000 : actual;
+        const qtyG = isCountIncomingUnit(s.orderedUnit)
+          ? (actualUnit === 'g' ? actual : actual * Number(s.orderedUnitGrams || 0))
+          : (s.orderedUnit === 'kg' ? actual * 1000 : actual);
         const stockUpdatedAt = new Date();
         const newStockRef = await addDoc(collection(db, 'meatStocks'), {
           meatTypeId: s.itemId,
@@ -702,6 +765,10 @@ function showCompleteModal(s) {
     await updateDoc(doc(db, 'schedules', s.id), {
       status: 'completed',
       actualQty: actual,
+      actualUnit,
+      actualQtyG: s.type === 'meat' ? (isCountIncomingUnit(s.orderedUnit)
+        ? (actualUnit === 'g' ? actual : actual * Number(s.orderedUnitGrams || 0))
+        : (s.orderedUnit === 'kg' ? actual * 1000 : actual)) : null,
       incomingStaffName: staff,
       completeMemo: memo,
       completedAt: new Date(),
@@ -711,14 +778,14 @@ function showCompleteModal(s) {
 
     // [묶음 6C-2] 입고 완료 — 차이 있으면 'completeDiff' (확인 필수), 없으면 'complete' (일반)
     // subAction 분기로 메인 로그 패널이 차이 있는 건만 ⚠️ 빨간 줄 + [확인] 버튼 표시
-    const hasDiff = actual !== s.orderedQty;
+    const hasDiff = actual !== orderedCompareQty;
     await recordActivity({
       action: 'schedule',
       subAction: hasDiff ? 'completeDiff' : 'complete',
       date: today,
       staff,
       message: hasDiff
-        ? `${s.itemNameSnapshot} 입고 완료 ⚠️ 발주 ${s.orderedQty}${s.orderedUnit} → 실제 ${actual}${s.orderedUnit} / 담당: ${staff}`
+        ? `${s.itemNameSnapshot} 입고 완료 ⚠️ 발주 ${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)} → 실제 ${formatScheduleQty(actual, actualUnit, s.orderedUnitGrams)} / 담당: ${staff}`
         : `${s.itemNameSnapshot} 입고 완료 차이 없음 / 담당: ${staff}`,
       details: {
         scheduleId: s.id,
@@ -727,7 +794,9 @@ function showCompleteModal(s) {
         itemName: s.itemNameSnapshot,
         orderedQty: s.orderedQty,
         actualQty: actual,
-        unit: s.orderedUnit,
+        unit: actualUnit,
+        orderedUnit: s.orderedUnit,
+        orderedUnitGrams: s.orderedUnitGrams || null,
         hasDiff,
         memo: memo || null,
       },
