@@ -726,10 +726,20 @@ async function showProductionForm(production) {
 
     const ingHtml = (recipe.ingredients || []).map(ing => {
       // baseWeightG is always grams per 1 production unit.
-      const total = ((ing.baseWeightG || 0) * qty).toFixed(1);
+      const totalG = (ing.baseWeightG || 0) * qty;
+      let displayText;
+      if (ing.isProductionUnit && ing.unitName) {
+        // 생산단위는 단위명(마리/봉 등)으로 표시. 가중치 환산 결과 정수면 정수, 아니면 1자리.
+        const unitCount = qty;
+        displayText = `${Number.isInteger(unitCount) ? unitCount : unitCount.toFixed(1)} ${ing.unitName}`;
+      } else if (ing.weightDisplayUnit === 'kg') {
+        displayText = `${(totalG / 1000).toFixed(3).replace(/\.?0+$/, '')} kg`;
+      } else {
+        displayText = `${totalG.toFixed(1)} g`;
+      }
       return `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #f5f5f5;">
         <span>${ing.name}</span>
-        <span style="color:#333;font-weight:500">${total}g</span>
+        <span style="color:#333;font-weight:500">${displayText}</span>
       </div>`;
     }).join('');
     document.getElementById('pf_ingredients').innerHTML = ingHtml;
