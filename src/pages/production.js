@@ -714,24 +714,39 @@ async function showProductionForm(production) {
     document.getElementById('pf_unitName').textContent = recipe.ingredients?.find(i => i.isProductionUnit)?.unitName || '';
 
     const productionUnitIng = recipe.ingredients?.find(i => i.isProductionUnit);
-    const productionUnitWeightG = productionUnitIng?.baseWeightG || 0;
 
+    // 생산단위의 "1 qty 단위당 g" 환산.
+    // - 단위명이 마리/봉 등 count 단위: PU baseWeightG (= 1개당 g)
+    // - 단위명이 비어있거나 kg/g: weightDisplayUnit 기준 (1000 if kg, 1 if g)
+    //   (qty 자체가 무게 단위로 해석됨)
+    const puUnitName = (productionUnitIng?.unitName || '').trim().toLowerCase();
+    const puIsCountUnit = puUnitName !== '' && puUnitName !== 'kg' && puUnitName !== 'g';
+    const puGramsPerQty = puIsCountUnit
+      ? Number(productionUnitIng?.baseWeightG) || 0
+      : (productionUnitIng?.weightDisplayUnit === 'kg' ? 1000 : 1);
+    const productionUnitTotalG = qty * puGramsPerQty;
+
+    // 비정상 PU 경고: count 단위인데 baseWeightG가 너무 작은 경우만
     if (recipe.category === 'raw'
-      && productionUnitWeightG > 0
-      && productionUnitWeightG < 50
+      && puIsCountUnit
+      && puGramsPerQty > 0
+      && puGramsPerQty < 50
       && !abnormalProductionUnitWarningShown.has(recipe.id)) {
       abnormalProductionUnitWarningShown.add(recipe.id);
       alert('⚠ 이 레시피의 생산단위 중량이 비정상입니다. 레시피 관리에서 확인해주세요.');
     }
 
+    // ratio 기반: 각 ingredient의 총합은 (그 ingredient의 baseWeightG / PU의 baseWeightG) × totalProductionG.
+    // PU 자기 자신은 ratio=1이므로 자연스럽게 totalProductionG.
+    const puBaseWeightForRatio = Number(productionUnitIng?.baseWeightG) || 1;
+
     const ingHtml = (recipe.ingredients || []).map(ing => {
-      // baseWeightG is always grams per 1 production unit.
-      const totalG = (ing.baseWeightG || 0) * qty;
+      const ratio = (Number(ing.baseWeightG) || 0) / puBaseWeightForRatio;
+      const totalG = ratio * productionUnitTotalG;
       let displayText;
-      if (ing.isProductionUnit && ing.unitName) {
-        // 생산단위는 단위명(마리/봉 등)으로 표시. 가중치 환산 결과 정수면 정수, 아니면 1자리.
-        const unitCount = qty;
-        displayText = `${Number.isInteger(unitCount) ? unitCount : unitCount.toFixed(1)} ${ing.unitName}`;
+      if (ing.isProductionUnit && puIsCountUnit) {
+        // 생산단위가 count 단위(마리/봉 등): 단위명으로 표시
+        displayText = `${Number.isInteger(qty) ? qty : qty.toFixed(1)} ${productionUnitIng.unitName}`;
       } else if (ing.weightDisplayUnit === 'kg') {
         displayText = `${(totalG / 1000).toFixed(3).replace(/\.?0+$/, '')} kg`;
       } else {
@@ -747,8 +762,7 @@ async function showProductionForm(production) {
     // 참고 수치
     let refs = '';
     if (recipe.category === 'raw' && recipe.packWeightG) {
-      const totalG = productionUnitWeightG * qty;
-      const boxes = Math.ceil(totalG / recipe.packWeightG / 20);
+      const boxes = Math.ceil(productionUnitTotalG / recipe.packWeightG / 20);
       refs = `📦 박스수: ${boxes}박스`;
     } else if (recipe.category === 'freezeDry') {
       const parts = [`봉지: ${(recipe.freezeDryBagCountPerUnit || 0) * qty}`];
@@ -806,7 +820,14 @@ async function showProductionForm(production) {
     const unitName = recipe.ingredients?.find(i => i.isProductionUnit)?.unitName || '';
     const displayName = getRecipeDisplayName(recipe);
     const productionUnitIng = recipe.ingredients?.find(i => i.isProductionUnit);
-    const productionUnitWeightG = productionUnitIng?.baseWeightG || 0;
+
+    // PU의 "1 qty 단위당 g" 환산 (위 updateIngredients와 동일 규칙).
+    const savePuUnitName = (productionUnitIng?.unitName || '').trim().toLowerCase();
+    const savePuIsCountUnit = savePuUnitName !== '' && savePuUnitName !== 'kg' && savePuUnitName !== 'g';
+    const savePuGramsPerQty = savePuIsCountUnit
+      ? Number(productionUnitIng?.baseWeightG) || 0
+      : (productionUnitIng?.weightDisplayUnit === 'kg' ? 1000 : 1);
+    const savePuTotalG = qty * savePuGramsPerQty;
 
     // 재고 부족 경고
     const shortages = checkShortages(recipe, qty);
@@ -833,14 +854,17 @@ async function showProductionForm(production) {
       batchNo,
       productionUnitQty: qty,
       productionUnitName: unitName,
-      ingredientsSnapshot: (recipe.ingredients || []).map(ing => ({
-        name: ing.name,
-        meatTypeId: ing.meatTypeId || null,
-        // baseWeightG is always grams per 1 production unit.
-        requiredQtyG: (ing.baseWeightG || 0) * qty,
-        autoDeductInventory: ing.autoDeductInventory !== false,
-        linkedToInventory: ing.linkedToInventory !== false,
-      })),
+      ingredientsSnapshot: (function() {
+        const savePuBaseWeight = Number(productionUnitIng?.baseWeightG) || 1;
+        return (recipe.ingredients || []).map(ing => ({
+          name: ing.name,
+          meatTypeId: ing.meatTypeId || null,
+          // ratio 기반 계산. PU는 ratio=1이므로 savePuTotalG와 같음.
+          requiredQtyG: ((Number(ing.baseWeightG) || 0) / savePuBaseWeight) * savePuTotalG,
+          autoDeductInventory: ing.autoDeductInventory !== false,
+          linkedToInventory: ing.linkedToInventory !== false,
+        }));
+      })(),
       staffName: staff,
       sortOrder: isNew ? productions.length : production.sortOrder,
       lockedByCompletion: false,
@@ -850,8 +874,7 @@ async function showProductionForm(production) {
 
     // 참고 수치
     if (recipe.category === 'raw' && recipe.packWeightG) {
-      const totalG = productionUnitWeightG * qty;
-      data.rawBoxQty = Math.ceil(totalG / recipe.packWeightG / 20);
+      data.rawBoxQty = Math.ceil(savePuTotalG / recipe.packWeightG / 20);
     }
     // [spec_v27] raw 방식/예상/실제 박스는 생산완료 모달에서 기록 (입력 저장엔 미포함)
     if (recipe.category === 'freezeDry') {
