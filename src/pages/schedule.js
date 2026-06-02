@@ -2,7 +2,7 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc
 } from 'firebase/firestore';
-import { getTodayKST as getToday, getNextBusinessDayByType, isBusinessDay } from '../utils/date.js';
+import { getTodayKST as getToday } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { recordMeatLog } from '../services/meatLogs.js';
 import { recordActivity } from '../services/activityLogs.js';
@@ -330,9 +330,6 @@ async function showScheduleModal(editingSchedule = null) {
 
     if (!date || !type || !qty) { alert('날짜, 구분, 수량은 필수입니다.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
-    const resolvedDate = await resolveScheduleBusinessDate(date);
-    if (!resolvedDate) return;
-    date = resolvedDate;
     if (isEdit) {
       if (await blockIfClosed(editingSchedule.date)) return;
       if (date !== editingSchedule.date && await blockIfClosed(date)) return;
@@ -461,18 +458,6 @@ async function showScheduleModal(editingSchedule = null) {
     renderScheduleLayout(newSchedules);
     alert('입고 예정 등록 완료!');
   });
-}
-
-async function resolveScheduleBusinessDate(date) {
-  if (isBusinessDay(date, 'shipping')) return date;
-  const nextDate = getNextBusinessDayByType(date, 'shipping');
-  const ok = await showConfirmModal({
-    title: '입고 예정일 조정',
-    message: `${date}은 배송 영업일이 아닙니다.\n입고 예정일을 다음 배송 영업일(${nextDate})로 변경할까요?`,
-    confirmText: '변경',
-    cancelText: '취소',
-  });
-  return ok ? nextDate : null;
 }
 
 function showCancelScheduleModal(s) {
