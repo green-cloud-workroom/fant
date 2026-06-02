@@ -912,9 +912,17 @@ function renderIngredientRows(ingredients) {
   return ingredients.map((ing, i) => renderIngredientRow(ing, i)).join('');
 }
 
+function getIngredientWeightDisplay(ing) {
+  const baseWeightG = Number(ing.baseWeightG || 0);
+  if (!baseWeightG) return '';
+  return ing.weightDisplayUnit === 'kg' ? baseWeightG / 1000 : baseWeightG;
+}
+
 function renderIngredientRow(ing, idx) {
   // 기본값: 신규 행은 재고연동 ON, 기존 행은 저장된 값 유지
   const isLinked = ing.linkedToInventory === undefined ? true : ing.linkedToInventory;
+  const weightDisplayUnit = ing.weightDisplayUnit === 'kg' ? 'kg' : 'g';
+  const displayWeight = getIngredientWeightDisplay(ing);
   const meatOptions = meatTypes
     .filter(m => m.active !== false || ing.meatTypeId === m.id)
     .map(m => `<option value="${m.id}" ${ing.meatTypeId === m.id ? 'selected' : ''}>${m.name}</option>`)
@@ -923,7 +931,15 @@ function renderIngredientRow(ing, idx) {
   return `
     <tr data-idx="${idx}">
       <td><input type="text" class="ing-name cell-input" value="${ing.name || ''}" placeholder="원료명" /></td>
-      <td><input type="number" class="ing-weight cell-input" value="${ing.baseWeightG || ''}" placeholder="g" /></td>
+      <td>
+        <div class="ingredient-weight-control">
+          <input type="number" class="ing-weight cell-input" value="${displayWeight}" placeholder="${weightDisplayUnit}" step="0.001" />
+          <select class="ing-weight-unit">
+            <option value="g" ${weightDisplayUnit === 'g' ? 'selected' : ''}>g</option>
+            <option value="kg" ${weightDisplayUnit === 'kg' ? 'selected' : ''}>kg</option>
+          </select>
+        </div>
+      </td>
       <td style="text-align:center">
         <input type="radio" name="productionUnit" class="ing-unit-radio" value="${idx}" ${ing.isProductionUnit ? 'checked' : ''} />
       </td>
@@ -966,6 +982,25 @@ function bindIngredientEvents() {
       }
     };
   });
+
+  document.querySelectorAll('.ing-weight-unit').forEach(select => {
+    select.onchange = (e) => {
+      const tr = e.target.closest('tr');
+      const input = tr.querySelector('.ing-weight');
+      const previousUnit = e.target.dataset.previousUnit || 'g';
+      const nextUnit = e.target.value;
+      const value = parseFloat(input.value);
+      if (Number.isFinite(value)) {
+        const weightG = value * (previousUnit === 'kg' ? 1000 : 1);
+        input.value = nextUnit === 'kg'
+          ? Number((weightG / 1000).toFixed(3))
+          : Number(weightG.toFixed(1));
+      }
+      e.target.dataset.previousUnit = nextUnit;
+      input.placeholder = nextUnit;
+    };
+    select.dataset.previousUnit = select.value;
+  });
 }
 
 function handleIngredientPaste(e) {
@@ -989,6 +1024,11 @@ function handleIngredientPaste(e) {
       const tr = existingRows[i];
       tr.querySelector('.ing-name').value = name;
       tr.querySelector('.ing-weight').value = weight;
+      const weightUnitSelect = tr.querySelector('.ing-weight-unit');
+      if (weightUnitSelect) {
+        weightUnitSelect.value = 'g';
+        weightUnitSelect.dataset.previousUnit = 'g';
+      }
       const linkedCb = tr.querySelector('.ing-linked');
       const meatSelect = tr.querySelector('.ing-meat-type');
       linkedCb.checked = linkedToInventory;
@@ -1004,6 +1044,7 @@ function handleIngredientPaste(e) {
       tbody.insertAdjacentHTML('beforeend', renderIngredientRow({
         name,
         baseWeightG: weight,
+        weightDisplayUnit: 'g',
         linkedToInventory,
         meatTypeId,
       }, idx));
@@ -1017,10 +1058,15 @@ function getIngredients() {
   return Array.from(rows).map((row, idx) => {
     const linked = row.querySelector('.ing-linked').checked;
     const meatTypeId = linked ? (row.querySelector('.ing-meat-type').value || null) : null;
+    const weightDisplayUnit = row.querySelector('.ing-weight-unit')?.value === 'kg' ? 'kg' : 'g';
+    const displayWeight = parseFloat(row.querySelector('.ing-weight').value) || 0;
+    // baseWeightG is always grams per 1 production unit.
+    const baseWeightG = displayWeight * (weightDisplayUnit === 'kg' ? 1000 : 1);
     return {
       id: Date.now().toString() + idx,
       name: row.querySelector('.ing-name').value.trim(),
-      baseWeightG: parseFloat(row.querySelector('.ing-weight').value) || 0,
+      baseWeightG,
+      weightDisplayUnit,
       isProductionUnit: row.querySelector('.ing-unit-radio').checked,
       unitName: row.querySelector('.ing-unit-name').value.trim(),
       autoDeductInventory: row.querySelector('.ing-auto-deduct').checked,

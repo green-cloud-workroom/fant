@@ -699,6 +699,8 @@ async function showProductionForm(production) {
     updateConversionCalculation(recipes.find(r => r.id === recipeSelect.value));
   }
 
+  const abnormalProductionUnitWarningShown = new Set();
+
   function updateIngredients() {
     const recipeId = recipeSelect.value;
     const recipe = recipes.find(r => r.id === recipeId);
@@ -712,13 +714,19 @@ async function showProductionForm(production) {
     document.getElementById('pf_unitName').textContent = recipe.ingredients?.find(i => i.isProductionUnit)?.unitName || '';
 
     const productionUnitIng = recipe.ingredients?.find(i => i.isProductionUnit);
-const baseWeight = productionUnitIng?.baseWeightG || 1;
-const totalProductionG = qty * 1000;
+    const productionUnitWeightG = productionUnitIng?.baseWeightG || 0;
 
-const ingHtml = (recipe.ingredients || []).map(ing => {
-  const total = ing.isProductionUnit
-    ? totalProductionG.toFixed(1)
-    : ((ing.baseWeightG / baseWeight) * totalProductionG).toFixed(1);
+    if (recipe.category === 'raw'
+      && productionUnitWeightG > 0
+      && productionUnitWeightG < 50
+      && !abnormalProductionUnitWarningShown.has(recipe.id)) {
+      abnormalProductionUnitWarningShown.add(recipe.id);
+      alert('⚠ 이 레시피의 생산단위 중량이 비정상입니다. 레시피 관리에서 확인해주세요.');
+    }
+
+    const ingHtml = (recipe.ingredients || []).map(ing => {
+      // baseWeightG is always grams per 1 production unit.
+      const total = ((ing.baseWeightG || 0) * qty).toFixed(1);
       return `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #f5f5f5;">
         <span>${ing.name}</span>
         <span style="color:#333;font-weight:500">${total}g</span>
@@ -729,7 +737,7 @@ const ingHtml = (recipe.ingredients || []).map(ing => {
     // 참고 수치
     let refs = '';
     if (recipe.category === 'raw' && recipe.packWeightG) {
-      const totalG = (recipe.ingredients?.find(i => i.isProductionUnit)?.baseWeightG || 0) * qty;
+      const totalG = productionUnitWeightG * qty;
       const boxes = Math.ceil(totalG / recipe.packWeightG / 20);
       refs = `📦 박스수: ${boxes}박스`;
     } else if (recipe.category === 'freezeDry') {
@@ -788,7 +796,7 @@ const ingHtml = (recipe.ingredients || []).map(ing => {
     const unitName = recipe.ingredients?.find(i => i.isProductionUnit)?.unitName || '';
     const displayName = getRecipeDisplayName(recipe);
     const productionUnitIng = recipe.ingredients?.find(i => i.isProductionUnit);
-const baseWeight = productionUnitIng?.baseWeightG || 1;
+    const productionUnitWeightG = productionUnitIng?.baseWeightG || 0;
 
     // 재고 부족 경고
     const shortages = checkShortages(recipe, qty);
@@ -818,9 +826,8 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
       ingredientsSnapshot: (recipe.ingredients || []).map(ing => ({
         name: ing.name,
         meatTypeId: ing.meatTypeId || null,
-        requiredQtyG: ing.isProductionUnit
-  ? qty * 1000
-  : (ing.baseWeightG / baseWeight) * qty * 1000,
+        // baseWeightG is always grams per 1 production unit.
+        requiredQtyG: (ing.baseWeightG || 0) * qty,
         autoDeductInventory: ing.autoDeductInventory !== false,
         linkedToInventory: ing.linkedToInventory !== false,
       })),
@@ -833,7 +840,7 @@ const baseWeight = productionUnitIng?.baseWeightG || 1;
 
     // 참고 수치
     if (recipe.category === 'raw' && recipe.packWeightG) {
-      const totalG = (recipe.ingredients?.find(i => i.isProductionUnit)?.baseWeightG || 0) * qty;
+      const totalG = productionUnitWeightG * qty;
       data.rawBoxQty = Math.ceil(totalG / recipe.packWeightG / 20);
     }
     // [spec_v27] raw 방식/예상/실제 박스는 생산완료 모달에서 기록 (입력 저장엔 미포함)
