@@ -748,7 +748,7 @@ async function showProductionForm(production) {
         // 생산단위가 count 단위(마리/봉 등): 단위명으로 표시
         displayText = `${Number.isInteger(qty) ? qty : qty.toFixed(1)} ${productionUnitIng.unitName}`;
       } else if (ing.weightDisplayUnit === 'kg') {
-        displayText = `${(totalG / 1000).toFixed(3).replace(/\.?0+$/, '')} kg`;
+        displayText = `${(totalG / 1000).toFixed(1)} kg`;
       } else {
         displayText = `${totalG.toFixed(1)} g`;
       }
