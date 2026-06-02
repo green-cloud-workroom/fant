@@ -696,7 +696,7 @@ function showRecipeDetail(recipe) {
             <thead>
               <tr>
                 <th>원료명</th>
-                <th>기준 중량 (g)</th>
+                <th>기준 중량</th>
                 <th>생산단위</th>
                 <th>단위명</th>
                 <th>자동차감</th>
