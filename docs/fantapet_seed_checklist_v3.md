@@ -47,15 +47,18 @@
 | codebase.md 신규 스키마 갱신 | ✅ 완료 (PR #2 스크립트/meat 인라인편집/settings 판당팩수/recipe 가드 반영, stale follow-up 정정) |
 | recipe.js 편집 권한 가드 (운영 발견사항 #20) | ✅ 완료 (production read-only) |
 | firestore.rules legacy `token.role` 브랜치 제거 | ⬜ **결정 대기** — cutover 완료(5/20)·검증(5/21) 전제 충족. 모든 클라이언트 토큰 갱신 확인 후 제거 + main 머지(룰 자동 배포 트리거). |
-| codebase.md mojibake 손상 | ⬜ **별도 결정** — Korean 섹션 다수가 인코딩 깨짐. 재작성 여부 판단 필요. |
+| codebase.md mojibake 손상 | ✅ 완료 (PR #13, 2026-05-26) — Korean prose 313줄 재작성, mojibake/U+FFFD 0건 확인. |
+| 원료 단가 effectiveDate 관리 (Phase A) | ✅ 완료 (PR #14·#16, 2026-05-26) — `meatTypes/{id}/priceHistory` 스키마 + 설정 UI + Firestore rules + 권한 가드(admin+office). 라이브 배포. |
+| 원료 단가 시드 입력 | ⬜ **신규** — 활성 meatTypes 각각 단가 입력. **앱 UI**(설정 → 원료 단가 관리)에서 admin/office(=admin@ 또는 alice) 입력. effectiveDate를 실제 단가 변동일로 입력. 과거 변동 있으면 같은 원육에 여러 row 백필 권장(B단계 통계 탭7 가치 향상). |
 
 ---
 
 ## 4. 시드 등록 순서 (참고 — handoff 누적)
 
-meat types → bag types → frozen products → recipes / 추가 매핑 → holidays / settings → 초기 재고.
+meat types → **원료 단가(앱 UI)** → bag types → frozen products → recipes / 추가 매핑 → holidays / settings → 초기 재고.
 - bagTypes 재시드 후 보존된 raw 레시피의 bag 매핑 재연결.
 - dog 레시피 운영 필요 여부 확정.
+- **원료 단가**(Phase A, PR #14·#16): 앱 UI(설정 > 원료 단가 관리), admin/office 입력. effectiveDate 실제 변동일로 입력 — 과거 변동 있으면 같은 원육에 여러 row 백필(B단계 통계 탭7 가치 향상). Admin SDK 스크립트 아님(§0과 채널 다름).
 
 ---
 
