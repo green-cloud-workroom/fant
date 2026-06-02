@@ -884,6 +884,22 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   background: white;
 }
 
+.ingredient-weight-control {
+  display: grid;
+  grid-template-columns: minmax(70px, 1fr) 58px;
+  gap: 4px;
+  align-items: center;
+}
+
+.ingredient-weight-control .ing-weight-unit {
+  height: 30px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 12px;
+  background: #fff;
+}
+
 /* 영양제 재고 */
 .supplement-page {
   height: 100%;
