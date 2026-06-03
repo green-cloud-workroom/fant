@@ -1,13 +1,16 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc
+  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, writeBatch
 } from 'firebase/firestore';
+import { currentUserRole } from '../app.js';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
+import { showConfirmModal } from '../utils/modal.js';
 import { recordActivity } from '../services/activityLogs.js';
 
 let freezeDryRecipes = [];
+const QTY_EPSILON = 0.000001;
 
 export async function renderFrozenSep() {
   const content = document.getElementById('mainContent');
@@ -30,14 +33,46 @@ function getSummary(stocks) {
     if (!summary[s.productName]) {
       summary[s.productName] = { notSeparated: 0, separated: 0, noSplit: 0 };
     }
-    summary[s.productName][s.stockType] += s.remaining;
+    summary[s.productName][s.stockType] += Number(s.remaining || 0);
   });
   return summary;
+}
+
+function normalizeQty(qty) {
+  return Math.round((Number(qty) || 0) * 1000000) / 1000000;
+}
+
+function formatQty(qty) {
+  return normalizeQty(qty).toLocaleString('ko-KR', {
+    maximumFractionDigits: 3,
+  });
+}
+
+function parseQtyInput(id = 'm_qty') {
+  const qty = Number(document.getElementById(id).value);
+  return Number.isFinite(qty) ? qty : NaN;
+}
+
+function canDeleteFrozenSepStock() {
+  return currentUserRole === 'admin' || currentUserRole === 'office';
+}
+
+function getStockTypeLabel(stockType) {
+  if (stockType === 'notSeparated') return '분리X';
+  if (stockType === 'separated') return '분리O';
+  return '소분X';
+}
+
+function getStockTypeTagClass(stockType) {
+  if (stockType === 'notSeparated') return 'tag-cat';
+  if (stockType === 'separated') return 'tag-raw';
+  return 'tag-freezeDry';
 }
 
 function renderFrozenSepLayout(stocks) {
   const content = document.getElementById('mainContent');
   const summary = getSummary(stocks);
+  const canDelete = canDeleteFrozenSepStock();
 
   content.innerHTML = `
     <div class="page-wrap">
@@ -58,9 +93,9 @@ function renderFrozenSepLayout(stocks) {
             Object.entries(summary).map(([name, s]) => `
               <div>
                 <div style="font-size:12px;font-weight:600;color:#333;margin-bottom:6px;">${name}</div>
-                ${s.notSeparated > 0 ? `<div style="font-size:11px;color:#666">분리X: ${s.notSeparated}개</div>` : ''}
-                ${s.separated > 0 ? `<div style="font-size:11px;color:#2d7a3a">분리O: ${s.separated}개</div>` : ''}
-                ${s.noSplit > 0 ? `<div style="font-size:11px;color:#2d4a8a">소분X: ${s.noSplit}개</div>` : ''}
+                ${s.notSeparated > 0 ? `<div style="font-size:11px;color:#666">분리X: ${formatQty(s.notSeparated)}개</div>` : ''}
+                ${s.separated > 0 ? `<div style="font-size:11px;color:#2d7a3a">분리O: ${formatQty(s.separated)}개</div>` : ''}
+                ${s.noSplit > 0 ? `<div style="font-size:11px;color:#2d4a8a">소분X: ${formatQty(s.noSplit)}개</div>` : ''}
               </div>
             `).join('')}
         </div>
@@ -77,23 +112,29 @@ function renderFrozenSepLayout(stocks) {
               <th>수량</th>
               <th>담당자</th>
               <th>비고</th>
+              ${canDelete ? '<th>작업</th>' : ''}
             </tr>
           </thead>
           <tbody>
             ${stocks.length === 0 ?
-              `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">등록된 재고 없음</td></tr>` :
+              `<tr><td colspan="${canDelete ? 7 : 6}" style="text-align:center;color:#aaa;padding:20px;">등록된 재고 없음</td></tr>` :
               stocks.map(s => `
                 <tr>
                   <td>${s.date}</td>
                   <td>${s.productName}</td>
                   <td>
-                    <span class="tag ${s.stockType === 'notSeparated' ? 'tag-cat' : s.stockType === 'separated' ? 'tag-raw' : 'tag-freezeDry'}">
-                      ${s.stockType === 'notSeparated' ? '분리X' : s.stockType === 'separated' ? '분리O' : '소분X'}
+                    <span class="tag ${getStockTypeTagClass(s.stockType)}">
+                      ${getStockTypeLabel(s.stockType)}
                     </span>
                   </td>
-                  <td style="font-weight:600">${s.remaining}개</td>
+                  <td style="font-weight:600">${formatQty(s.remaining)}개</td>
                   <td>${s.staffName || '-'}</td>
                   <td>${s.note || '-'}</td>
+                  ${canDelete ? `
+                    <td>
+                      <button class="btn-del-row btnDeleteFrozenSep" data-id="${s.id}">삭제</button>
+                    </td>
+                  ` : ''}
                 </tr>
               `).join('')}
           </tbody>
@@ -106,6 +147,92 @@ function renderFrozenSepLayout(stocks) {
   document.getElementById('btnSeparate').addEventListener('click', () => showSeparateModal(stocks));
   document.getElementById('btnOut').addEventListener('click', () => showOutModal(stocks));
   document.getElementById('btnAdjust').addEventListener('click', () => showAdjustModal(stocks));
+  document.querySelectorAll('.btnDeleteFrozenSep').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const stock = stocks.find(s => s.id === btn.dataset.id);
+      if (stock) deleteFrozenSepStock(stock);
+    });
+  });
+}
+
+async function deleteFrozenSepStock(stock) {
+  if (!canDeleteFrozenSepStock()) {
+    alert('삭제 권한이 없습니다.');
+    return;
+  }
+
+  if (await blockIfClosed(stock.date)) return;
+
+  const initialQty = Number(stock.initialQty || 0);
+  const remainingQty = Number(stock.remaining || 0);
+  if (remainingQty <= 0) {
+    alert('삭제할 남은 수량이 없습니다.');
+    return;
+  }
+  if (Math.abs(initialQty - remainingQty) > QTY_EPSILON) {
+    alert('이미 일부 사용된 항목은 바로 삭제할 수 없습니다.\n관련 출고/분리 작업을 먼저 되돌리거나 수동 조정을 사용해주세요.');
+    return;
+  }
+
+  const staff = window.prompt('삭제 담당자 이름을 입력해주세요.');
+  if (!staff || !staff.trim()) return;
+
+  const stockTypeLabel = getStockTypeLabel(stock.stockType);
+  const ok = await showConfirmModal({
+    title: '동결 분리작업 삭제',
+    message: `${stock.productName} / ${stockTypeLabel} / ${formatQty(remainingQty)}개 항목을 삭제합니다.\n잘못 입력한 항목일 때만 진행해주세요.`,
+    confirmText: '삭제',
+    cancelText: '취소',
+    danger: true,
+  });
+  if (!ok) return;
+
+  const batch = writeBatch(db);
+  const stockRef = doc(db, 'frozenSeparation', stock.id);
+  const logRef = doc(collection(db, 'frozenSeparationLogs'));
+  const now = new Date();
+  const deleteStaff = staff.trim();
+
+  batch.update(stockRef, {
+    remaining: 0,
+    closed: true,
+    status: 'deleted',
+    deletedAt: now,
+    deletedBy: deleteStaff,
+    updatedAt: now,
+  });
+  batch.set(logRef, {
+    date: getToday(),
+    timestamp: now,
+    type: 'delete',
+    productName: stock.productName,
+    fromStockType: stock.stockType,
+    qty: -remainingQty,
+    staffName: deleteStaff,
+    note: 'wrong input delete',
+    sourceStockId: stock.id,
+  });
+
+  await batch.commit();
+
+  await recordActivity({
+    action: 'frozenSep',
+    subAction: 'delete',
+    date: getToday(),
+    staff: deleteStaff,
+    message: `동결 분리작업 삭제 — ${stock.productName} ${formatQty(remainingQty)}개 (${stockTypeLabel}) / 담당: ${deleteStaff}`,
+    details: {
+      frozenSeparationId: stock.id,
+      productName: stock.productName,
+      qty: remainingQty,
+      stockType: stock.stockType,
+      note: stock.note || null,
+    },
+  });
+
+  const newStocks = await loadFrozenSepStocks();
+  renderFrozenSepLayout(newStocks);
+  alert('삭제 완료!');
 }
 
 function showIncomingModal(stocks) {
@@ -121,7 +248,7 @@ function showIncomingModal(stocks) {
     </div>
     <div class="form-group">
       <label>수량(개) *</label>
-      <input type="number" id="m_qty" placeholder="개수" />
+      <input type="number" id="m_qty" placeholder="예: 0.2" min="0" step="0.01" />
     </div>
     <div class="form-group">
       <label>날짜</label>
@@ -173,12 +300,12 @@ function showIncomingModal(stocks) {
 
   document.getElementById('btnSaveIncoming').addEventListener('click', async () => {
     const name = document.getElementById('m_name').value.trim();
-    const qty = parseInt(document.getElementById('m_qty').value);
+    const qty = parseQtyInput();
     const date = document.getElementById('m_date').value;
     const staff = document.getElementById('m_staff').value;
     const note = document.getElementById('m_note').value;
 
-    if (!name || !qty || !date) { alert('제품명, 수량, 날짜는 필수입니다.'); return; }
+    if (!name || !Number.isFinite(qty) || qty <= 0 || !date) { alert('제품명, 수량, 날짜는 필수입니다.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (await blockIfClosed(date)) return;
 
@@ -211,7 +338,7 @@ function showIncomingModal(stocks) {
       subAction: 'incoming',
       date,
       staff,
-      message: `분리작업 입고 — ${name} +${qty}개 (${stockTypeLabel}) / 담당: ${staff}`,
+      message: `분리작업 입고 — ${name} +${formatQty(qty)}개 (${stockTypeLabel}) / 담당: ${staff}`,
       details: {
         frozenSeparationId: sepRef.id,
         productName: name,
@@ -241,14 +368,16 @@ function showSeparateModal(stocks) {
       <select id="m_product">
         <option value="">선택</option>
         ${products.map(p => {
-          const total = notSepStocks.filter(s => s.productName === p).reduce((sum, s) => sum + s.remaining, 0);
-          return `<option value="${p}">${p} (분리X: ${total}개)</option>`;
+          const total = notSepStocks
+            .filter(s => s.productName === p)
+            .reduce((sum, s) => sum + Number(s.remaining || 0), 0);
+          return `<option value="${p}">${p} (분리X: ${formatQty(total)}개)</option>`;
         }).join('')}
       </select>
     </div>
     <div class="form-group">
       <label>수량(개) *</label>
-      <input type="number" id="m_qty" placeholder="분리할 개수" />
+      <input type="number" id="m_qty" placeholder="예: 0.2" min="0" step="0.01" />
     </div>
     <div class="form-group">
       <label>날짜</label>
@@ -269,32 +398,34 @@ function showSeparateModal(stocks) {
 
   document.getElementById('btnSaveSeparate').addEventListener('click', async () => {
     const productName = document.getElementById('m_product').value;
-    const qty = parseInt(document.getElementById('m_qty').value);
+    const qty = parseQtyInput();
     const date = document.getElementById('m_date').value;
     const staff = document.getElementById('m_staff').value;
 
-    if (!productName || !qty || !date) { alert('제품, 수량, 날짜는 필수입니다.'); return; }
+    if (!productName || !Number.isFinite(qty) || qty <= 0 || !date) { alert('제품, 수량, 날짜는 필수입니다.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (await blockIfClosed(date)) return;
 
     const productStocks = notSepStocks
       .filter(s => s.productName === productName)
       .sort((a, b) => a.date.localeCompare(b.date));
-    const totalAvail = productStocks.reduce((sum, s) => sum + s.remaining, 0);
+    const totalAvail = productStocks.reduce((sum, s) => sum + Number(s.remaining || 0), 0);
 
-    if (qty > totalAvail) { alert(`분리X 재고가 부족합니다. (현재: ${totalAvail}개)`); return; }
+    if (qty - totalAvail > QTY_EPSILON) { alert(`분리X 재고가 부족합니다. (현재: ${formatQty(totalAvail)}개)`); return; }
 
     // FIFO 차감
     let remaining = qty;
     for (const s of productStocks) {
       if (remaining <= 0) break;
-      const deduct = Math.min(s.remaining, remaining);
+      const currentRemaining = Number(s.remaining || 0);
+      const deduct = Math.min(currentRemaining, remaining);
+      const after = normalizeQty(currentRemaining - deduct);
       await updateDoc(doc(db, 'frozenSeparation', s.id), {
-        remaining: s.remaining - deduct,
-        closed: s.remaining - deduct <= 0,
+        remaining: after,
+        closed: after <= QTY_EPSILON,
         updatedAt: new Date(),
       });
-      remaining -= deduct;
+      remaining = normalizeQty(remaining - deduct);
     }
 
     // 분리O 추가
@@ -320,7 +451,7 @@ function showSeparateModal(stocks) {
       subAction: 'separate',
       date,
       staff,
-      message: `분리 작업 — ${productName} ${qty}개 (분리X → 분리O) / 담당: ${staff}`,
+      message: `분리 작업 — ${productName} ${formatQty(qty)}개 (분리X → 분리O) / 담당: ${staff}`,
       details: {
         newSeparatedId: sepRef.id,
         productName,
@@ -356,7 +487,7 @@ function showOutModal(stocks) {
     </div>
     <div class="form-group">
       <label>수량(개) *</label>
-      <input type="number" id="m_qty" placeholder="개수" />
+      <input type="number" id="m_qty" placeholder="예: 0.2" min="0" step="0.01" />
     </div>
     <div class="form-group">
       <label>날짜</label>
@@ -398,16 +529,16 @@ function showOutModal(stocks) {
     // 해당 재고 종류 잔량 계산 (사전 경고용)
     const avail = outStocks
       .filter(s => s.productName === productName && s.stockType === stockType)
-      .reduce((sum, s) => sum + s.remaining, 0);
+      .reduce((sum, s) => sum + Number(s.remaining || 0), 0);
 
-    if (avail === 0) {
+    if (avail <= QTY_EPSILON) {
       const hint = recipe.requiresSeparation
         ? '먼저 분리 작업이 필요합니다.'
         : '소분X 재고가 없습니다.';
       guideEl.innerHTML = `⚠️ <b style="color:${labelColor};">${stockTypeLabel}</b> 재고 없음 — ${hint}`;
       guideEl.style.color = '#c0392b';
     } else {
-      guideEl.innerHTML = `📌 <b style="color:${labelColor};">${stockTypeLabel}</b> 재고에서 출고됩니다 (현재 ${avail}개 보유)`;
+      guideEl.innerHTML = `📌 <b style="color:${labelColor};">${stockTypeLabel}</b> 재고에서 출고됩니다 (현재 ${formatQty(avail)}개 보유)`;
       guideEl.style.color = '#555';
     }
   };
@@ -415,11 +546,11 @@ function showOutModal(stocks) {
 
   document.getElementById('btnSaveOut').addEventListener('click', async () => {
     const productName = document.getElementById('m_product').value;
-    const qty = parseInt(document.getElementById('m_qty').value);
+    const qty = parseQtyInput();
     const date = document.getElementById('m_date').value;
     const staff = document.getElementById('m_staff').value;
 
-    if (!productName || !qty || !date) { alert('제품, 수량, 날짜는 필수입니다.'); return; }
+    if (!productName || !Number.isFinite(qty) || qty <= 0 || !date) { alert('제품, 수량, 날짜는 필수입니다.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (await blockIfClosed(date)) return;
 
@@ -432,26 +563,28 @@ function showOutModal(stocks) {
     const targetStocks = outStocks
       .filter(s => s.productName === productName && s.stockType === stockType)
       .sort((a, b) => a.date.localeCompare(b.date));
-    const totalAvail = targetStocks.reduce((sum, s) => sum + s.remaining, 0);
+    const totalAvail = targetStocks.reduce((sum, s) => sum + Number(s.remaining || 0), 0);
 
-    if (qty > totalAvail) {
+    if (qty - totalAvail > QTY_EPSILON) {
       const hint = recipe.requiresSeparation
         ? '\n\n분리 작업을 먼저 진행해주세요.'
         : '';
-      alert(`${stockTypeLabel} 재고가 부족합니다. (현재: ${totalAvail}개)${hint}`);
+      alert(`${stockTypeLabel} 재고가 부족합니다. (현재: ${formatQty(totalAvail)}개)${hint}`);
       return;
     }
 
     let remaining = qty;
     for (const s of targetStocks) {
       if (remaining <= 0) break;
-      const deduct = Math.min(s.remaining, remaining);
+      const currentRemaining = Number(s.remaining || 0);
+      const deduct = Math.min(currentRemaining, remaining);
+      const after = normalizeQty(currentRemaining - deduct);
       await updateDoc(doc(db, 'frozenSeparation', s.id), {
-        remaining: s.remaining - deduct,
-        closed: s.remaining - deduct <= 0,
+        remaining: after,
+        closed: after <= QTY_EPSILON,
         updatedAt: new Date(),
       });
-      remaining -= deduct;
+      remaining = normalizeQty(remaining - deduct);
     }
 
     await addDoc(collection(db, 'frozenSeparationLogs'), {
@@ -467,7 +600,7 @@ function showOutModal(stocks) {
       subAction: 'out',
       date,
       staff,
-      message: `분리작업 출고 — ${productName} -${qty}개 (${stockTypeLabel}) / 담당: ${staff}`,
+      message: `분리작업 출고 — ${productName} -${formatQty(qty)}개 (${stockTypeLabel}) / 담당: ${staff}`,
       details: {
         productName,
         qty,
@@ -513,7 +646,7 @@ function showAdjustModal(stocks) {
       </div>
       <div class="form-group">
         <label>수량(개) *</label>
-        <input type="number" id="m_qty" placeholder="개수" />
+        <input type="number" id="m_qty" placeholder="예: 0.2" min="0" step="0.01" />
       </div>
     </div>
     <div class="form-group">
@@ -537,11 +670,11 @@ function showAdjustModal(stocks) {
     const productName = document.getElementById('m_product').value;
     const stockType = document.getElementById('m_stockType').value;
     const adjustType = document.getElementById('m_adjustType').value;
-    const qty = parseInt(document.getElementById('m_qty').value);
+    const qty = parseQtyInput();
     const reason = document.getElementById('m_reason').value.trim();
     const staff = document.getElementById('m_staff').value;
 
-    if (!productName || !qty || !reason || !staff) { alert('모든 필수 항목을 입력해주세요.'); return; }
+    if (!productName || !Number.isFinite(qty) || qty <= 0 || !reason || !staff) { alert('모든 필수 항목을 입력해주세요.'); return; }
     const today = getToday();
     if (await blockIfClosed(today)) return;
 
@@ -554,14 +687,15 @@ function showAdjustModal(stocks) {
     // 신규 생성 분기는 마이너스로 신규 생성 자체를 차단해야 함.
     if (targetStocks.length > 0) {
       const s = targetStocks[0];
-      const after = s.remaining + delta;
-      if (after < 0) {
-        alert(`조정 후 잔량이 ${after}개가 됩니다.\n수동조정으로 음수 재고를 만들 수 없습니다.\n현재 ${s.remaining}개에서 최대 ${s.remaining}개까지만 감소 가능합니다.`);
+      const currentRemaining = Number(s.remaining || 0);
+      const after = normalizeQty(currentRemaining + delta);
+      if (after < -QTY_EPSILON) {
+        alert(`조정 후 잔량이 ${formatQty(after)}개가 됩니다.\n수동조정으로 음수 재고를 만들 수 없습니다.\n현재 ${formatQty(currentRemaining)}개에서 최대 ${formatQty(currentRemaining)}개까지만 감소 가능합니다.`);
         return;
       }
       await updateDoc(doc(db, 'frozenSeparation', s.id), {
         remaining: after,
-        closed: after <= 0,
+        closed: after <= QTY_EPSILON,
         updatedAt: new Date(),
       });
     } else {
@@ -585,14 +719,14 @@ function showAdjustModal(stocks) {
       qty: delta, staffName: staff, reason,
     });
     
-    const stockTypeLabel = stockType === 'notSeparated' ? '분리X' : stockType === 'separated' ? '분리O' : '소분X';
+    const stockTypeLabel = getStockTypeLabel(stockType);
     const sign = delta >= 0 ? '+' : '';
     await recordActivity({
       action: 'frozenSep',
       subAction: 'adjust',
       date: today,
       staff,
-      message: `동결 분리작업 수동조정 — ${productName} (${stockTypeLabel}) ${sign}${delta}개 / 사유: ${reason} / 담당: ${staff}`,
+      message: `동결 분리작업 수동조정 — ${productName} (${stockTypeLabel}) ${sign}${formatQty(delta)}개 / 사유: ${reason} / 담당: ${staff}`,
       details: {
         productName,
         stockType,
