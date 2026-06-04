@@ -1,9 +1,11 @@
 # Fantapet Management Codebase Notes
 
-Last updated: 2026-05-19
+Last updated: 2026-06-04
 
 ## Current Status
 
+- 2026-06-04 spec_v27 P2 doc sync:
+  - Documented the raw product-receipt flow (`openProductReceiptModal`, main.js): `productions` product-receipt fields, the `productTransferRequests/{idempotencyKey}` cross-app outbox schema + rules, and the modal/batch flow. Code-authoritative as of this commit; freezeDry receipt (`frozenProductId`/`quantity`) remains Phase 3 and is not yet emitted. Cross-app contract: `docs/fantapet_crossapp_request_product_transfer_2026-05-21.md`.
 - 2026-05-19 v28 / Phase 1 code closeout:
   - Phase 1 code work is complete through Phase 2b, the 4th reorder bundle, and the 5th bundle. Next major step is seed entry and pre-operation data cleanup.
   - Latest relevant commits after v27: `7b2b5d4` production card reorder, `1b74aff` copy-sheet category order, `2e71161` left-side production reorder handle polish.
@@ -216,6 +218,15 @@ spec_v24 / Work A:
 - `OFFICE_LOG_ACTIONS` includes both `supplementStock` and `recipe`; recipe active-toggle logs now appear in the office log category.
 
 메인 화면, 내일생산불러오기, 생산 로그, 캘린더, 마감 관련 흐름.
+
+spec_v27 P2 — 제품입고 흐름 (`openProductReceiptModal`):
+- 완료된 생식(raw) 생산카드 클릭 → 제품입고 모달. `category !== 'raw'`는 무시(동결건조 제품입고 = Phase 3).
+- 입력: 생산방식(기록용, recipe `productionMethods`에서 선택), 판수(필수), 낱개(자투리 팩, 기본 0).
+- 환산: `총 팩수 = 판수 × 판당팩수 + 낱개` → `박스 = floor(총팩/20)`, `낱개 = 총팩 % 20` (1박스 = 20팩). 실시간 미리보기.
+- 판당팩수는 `settings/systemValues`의 `packsPerPlateCat`/`packsPerPlateDog`에서 target별로 읽음. 값이 없거나 ≤0이면 alert 후 모달 중단.
+- 저장: 단일 `writeBatch`로 (1) `productions/{id}` 입고 필드 update + `receivedRevision`+1, (2) `productTransferRequests/{productions:id:revision}` outbox 생성(`status:'pending'`). 원자적.
+- 재입력(이미 received된 카드 재저장)은 `receivedRevision`을 올려 **새 outbox 문서**를 만든다(수정 아님). 재고앱은 같은 `sourceId`의 최신 revision만 반영.
+- 스키마: 위 `productions` product-receipt fields + `productTransferRequests/{idempotencyKey}` 참조. cross-app 계약: `docs/fantapet_crossapp_request_product_transfer_2026-05-21.md`.
 
 묶음 9 #9:
 - 자동 재포장 trigger 로그 확인 후 전용 모달 표시.
@@ -840,6 +851,29 @@ Notes:
 - `appliedUnitToBox` snapshots the conversion value so later recipe changes do not recalculate existing production cards.
 - `rawBoxQty` remains in place as the pack-weight based theoretical box count.
 
+### `productions` product-receipt fields
+
+New in spec_v27 P2 (raw product receipt). Written by `openProductReceiptModal` (main.js) when a completed raw card records actual produced quantity.
+
+```js
+received: true,
+receivedMethod: string | null,    // recipe productionMethods methodKey, record-only
+receivedPlates: number,           // 판수 (required)
+receivedLoosePacks: number,       // 낱개 (자투리 팩), default 0
+receivedTotalPacks: number,       // plates * packsPerPlate + loosePacks
+receivedBox: number,              // floor(totalPacks / 20)   (1 box = 20 packs)
+receivedRemainder: number,        // totalPacks % 20
+receivedRevision: number,         // +1 on each re-receipt; drives the outbox revision
+receivedAt: Timestamp,
+updatedAt: Timestamp,
+```
+
+Notes:
+- `packsPerPlate` comes from `settings/systemValues` (`packsPerPlateCat` / `packsPerPlateDog`); raw-only, so cat/dog are independent. If the relevant value is missing/≤0 the modal alerts and aborts.
+- Re-recording an already-received card bumps `receivedRevision`; the same revision is used in the outbox doc id, so a re-receipt is a new `productTransferRequests` doc (not an edit).
+- Written together with the outbox doc in a single `writeBatch` (atomic).
+- `category !== 'raw'` cards are not handled by this modal (freezeDry receipt = Phase 3).
+
 ### `supplementTypes/{recipeId_unit}`
 
 New in spec_v24. Supplement SKU master, generated from recipe presets.
@@ -905,6 +939,42 @@ New in spec_v24. Supplement stock movement history.
 Notes:
 - Production save/edit/delete uses `relatedProductionId` for net refund/deduct tracking.
 - Recipe preset removal deletes the SKU, stock doc, and matching supplement logs after warning/confirmation.
+
+### `productTransferRequests/{idempotencyKey}`
+
+New in spec_v27 P2. Cross-app outbox: the production app append-only writes finished-product receipts here; the inventory app reads/processes them into its own finished-product stock. The production app never writes inventory-owned collections directly (decouples the two apps, avoids double-receipt). Contract: `docs/fantapet_crossapp_request_product_transfer_2026-05-21.md`.
+
+Doc id = `idempotencyKey` (deterministic). Written by `openProductReceiptModal` (main.js) in the same `writeBatch` as the `productions` receipt update.
+
+```js
+{
+  idempotencyKey: string,            // = doc id = `${sourceCollection}:${sourceId}:${revision}`
+  sourceApp: 'production',
+  sourceCollection: 'productions',   // currently raw only; 'frozenProducts' reserved for Phase 3
+  sourceId: string,                  // productions/{id}
+  eventType: 'productReceipt',
+  revision: number,                  // = productions.receivedRevision; re-receipt = new doc, not edit
+  supersedesRevision: number | null, // revision-1 when revision>1, else null (최초 입고)
+  status: 'pending',                 // production writes 'pending'; inventory updates to processed/rejected
+  category: 'raw',
+  recipeId: string,
+  recipeName: string,                // snapshot
+  target: 'cat' | 'dog' | '',
+  plates: number,                    // 판수
+  packs: number,                     // 총 팩수 = plates * packsPerPlate + loosePacks
+  boxes: number,                     // floor(packs / 20)
+  remainderPacks: number,            // packs % 20
+  producedDate: string,              // p.date, 'YYYY-MM-DD'
+  staff: string,                     // p.staffName
+  createdAt: Timestamp,
+}
+```
+
+Notes:
+- Idempotency model: same `idempotencyKey` cannot be re-created; the inventory side reflects only the **latest revision per `sourceId`** (overwrite, not diff). Guards retries / double-click / card re-edit against double receipt.
+- Rules (`firestore.rules`): `read` = production or inventory app; `create` = `isProductionWriter()` (admin/office); `update` = inventory app only (sets processed/rejected, etc.); `delete` = `false`.
+- **Not yet written** (contract §2.1 proposed but freezeDry receipt is Phase 3): `frozenProductId`, `quantity`. Current code only emits raw fields above.
+- The production app does not poll/subscribe this collection — it is write-only here. Inventory choice of polling vs `onSnapshot` is the inventory app's concern.
 
 ## Stats Tab Behavior
 
