@@ -60,17 +60,24 @@ function renderBagLayout() {
 function renderBagList() {
   if (bagTypes.length === 0) return '<div class="list-empty">등록된 봉투 없음</div>';
 
-  const raw = bagTypes.filter(b => b.category === 'raw');
-  const freeze = bagTypes.filter(b => b.category === 'freezeDry');
+  // 활성/비활성 분리: 활성은 카테고리별 sortable 섹션, 비활성은 하단 별도 섹션.
+  const active = bagTypes.filter(b => b.active !== false);
+  const inactive = bagTypes.filter(b => b.active === false);
+  const rawActive = active.filter(b => b.category === 'raw');
+  const freezeActive = active.filter(b => b.category === 'freezeDry');
 
   let html = '';
-  if (raw.length > 0) {
+  if (rawActive.length > 0) {
     html += `<div class="list-group-label">생식</div>`;
-    html += `<div class="sortable-master-list" id="bagListRaw" data-category="raw">${raw.map(b => renderBagItem(b)).join('')}</div>`;
+    html += `<div class="sortable-master-list" id="bagListRaw" data-category="raw">${rawActive.map(b => renderBagItem(b)).join('')}</div>`;
   }
-  if (freeze.length > 0) {
+  if (freezeActive.length > 0) {
     html += `<div class="list-group-label">동결건조</div>`;
-    html += `<div class="sortable-master-list" id="bagListFreezeDry" data-category="freezeDry">${freeze.map(b => renderBagItem(b)).join('')}</div>`;
+    html += `<div class="sortable-master-list" id="bagListFreezeDry" data-category="freezeDry">${freezeActive.map(b => renderBagItem(b)).join('')}</div>`;
+  }
+  if (inactive.length > 0) {
+    html += `<div class="list-group-label list-group-label--inactive">비활성</div>`;
+    html += `<div class="master-inactive-list">${inactive.map(b => renderBagItem(b)).join('')}</div>`;
   }
   return html;
 }
