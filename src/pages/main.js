@@ -4,7 +4,7 @@ import {
 } from 'firebase/firestore';
 import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDayByType as getNextBusinessDay, loadHolidaysCache, getHolidaysCache, getHolidayInfoCache, getHolidayDataNotice } from '../utils/date.js';
 import { getAllBlockingItems } from '../services/closingChecks.js';
-import { setCurrentMenu, currentUserRole } from '../app.js';
+import { setCurrentMenu, currentUserRole, currentMenu } from '../app.js';
 import { renderLayout } from '../layout.js';
 import { renderPage } from '../router.js';
 import { recordMeatLog } from '../services/meatLogs.js';
@@ -51,6 +51,9 @@ export async function renderMain() {
   selectedProductionDate = null;
   selectedDateProductions = [];
   await loadAllData();
+  // [Navigation guard] loadAllData 도중에 다른 메뉴로 이동했으면 main 덮어쓰지 않음.
+  // currentMenu가 'main'이 아니라면 stale 호출이므로 mainContent 보존.
+  if (currentMenu !== 'main') return;
   renderMainLayout();
 }
 
