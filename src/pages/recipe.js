@@ -102,16 +102,24 @@ function renderRecipeListItem(r) {
 function renderRecipeList() {
   if (recipes.length === 0) return '<div class="list-empty">등록된 레시피 없음</div>';
 
-  const raw = recipes.filter(r => r.category === 'raw');
-  const freezeDry = recipes.filter(r => r.category === 'freezeDry');
+  // 활성/비활성 분리: 활성은 카테고리별 sortable 섹션, 비활성은 하단 별도 섹션.
+  const active = recipes.filter(r => r.active !== false);
+  const inactive = recipes.filter(r => r.active === false);
+  const rawActive = active.filter(r => r.category === 'raw');
+  const freezeActive = active.filter(r => r.category === 'freezeDry');
+
   let html = '';
-  if (raw.length > 0) {
+  if (rawActive.length > 0) {
     html += `<div class="list-group-label">생식</div>`;
-    html += `<div class="sortable-master-list" id="recipeListRaw" data-category="raw">${raw.map(r => renderRecipeListItem(r)).join('')}</div>`;
+    html += `<div class="sortable-master-list" id="recipeListRaw" data-category="raw">${rawActive.map(r => renderRecipeListItem(r)).join('')}</div>`;
   }
-  if (freezeDry.length > 0) {
+  if (freezeActive.length > 0) {
     html += `<div class="list-group-label">동결건조</div>`;
-    html += `<div class="sortable-master-list" id="recipeListFreezeDry" data-category="freezeDry">${freezeDry.map(r => renderRecipeListItem(r)).join('')}</div>`;
+    html += `<div class="sortable-master-list" id="recipeListFreezeDry" data-category="freezeDry">${freezeActive.map(r => renderRecipeListItem(r)).join('')}</div>`;
+  }
+  if (inactive.length > 0) {
+    html += `<div class="list-group-label list-group-label--inactive">비활성</div>`;
+    html += `<div class="master-inactive-list">${inactive.map(r => renderRecipeListItem(r)).join('')}</div>`;
   }
   return html;
 }
