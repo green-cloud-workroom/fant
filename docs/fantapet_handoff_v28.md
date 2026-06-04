@@ -6,6 +6,28 @@
 
 ---
 
+## 🛑 2026-06-04 정정 — 이 문서는 pre-seed 시점 기록 (시드 이미 완료·운영 전환됨)
+
+**이 문서 본문은 2026-05-18 시드 입력 *전* 상태다. 시드는 2026-05-20에 완료됐고, 앱은 현재 운영 데이터 상태(Phase 4 자연 검증 진입)다. 아래 본문의 "다음 = 시드 입력", §"시드 입력 전 정리 필요"는 전부 *이미 처리된 과거 작업*으로 읽을 것.**
+
+### seed 스크립트 재실행 금지 (1회용, 멱등 아님)
+
+`scripts/seedCleanup.mjs` / `scripts/seedDataInput.mjs`는 **pre-seed 1회용 와이프/주입기**이며 **2026-05-20에 `--execute` 완료**됐다. 무결성 프로브가 아니다. **절대 재실행(특히 `:execute`)하지 말 것.**
+
+- 과거 세션 핸드오프에 있던 *"seed-cleanup:dry + seed-data-input:dry 재실행 → 둘 다 쓰기 0 = 시드 깨끗 (Phase 4 게이트)"* 기준은 **무효**다. 이 스크립트들은 조건 매칭 삭제가 아니라 **컬렉션 통째 삭제**를 하므로, 운영 전환 후엔 결코 0이 나올 수 없다.
+- 2026-06-04 dry-run 실측: `seed-cleanup:dry` → `total intended delete docs: 1780`. 그 정체는 **전부 정상 운영 데이터**:
+  - `activityLogs` 전량 1777건 = 5/20 이후 쌓인 **운영 감사로그** (seedCleanup step 5는 컬렉션 전체 무조건 삭제)
+  - `settings/systemValues` = 제품입고(`openProductReceiptModal`)가 읽는 **운영 설정**(packsPerPlateCat/Dog). 삭제 시 제품입고 파손.
+  - `recipes/{고양이치킨}/conversionHistory` 2건 = 운영 환산이력
+  - → `:execute` 실행 시 운영 audit trail + 제품입고 설정 **파괴**. 절대 금지.
+- `seed-data-input:dry`가 exit 1 (`고양이 주식치킨캣 unexpected unitPresets [...]; expected [] or [1]`)로 멈추는 건 **고장이 아니라 정상 가드** — 시드가 이미 적용돼 운영 상태라 재주입을 안전하게 거부하는 신호다.
+
+### Phase 4 진입 게이트 판정
+
+위 사유로 "둘 다 쓰기 0" 게이트는 적용 불가. **시드는 정상 적용됐고(데이터 가드가 확인), 잔재는 5/20에 이미 정리됐으며, 현재 데이터는 정상 운영 누적이다. → Phase 4 자연 검증 진입 가능.** seed 스크립트 재실행으로 게이트를 "다시 통과"시키려 하지 말 것.
+
+---
+
 ## ⚠ 다음 작업에서 가장 먼저 할 일
 
 **Phase 1 코드 작업 100% 완료. 다음 = 시드 입력 단계.**
