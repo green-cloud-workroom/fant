@@ -637,6 +637,14 @@ function showIncomingModal(product) {
   showModal(`
     <h3 class="modal-title">입고 등록 — ${product.name}</h3>
     <div class="form-group">
+      <label>날짜 *</label>
+      <input type="date" id="m_date" value="${today}" max="${today}" />
+    </div>
+    <div class="form-group">
+      <label>유통기한 *</label>
+      <input type="date" id="m_expiry" value="${futureStr}" />
+    </div>
+    <div class="form-group">
       <label>봉지수 *</label>
       <input type="number" id="m_qty" placeholder="봉지수 입력" />
     </div>
@@ -654,12 +662,16 @@ function showIncomingModal(product) {
   `);
 
   document.getElementById('btnSaveIncoming').addEventListener('click', async () => {
-    const date = today;          // [입고 모달 간소화] 날짜=오늘 자동
-    const expiry = futureStr;    // 유통기한=+18개월 자동
+    const date = document.getElementById('m_date').value;
+    const expiry = document.getElementById('m_expiry').value;
     const qty = parseInt(document.getElementById('m_qty').value);
     const staff = document.getElementById('m_staff').value;
     const note = '';
 
+    if (!date) { alert('날짜를 입력해주세요.'); return; }
+    if (date > today) { alert('미래 날짜는 입력할 수 없습니다.'); return; }
+    if (!expiry) { alert('유통기한을 입력해주세요.'); return; }
+    if (expiry < date) { alert('유통기한이 입고일보다 빠릅니다.'); return; }
     if (!qty || qty <= 0) { alert('봉지수를 입력해주세요.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (await blockIfClosed(date)) return;
