@@ -48,6 +48,11 @@ function getUnitPresets(recipe) {
   return Array.isArray(recipe?.unitPresets) ? recipe.unitPresets : [];
 }
 
+function getProductionUnitName(recipe) {
+  const productionUnitIng = recipe?.ingredients?.find(i => i.isProductionUnit);
+  return productionUnitIng?.unitName || productionUnitIng?.weightDisplayUnit || '';
+}
+
 function normalizeProductionMethods(methods) {
   if (!Array.isArray(methods)) return [];
   return methods
@@ -335,12 +340,18 @@ function renderProductionCards() {
          style="border-left:4px solid ${p.color || '#4A7C59'}">
       ${canManageProduction ? '<span class="drag-handle production-card-drag-handle">≡</span>' : ''}
       <div class="card-title">${p.recipeName}${getRoundBadgeHtml(p)}</div>
-      <div class="card-info">${p.productionUnitQty} ${p.productionUnitName}</div>
+      <div class="card-info">${p.productionUnitQty} ${getProductionCardUnitName(p)}</div>
       ${p.category === 'raw' ? `<div class="card-sub">${p.rawBoxQty || 0}박스</div>` : ''}
       ${p.category === 'freezeDry' ? `<div class="card-sub">${renderFreezeDryQtyLine(p)}</div>` : ''}
       ${canManageProduction ? `<button class="card-del" data-id="${p.id}">✕</button>` : ''}
     </div>
   `).join('');
+}
+
+function getProductionCardUnitName(production) {
+  if (production.productionUnitName) return production.productionUnitName;
+  const recipe = recipes.find(r => r.id === production.recipeId);
+  return getProductionUnitName(recipe);
 }
 
 function refreshProductionCardsView() {
@@ -580,7 +591,7 @@ async function showProductionForm(production) {
     const currentQty = production?.productionUnitQty;
     const hasCurrentQty = currentQty !== undefined && currentQty !== null && currentQty !== '';
     const allowLegacyEdit = !isNew && hasCurrentQty;
-    const unitName = recipe?.ingredients?.find(i => i.isProductionUnit)?.unitName || '';
+    const unitName = getProductionUnitName(recipe);
 
     document.getElementById('pf_unitName').textContent = unitName;
     qtyDirectInput.value = '';
@@ -711,7 +722,7 @@ async function showProductionForm(production) {
       return;
     }
 
-    document.getElementById('pf_unitName').textContent = recipe.ingredients?.find(i => i.isProductionUnit)?.unitName || '';
+    document.getElementById('pf_unitName').textContent = getProductionUnitName(recipe);
 
     const productionUnitIng = recipe.ingredients?.find(i => i.isProductionUnit);
 
@@ -817,7 +828,7 @@ async function showProductionForm(production) {
 
     // [spec_v27] 입력 시점엔 방식/실제박스를 받지 않음. 방식·판수·실제박스는 메인 생산완료(제품입고) 모달에서 기록.
 
-    const unitName = recipe.ingredients?.find(i => i.isProductionUnit)?.unitName || '';
+    const unitName = getProductionUnitName(recipe);
     const displayName = getRecipeDisplayName(recipe);
     const productionUnitIng = recipe.ingredients?.find(i => i.isProductionUnit);
 
@@ -859,6 +870,7 @@ async function showProductionForm(production) {
         return (recipe.ingredients || []).map(ing => ({
           name: ing.name,
           meatTypeId: ing.meatTypeId || null,
+          weightDisplayUnit: ing.weightDisplayUnit === 'kg' ? 'kg' : 'g',
           // ratio 기반 계산. PU는 ratio=1이므로 savePuTotalG와 같음.
           requiredQtyG: ((Number(ing.baseWeightG) || 0) / savePuBaseWeight) * savePuTotalG,
           autoDeductInventory: ing.autoDeductInventory !== false,
@@ -1245,7 +1257,7 @@ function showBigViewModal() {
         productions.map(p => `
           <div style="border:1px solid #e8e8e8;border-radius:8px;padding:16px;min-width:160px;border-left:4px solid ${p.color || '#4A7C59'}">
             <div style="font-size:13px;font-weight:600;margin-bottom:6px;">${p.recipeName}${getRoundBadgeHtml(p)}</div>
-            <div style="font-size:12px;color:#555;">${p.productionUnitQty} ${p.productionUnitName}</div>
+            <div style="font-size:12px;color:#555;">${p.productionUnitQty} ${getProductionCardUnitName(p)}</div>
             ${p.category === 'raw' ? `<div style="font-size:11px;color:#888;">${p.rawBoxQty || 0}박스</div>` : ''}
             ${p.category === 'freezeDry' ? `<div style="font-size:11px;color:#888;">${renderFreezeDryQtyLine(p)}</div>` : ''}
           </div>

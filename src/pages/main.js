@@ -366,7 +366,7 @@ function renderCalendarCell(date, today, holidays, holidayInfo) {
   const prodCap = 3;
   productions.slice(0, prodCap).forEach(p => {
     const qtyPart = p.productionUnitQty != null
-      ? ` ${formatQty(p.productionUnitQty)}${p.productionUnitName || ''}`
+      ? ` ${formatQty(p.productionUnitQty)}${getProductionUnitDisplayUnit(p)}`
       : '';
     const label = `${p.recipeName || ''}${qtyPart}`;
     tagBlocks.push(`<div class="cal-tag cal-tag-production" title="${escapeHtmlMain(label)}">🏭 ${escapeHtmlMain(label)}</div>`);
@@ -1751,13 +1751,13 @@ function renderProductionTableCard(p) {
           <tr class="unit-row">
             <td>${unitRowName}</td>
             <td>${formatQty(p.productionUnitQty)}</td>
-            <td>${p.productionUnitName || ''}</td>
+            <td>${getProductionUnitDisplayUnit(p)}</td>
           </tr>
           ${ingredients.map(ing => `
             <tr>
               <td>${ing.name}</td>
-              <td>${formatIngredientQty(ing)}</td>
-              <td>${getIngredientUnit(ing)}</td>
+              <td>${formatIngredientQty(p, ing)}</td>
+              <td>${getIngredientUnit(p, ing)}</td>
             </tr>
           `).join('')}
         </tbody>
@@ -1913,14 +1913,38 @@ function getProductionUnitRowName(p, ingredients) {
   return inventoryIngredient?.name || unitName || '생산단위';
 }
 
-function formatIngredientQty(ing) {
+function getProductionUnitDisplayUnit(p) {
+  if (p.productionUnitName) return p.productionUnitName;
+  const recipe = recipes.find(r => r.id === p.recipeId);
+  const productionUnitIng = recipe?.ingredients?.find(ing => ing.isProductionUnit);
+  return productionUnitIng?.unitName || productionUnitIng?.weightDisplayUnit || '';
+}
+
+function getIngredientDisplayUnit(p, ing) {
+  if (ing.weightDisplayUnit === 'kg' || ing.weightDisplayUnit === 'g') {
+    return ing.weightDisplayUnit;
+  }
+
+  const recipe = recipes.find(r => r.id === p.recipeId);
+  const recipeIngredient = recipe?.ingredients?.find(item => (
+    item.name === ing.name && (!ing.meatTypeId || item.meatTypeId === ing.meatTypeId)
+  )) || recipe?.ingredients?.find(item => item.name === ing.name);
+
+  if (recipeIngredient?.weightDisplayUnit === 'kg' || recipeIngredient?.weightDisplayUnit === 'g') {
+    return recipeIngredient.weightDisplayUnit;
+  }
+
+  return ing.meatTypeId ? 'kg' : 'g';
+}
+
+function formatIngredientQty(p, ing) {
   const grams = Number(ing.requiredQtyG || 0);
-  if (ing.meatTypeId) return formatQty(grams / 1000, 1);
+  if (getIngredientDisplayUnit(p, ing) === 'kg') return formatQty(grams / 1000, 2);
   return formatQty(Math.round(grams));
 }
 
-function getIngredientUnit(ing) {
-  return ing.meatTypeId ? 'kg' : 'g';
+function getIngredientUnit(p, ing) {
+  return getIngredientDisplayUnit(p, ing);
 }
 
 function formatQty(value, maxDecimals = 1) {
