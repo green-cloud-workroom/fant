@@ -10,6 +10,7 @@ import { renderPage } from '../router.js';
 import { recordMeatLog } from '../services/meatLogs.js';
 import { showPromptModal, showConfirmModal } from '../utils/modal.js';
 import { acknowledgeLog, recordActivity } from '../services/activityLogs.js';
+import { formatIngredientQtyValue } from '../utils/number.js';
 
 let productions = [];
 let nextProductions = [];
@@ -1939,8 +1940,7 @@ function getIngredientDisplayUnit(p, ing) {
 
 function formatIngredientQty(p, ing) {
   const grams = Number(ing.requiredQtyG || 0);
-  if (getIngredientDisplayUnit(p, ing) === 'kg') return formatQty(grams / 1000, 2);
-  return formatQty(Math.round(grams));
+  return formatIngredientQtyValue(grams, getIngredientDisplayUnit(p, ing));
 }
 
 function getIngredientUnit(p, ing) {
@@ -1974,7 +1974,7 @@ function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
   });
   if (groups.size === 0) return '<div style="color:#aaa;">원육 출고 없음</div>';
   return [...groups.values()].map(grp => {
-    const qty = grp.unit === 'kg' ? formatQty(grp.totalG / 1000, 2) : formatQty(Math.round(grp.totalG));
+    const qty = formatIngredientQtyValue(grp.totalG, grp.unit);
     return `
     <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f5f5f5;">
       <span>${grp.name}</span>
