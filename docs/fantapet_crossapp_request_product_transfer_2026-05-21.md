@@ -72,8 +72,8 @@
   // --- 수량 (생식): 완료 모달 입력값 = 입고 기준 ---
   plates?: number,            // 판수
   packs?: number,             // 총 팩수 = 판수×판당팩수 + 낱개
-  boxes?: number,             // floor(packs/20)
-  remainderPacks?: number,    // packs % 20
+  boxes?: number,             // floor(packs/10)/2 — 0.5박스 단위(10팩=0.5박스 본품). 분수 가능(예 64.5)
+  remainderPacks?: number,    // packs % 10 — 남은 <10팩만 낱개 (0~9)
   // --- 수량 (동결제품) ---
   frozenProductId?: string,
   quantity?: number,          // 단위 합의 필요
@@ -84,6 +84,8 @@
 }
 ```
 > 멱등 모델: `idempotencyKey`로 중복 차단. 완료 카드 **재입력/admin override** 시 같은 `sourceId`로 `revision`을 올려 재전송 → 재고는 동일 sourceId의 **최신 revision으로 덮어쓰기(차분 아님)**. 이중입고·재시도·더블클릭 모두 방지.
+
+> **🔁 2026-06-09 정정 (호두 결정) — `boxes` 0.5박스 단위화 (재고앱 유의)**: 환산 규칙이 `1박스=20팩` 하에서 **10팩=0.5박스(본품)**로 바뀜. 따라서 `boxes`는 **분수 가능**(예 1297팩 → `boxes:64.5`, `remainderPacks:7`). 불변식 `packs = boxes*20 + remainderPacks`는 유지(64.5×20+7=1297). **재고앱은 `boxes`를 분수로 수용하거나, `packs`(총량, authoritative)에서 자체 박스 표현을 도출하면 안전.** 생산앱 구현 완료(`openProductReceiptModal`).
 
 ### 2.2 왜 필요한가
 재고앱이 이 페이로드로 완제품 재고를 증가시켜야 하므로 필드·단위(박스 vs 팩 vs 개) 합의 필수.

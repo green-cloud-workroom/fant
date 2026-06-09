@@ -1844,8 +1844,8 @@ async function openProductReceiptModal(productionId) {
       return null;
     }
     const totalPacks = plates * packsPerPlate + loose;
-    const boxes = Math.floor(totalPacks / 20);
-    const remainder = totalPacks % 20;
+    const boxes = Math.floor(totalPacks / 10) / 2;
+    const remainder = totalPacks % 10;
     resultEl.innerHTML = `총 <b>${totalPacks}</b>팩 → <b>${boxes}</b>박스 + <b>${remainder}</b>낱개`;
     return { plates, loose, totalPacks, boxes, remainder };
   }

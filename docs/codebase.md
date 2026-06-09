@@ -222,7 +222,7 @@ spec_v24 / Work A:
 spec_v27 P2 — 제품입고 흐름 (`openProductReceiptModal`):
 - 완료된 생식(raw) 생산카드 클릭 → 제품입고 모달. `category !== 'raw'`는 무시(동결건조 제품입고 = Phase 3).
 - 입력: 생산방식(기록용, recipe `productionMethods`에서 선택), 판수(필수), 낱개(자투리 팩, 기본 0).
-- 환산: `총 팩수 = 판수 × 판당팩수 + 낱개` → `박스 = floor(총팩/20)`, `낱개 = 총팩 % 20` (1박스 = 20팩). 실시간 미리보기.
+- 환산: `총 팩수 = 판수 × 판당팩수 + 낱개` → `박스 = floor(총팩/10)/2`, `낱개 = 총팩 % 10` (1박스 = 20팩, **10팩 = 0.5박스 본품**, 박스 분수 가능). 실시간 미리보기. (2026-06-09 호두 결정)
 - 판당팩수는 `settings/systemValues`의 `packsPerPlateCat`/`packsPerPlateDog`에서 target별로 읽음. 값이 없거나 ≤0이면 alert 후 모달 중단.
 - 저장: 단일 `writeBatch`로 (1) `productions/{id}` 입고 필드 update + `receivedRevision`+1, (2) `productTransferRequests/{productions:id:revision}` outbox 생성(`status:'pending'`). 원자적.
 - 재입력(이미 received된 카드 재저장)은 `receivedRevision`을 올려 **새 outbox 문서**를 만든다(수정 아님). 재고앱은 같은 `sourceId`의 최신 revision만 반영.
@@ -962,8 +962,8 @@ Doc id = `idempotencyKey` (deterministic). Written by `openProductReceiptModal` 
   target: 'cat' | 'dog' | '',
   plates: number,                    // 판수
   packs: number,                     // 총 팩수 = plates * packsPerPlate + loosePacks
-  boxes: number,                     // floor(packs / 20)
-  remainderPacks: number,            // packs % 20
+  boxes: number,                     // floor(packs / 10) / 2 — 0.5박스 단위(10팩=0.5박스), 분수 가능
+  remainderPacks: number,            // packs % 10 — 남은 <10팩만 낱개
   producedDate: string,              // p.date, 'YYYY-MM-DD'
   staff: string,                     // p.staffName
   createdAt: Timestamp,
