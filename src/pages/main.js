@@ -1955,21 +1955,33 @@ function formatQty(value, maxDecimals = 1) {
 
 function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
   if (targetProductions.length === 0) return `<div style="color:#aaa;">${isCompleted ? '불러온 생산 없음' : '오늘 생산 없음'}</div>`;
-  const needs = [];
+  const groups = new Map();
   targetProductions.forEach(p => {
     (p.ingredientsSnapshot || []).forEach(ing => {
       if (ing.autoDeductInventory && ing.linkedToInventory) {
-        needs.push({ name: ing.name, requiredG: ing.requiredQtyG });
+        const key = ing.meatTypeId || ing.name;
+        const unit = getIngredientDisplayUnit(p, ing);
+        const g = Number(ing.requiredQtyG || 0);
+        const cur = groups.get(key);
+        if (cur) {
+          cur.totalG += g;
+          if (unit === 'kg') cur.unit = 'kg';
+        } else {
+          groups.set(key, { name: ing.name, totalG: g, unit });
+        }
       }
     });
   });
-  if (needs.length === 0) return '<div style="color:#aaa;">원육 출고 없음</div>';
-  return needs.map(n => `
+  if (groups.size === 0) return '<div style="color:#aaa;">원육 출고 없음</div>';
+  return [...groups.values()].map(grp => {
+    const qty = grp.unit === 'kg' ? formatQty(grp.totalG / 1000, 2) : formatQty(Math.round(grp.totalG));
+    return `
     <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f5f5f5;">
-      <span>${n.name}</span>
-      <span style="font-weight:600;">${(n.requiredG / 1000).toFixed(1)}kg</span>
+      <span>${grp.name}</span>
+      <span style="font-weight:600;">${qty} ${grp.unit}</span>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function renderQuickInfo(isCompleted) {
