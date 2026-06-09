@@ -8,7 +8,7 @@ import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUser, currentUserRole } from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
 import { makeSupplementId } from '../utils/supplement.js';
-import { formatIngredientQtyValue } from '../utils/number.js';
+import { formatIngredientQtyValue, round2 } from '../utils/number.js';
 import Sortable from 'sortablejs';
 
 let recipes = [];
@@ -40,7 +40,7 @@ function isTenderFreezeDry(item) {
 
 function renderFreezeDryQtyLine(item) {
   const parts = [`${item.freezeDryBagQty || 0}봉`];
-  if (!isTenderFreezeDry(item)) parts.push(`${item.breadPanQty || 0}빵판`);
+  if (!isTenderFreezeDry(item)) parts.push(`${round2(item.breadPanQty || 0)}빵판`);
   parts.push(`${item.freezePanQty || 0}동결판`);
   return parts.join(' / ');
 }
@@ -778,7 +778,7 @@ async function showProductionForm(production) {
       refs = `📦 박스수: ${boxes}박스`;
     } else if (recipe.category === 'freezeDry') {
       const parts = [`봉지: ${(recipe.freezeDryBagCountPerUnit || 0) * qty}`];
-      if (!isTenderFreezeDry(recipe)) parts.push(`빵판: ${(recipe.breadPanCountPerUnit || 0) * qty}`);
+      if (!isTenderFreezeDry(recipe)) parts.push(`빵판: ${round2((recipe.breadPanCountPerUnit || 0) * qty)}`);
       parts.push(`동결판: ${(recipe.freezePanCountPerUnit || 0) * qty}`);
       refs = parts.join(' / ');
     }
