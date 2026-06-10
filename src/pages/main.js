@@ -220,8 +220,8 @@ function renderMainLayout() {
   // [묶음 6E-4] 오늘로 돌아가기 버튼 — selectedDate 모드 해제
   document.getElementById('btnBackToToday')?.addEventListener('click', handleBackToToday);
 
-  // [spec_v27 P2] 생산 카드 클릭 → 제품 입고 모달 (생식 한정, admin/office)
-  const canReceive = currentUserRole === 'admin' || currentUserRole === 'office';
+  // [spec_v27 P2] 생산 카드 클릭 → 제품 입고 모달 (생식 한정)
+  const canReceive = currentUserRole === 'admin' || currentUserRole === 'office' || currentUserRole === 'production';
   if (canReceive && (isOverdueClosingMode || isViewingSelectedDate || !isCompleted)) {
     document.querySelectorAll('.main-production-card.receivable').forEach(card => {
       card.style.cursor = 'pointer';

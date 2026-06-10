@@ -138,7 +138,7 @@ service cloud.firestore {
       allow read: if isProductionApp();
       allow create: if isProductionStaff();
       allow update: if isProductionWriter();
-      allow delete: if isProductionAdmin();
+      allow delete: if isProductionWriter();
     }
 
     match /bagTypes/{typeId} {
@@ -164,7 +164,7 @@ service cloud.firestore {
       allow read: if isProductionApp();
       allow create: if isProductionStaff();
       allow update: if isProductionWriter();
-      allow delete: if isProductionAdmin();
+      allow delete: if isProductionWriter();
     }
 
     match /frozenProducts/{productId} {
@@ -175,54 +175,54 @@ service cloud.firestore {
     match /frozenLogs/{logId} {
       allow read: if isProductionApp();
       allow create, update: if isProductionStaff();
-      allow delete: if isProductionAdmin();
+      allow delete: if isProductionWriter();
     }
 
     match /frozenPanStock/{stockId} {
       allow read: if isProductionApp();
       allow create, update: if isProductionStaff();
-      allow delete: if isProductionAdmin();
+      allow delete: if isProductionWriter();
     }
 
     match /frozenPanLots/{lotId} {
       allow read: if isProductionApp();
       allow create, update: if isProductionStaff();
-      allow delete: if isProductionAdmin();
+      allow delete: if isProductionWriter();
     }
 
     match /frozenPanLogs/{logId} {
       allow read: if isProductionApp();
       allow create, update: if isProductionStaff();
-      allow delete: if isProductionAdmin();
+      allow delete: if isProductionWriter();
     }
 
     match /breadPanLots/{lotId} {
       allow read: if isProductionApp();
       allow create, update: if isProductionStaff();
-      allow delete: if isProductionAdmin();
+      allow delete: if isProductionWriter();
     }
 
     match /breadPanLogs/{logId} {
       allow read: if isProductionApp();
       allow create, update: if isProductionStaff();
-      allow delete: if isProductionAdmin();
+      allow delete: if isProductionWriter();
     }
 
     match /frozenSeparation/{separationId} {
       allow read: if isProductionApp();
       allow create, update: if isProductionStaff();
-      allow delete: if isProductionAdmin();
+      allow delete: if isProductionWriter();
     }
 
     match /frozenSeparationLogs/{logId} {
       allow read: if isProductionApp();
       allow create, update: if isProductionStaff();
-      allow delete: if isProductionAdmin();
+      allow delete: if isProductionWriter();
     }
 
     match /schedules/{scheduleId} {
       allow read: if isProductionApp();
-      allow write: if isProductionWriter();
+      allow write: if isProductionStaff();
     }
 
     match /events/{eventId} {
@@ -293,7 +293,7 @@ service cloud.firestore {
     // [spec_v27] 완제품 입고 전송 outbox — 생산앱 write(create), 재고앱 read + 처리상태 update
     match /productTransferRequests/{reqId} {
       allow read: if isProductionApp() || isInventoryApp();
-      allow create: if isProductionWriter();
+      allow create: if isProductionStaff();
       allow update: if isInventoryApp();
       allow delete: if false;
     }

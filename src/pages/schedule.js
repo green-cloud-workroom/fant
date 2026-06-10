@@ -45,7 +45,7 @@ async function loadBagTypes() {
 function renderScheduleLayout(schedules) {
   const content = document.getElementById('mainContent');
   const today = getToday();
-  const canManageSchedule = currentUserRole === 'admin' || currentUserRole === 'office';
+  const canManageSchedule = isScheduleStaffRole();
 
   const active = schedules.filter(s => s.status === 'scheduled');
   const done = schedules.filter(s => s.status !== 'scheduled');
@@ -130,8 +130,8 @@ function renderScheduleLayout(schedules) {
 
   document.querySelectorAll('.btn-edit-schedule').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
-        alert('입고 예정 수정은 대표/사무실 계정만 가능합니다.');
+      if (!isScheduleStaffRole()) {
+        alert('입고 예정 수정 권한이 없습니다.');
         return;
       }
       const id = btn.dataset.id;
@@ -147,8 +147,8 @@ function renderScheduleLayout(schedules) {
 
   document.querySelectorAll('.btn-cancel-schedule').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
-        alert('입고 예정 취소는 대표/사무실 계정만 가능합니다.');
+      if (!isScheduleStaffRole()) {
+        alert('입고 예정 취소 권한이 없습니다.');
         return;
       }
       const id = btn.dataset.id;
@@ -164,6 +164,10 @@ function renderScheduleLayout(schedules) {
       showCancelScheduleModal(s);
     });
   });
+}
+
+function isScheduleStaffRole() {
+  return currentUserRole === 'admin' || currentUserRole === 'office' || currentUserRole === 'production';
 }
 
 function renderScheduleRow(s, today, canManageSchedule = false) {
@@ -349,8 +353,8 @@ async function showScheduleModal(editingSchedule = null) {
   }
 
   document.getElementById('btnSaveSchedule').addEventListener('click', async () => {
-    if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
-      alert(`입고 예정 ${isEdit ? '수정' : '등록'}은 대표/사무실 계정만 가능합니다.`);
+    if (!isScheduleStaffRole()) {
+      alert(`입고 예정 ${isEdit ? '수정' : '등록'} 권한이 없습니다.`);
       return;
     }
     let date = document.getElementById('m_date').value;
