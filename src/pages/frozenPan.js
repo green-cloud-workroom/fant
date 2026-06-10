@@ -181,7 +181,7 @@ function renderBreadPanTab(breadLotSummary, breadPanLogs) {
               <span class="stat-label">${name}</span>
               <div>
                 ${lotList.sort((a,b) => a.date.localeCompare(b.date)).map(l => `
-                  <div style="font-size:12px;color:#555">${l.remaining}개 <span style="color:#aaa">(${l.date})</span></div>
+                  <div style="font-size:12px;color:#555">${round2(l.remaining)}개 <span style="color:#aaa">(${l.date})</span></div>
                 `).join('')}
               </div>
             </div>

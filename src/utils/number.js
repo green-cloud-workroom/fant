@@ -60,3 +60,19 @@ export function breadToFrozenPan(breadPanQty) {
 export function breadToSilicon(breadPanQty) {
   return round2(breadPanQty * 4);
 }
+
+/**
+ * Unified ingredient quantity display formatter. Returns only the number.
+ * g: max 1 decimal, kg: max 2 decimals. Integers omit decimals.
+ *
+ * @param {number} grams - Ingredient quantity in grams.
+ * @param {'kg'|'g'} unit
+ * @returns {string}
+ */
+export function formatIngredientQtyValue(grams, unit) {
+  const g = Number(grams) || 0;
+  const value = unit === 'kg' ? g / 1000 : g;
+  const maxDecimals = unit === 'kg' ? 2 : 1;
+  if (Number.isInteger(value)) return String(value);
+  return value.toLocaleString('ko-KR', { maximumFractionDigits: maxDecimals });
+}
