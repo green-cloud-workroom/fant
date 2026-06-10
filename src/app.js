@@ -26,7 +26,7 @@ export const MENUS = [
   { id: 'schedule', label: '입고 예정관리', roles: ['admin', 'office', 'production'] },
   { id: 'recipe', label: '레시피 관리', roles: ['admin', 'office'] },
   { id: 'stats', label: '통계', roles: ['admin', 'office'] },
-  { id: 'settings', label: '설정', roles: ['admin', 'office', 'production'] },
+  { id: 'settings', label: '설정', roles: ['admin', 'office'] },
 ];
 
 // 현재 활성 메뉴
