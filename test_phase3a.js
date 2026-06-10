@@ -5,7 +5,8 @@
 
 import {
   aggregateBlockingItems,
-  BLOCKING_ITEM_META
+  BLOCKING_ITEM_META,
+  judgeProductReceiptsCompleted
 } from './src/services/closingChecksLogic.js';
 
 let pass = 0;
@@ -126,6 +127,20 @@ console.log('\n[7] metadata mapping');
   assert('META[3].jumpMenu === schedule', BLOCKING_ITEM_META[3].jumpMenu === 'schedule');
   assert('META[7].jumpMenu === egg', BLOCKING_ITEM_META[7].jumpMenu === 'egg');
   assert('META[8].jumpMenu === main', BLOCKING_ITEM_META[8].jumpMenu === 'main');
+}
+
+console.log('\n[8] product receipt blocker includes raw and freezeDry');
+{
+  const r = judgeProductReceiptsCompleted([
+    { date: '2026-06-10', status: 'active', category: 'raw', received: false, recipeName: 'raw A' },
+    { date: '2026-06-10', status: 'active', category: 'freezeDry', received: false, recipeName: 'freeze B' },
+    { date: '2026-06-10', status: 'active', category: 'freezeDry', received: true, recipeName: 'freeze C' },
+    { date: '2026-06-10', status: 'active', category: 'other', received: false, recipeName: 'other D' },
+    { date: '2026-06-09', status: 'active', category: 'freezeDry', received: false, recipeName: 'other date' },
+  ], '2026-06-10');
+  assert('blocked === true', r.blocked === true);
+  assert('count === 2', r.count === 2);
+  assert('details include raw + freezeDry', JSON.stringify(r.details) === JSON.stringify(['raw A', 'freeze B']));
 }
 
 console.log(`\nResult: ${pass}/${pass + fail} pass`);

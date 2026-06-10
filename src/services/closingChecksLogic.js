@@ -160,17 +160,17 @@ export function judgeProductReceiptsCompleted(productions, dateStr) {
   const unreceived = (productions || []).filter(p =>
     p.date === dateStr &&
     p.status !== 'deleted' &&
-    p.category === 'raw' &&
+    (p.category === 'raw' || p.category === 'freezeDry') &&
     p.received !== true
   );
 
   return {
     blocked: unreceived.length > 0,
     reason: unreceived.length > 0
-      ? `${dateStr} 생식 제품입고 ${unreceived.length}건이 완료되지 않았습니다`
+      ? `${dateStr} 제품입고 ${unreceived.length}건이 완료되지 않았습니다`
       : '',
     count: unreceived.length,
-    details: unreceived.map(p => p.recipeName || p.id || '생식 생산')
+    details: unreceived.map(p => p.recipeName || p.id || '생산')
   };
 }
 

@@ -11,6 +11,7 @@ import { recordMeatLog } from '../services/meatLogs.js';
 import { showPromptModal, showConfirmModal } from '../utils/modal.js';
 import { acknowledgeLog, recordActivity } from '../services/activityLogs.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
+import { round2 } from '../utils/number.js';
 
 let productions = [];
 let nextProductions = [];
@@ -231,7 +232,16 @@ function renderMainLayout() {
     document.querySelectorAll('.main-production-card.receivable').forEach(card => {
       card.style.cursor = 'pointer';
       card.title = '클릭하여 제품 입고';
-      card.addEventListener('click', () => openProductReceiptModal(card.dataset.id));
+      card.addEventListener('click', () => {
+        const target = [
+          ...selectedDateProductions,
+          ...overdueProductions,
+          ...productions,
+          ...nextProductions,
+        ].find(p => p.id === card.dataset.id);
+        if (target?.category === 'freezeDry') openFreezeDryReceiptModal(card.dataset.id);
+        else openProductReceiptModal(card.dataset.id);
+      });
     });
   }
 
@@ -1798,7 +1808,7 @@ function renderProductionTableCard(p) {
     : (p.round > 1 ? ` <span>${p.round}회차</span>` : '');
 
   return `
-    <div class="main-production-card${p.category === 'raw' ? ' receivable' : ''}${p.received ? ' received' : ''}" data-id="${p.id}" style="--recipe-color:${p.color || '#ef7bd0'}">
+    <div class="main-production-card${(p.category === 'raw' || p.category === 'freezeDry') ? ' receivable' : ''}${p.received ? ' received' : ''}" data-id="${p.id}" style="--recipe-color:${p.color || '#ef7bd0'}">
       ${p.received ? '<div class="main-received-stamp">입고완료</div>' : ''}
       <div class="main-production-card-title">
         ${p.recipeName}${roundBadge}
@@ -1829,10 +1839,18 @@ function renderProductionTableCard(p) {
       <div class="main-production-meta">
         ${p.category === 'raw' ? `<span>${p.rawBoxQty || 0}박스</span>` : ''}
         ${p.category === 'freezeDry' ? renderFreezeDryProductionMeta(p) : ''}
-        ${p.received ? `<span class="main-received-badge">✅ 입고완료 ${p.receivedBox || 0}박스${p.receivedRemainder ? ` +${p.receivedRemainder}낱개` : ''}</span>` : ''}
+        ${p.received ? renderReceivedBadge(p) : ''}
       </div>
     </div>
   `;
+}
+
+function renderReceivedBadge(p) {
+  if (p.category === 'freezeDry') {
+    const unit = p.receivedFreezeType === 'breadPan' ? '빵판' : '동결판';
+    return `<span class="main-received-badge">✅ 입고완료 ${p.receivedFreezeQty || 0}${unit}</span>`;
+  }
+  return `<span class="main-received-badge">✅ 입고완료 ${p.receivedBox || 0}박스${p.receivedRemainder ? ` +${p.receivedRemainder}낱개` : ''}</span>`;
 }
 
 // [spec_v27 P2] 생식 제품 입고 모달 — 판수×판당팩수+낱개 → 박스/낱개 환산, productions 완료 + productTransferRequests outbox
@@ -1990,6 +2008,229 @@ async function openProductReceiptModal(productionId) {
       alert('제품 입고 저장 중 오류가 발생했습니다: ' + (err.message || err));
     }
   });
+}
+
+async function loadReceiptStaffOptions(groups = ['senior', 'office']) {
+  const options = [];
+  for (const key of groups) {
+    const snap = await getDoc(doc(db, 'staffGroups', key));
+    if (!snap.exists()) continue;
+    (snap.data().members || []).forEach(member => {
+      if (member?.name) options.push(`<option value="${member.name}">${member.name}</option>`);
+    });
+  }
+  return options.join('');
+}
+
+async function openFreezeDryReceiptModal(productionId) {
+  const p = [
+    ...selectedDateProductions,
+    ...overdueProductions,
+    ...productions,
+    ...nextProductions,
+  ].find(x => x.id === productionId);
+  if (!p || p.category !== 'freezeDry') return;
+  if (p.date > getToday()) {
+    alert('미래 날짜의 동결건조 입고는 입력할 수 없습니다.');
+    return;
+  }
+  if (await blockIfClosed(p.date)) return;
+  if (p.received) {
+    alert('이미 입고 완료된 생산입니다.');
+    return;
+  }
+
+  const recipe = recipes.find(r => r.id === p.recipeId);
+  const productName = recipe?.displayName || p.recipeName || recipe?.name || '동결건조';
+  const isTender = p.requiresSeparation === false || recipe?.requiresSeparation === false;
+  const unitLabel = isTender ? '동결판' : '빵판';
+  const defaultQty = isTender
+    ? Math.round(Number(p.freezePanQty || 0))
+    : round2(Number(p.breadPanQty || 0));
+  const staffOptions = await loadReceiptStaffOptions(['senior', 'office']);
+
+  document.getElementById('freezeDryReceiptModal')?.remove();
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="modal-overlay" id="freezeDryReceiptModal">
+      <div class="modal-box" style="width:420px;">
+        <h3 class="modal-title">동결건조 입고 — ${productName}</h3>
+        <p style="font-size:12px;color:#888;margin:0 0 12px;">${isTender ? '분리작업 불필요 → 동결판 재고 입고' : '분리작업 필요 → 빵판 재고 입고'}</p>
+        <div class="form-group" style="margin-bottom:10px;">
+          <label style="display:block;font-size:12px;color:#555;margin-bottom:4px;">${unitLabel} 수량 *</label>
+          <input type="number" id="fd_qty" min="${isTender ? '1' : '0.01'}" step="${isTender ? '1' : '0.01'}" value="${defaultQty || ''}" style="width:100%;padding:8px;border:1px solid #d0d0d0;border-radius:4px;box-sizing:border-box;" />
+        </div>
+        <div class="form-group" style="margin-bottom:14px;">
+          <label style="display:block;font-size:12px;color:#555;margin-bottom:4px;">담당자 *</label>
+          <select id="fd_staff" style="width:100%;padding:8px;border:1px solid #d0d0d0;border-radius:4px;">
+            <option value="">선택</option>
+            ${staffOptions}
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-secondary" id="fd_cancel">취소</button>
+          <button class="btn-primary" id="fd_confirm">입고</button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  const overlay = document.getElementById('freezeDryReceiptModal');
+  const cleanup = () => overlay?.remove();
+  document.getElementById('fd_cancel').addEventListener('click', cleanup);
+  document.getElementById('fd_confirm').addEventListener('click', async () => {
+    const qty = isTender
+      ? parseInt(document.getElementById('fd_qty').value, 10)
+      : round2(parseFloat(document.getElementById('fd_qty').value) || 0);
+    const staffName = document.getElementById('fd_staff').value;
+
+    if (!Number.isFinite(qty) || qty <= 0) {
+      alert(`${unitLabel} 수량은 0보다 커야 합니다.`);
+      return;
+    }
+    if (!staffName) {
+      alert('담당자를 선택해주세요.');
+      return;
+    }
+    if (await blockIfClosed(p.date)) return;
+
+    try {
+      if (isTender) {
+        await saveTenderFreezeDryReceipt({ p, productName, qty, staffName });
+      } else {
+        await saveBreadPanFreezeDryReceipt({ p, productName, qty, staffName });
+      }
+      cleanup();
+      await loadAllData();
+      if (selectedProductionDate) {
+        selectedDateProductions = calendarProductions.filter(p => p.date === selectedProductionDate);
+        selectedDateBlockingData = await getAllBlockingItems(selectedProductionDate);
+      }
+      renderMainLayout();
+    } catch (err) {
+      console.error('[freezeDryReceipt] save failed:', err);
+      alert('동결건조 입고 저장 중 오류가 발생했습니다: ' + (err.message || err));
+    }
+  });
+}
+
+async function saveBreadPanFreezeDryReceipt({ p, productName, qty, staffName }) {
+  const now = new Date();
+  const batch = writeBatch(db);
+  const lotRef = doc(collection(db, 'breadPanLots'));
+  const logRef = doc(collection(db, 'breadPanLogs'));
+
+  batch.set(lotRef, {
+    productName,
+    date: p.date,
+    staffName,
+    initialQty: qty,
+    remaining: qty,
+    closed: false,
+    note: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  batch.set(logRef, {
+    type: 'incoming',
+    date: p.date,
+    productName,
+    qty,
+    before: 0,
+    after: qty,
+    lotId: lotRef.id,
+    lotDate: p.date,
+    expectedFrozenQty: null,
+    actualFrozenQty: null,
+    diff: null,
+    staffName,
+    uid: null,
+    note: null,
+    reason: null,
+    batchId: null,
+    ledgerId: null,
+    timestamp: now,
+  });
+
+  batch.update(doc(db, 'productions', p.id), {
+    received: true,
+    receivedFreezeType: 'breadPan',
+    receivedFreezeQty: qty,
+    receivedLotId: lotRef.id,
+    receivedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  await batch.commit();
+}
+
+async function saveTenderFreezeDryReceipt({ p, productName, qty, staffName }) {
+  const now = new Date();
+  const batch = writeBatch(db);
+  const lotRef = doc(collection(db, 'frozenPanLots'));
+  const logRef = doc(collection(db, 'frozenPanLogs'));
+  const ledgerRef = doc(collection(db, 'stockLedger'));
+
+  batch.set(lotRef, {
+    productName,
+    date: p.date,
+    staffName,
+    initialQty: qty,
+    remaining: qty,
+    closed: false,
+    source: 'tenderIn',
+    sourceRefId: logRef.id,
+    note: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  batch.set(logRef, {
+    type: 'tenderIn',
+    date: p.date,
+    productName,
+    qty,
+    before: 0,
+    after: qty,
+    lotId: lotRef.id,
+    staffName,
+    uid: null,
+    note: null,
+    reason: null,
+    batchId: null,
+    ledgerId: null,
+    timestamp: now,
+  });
+
+  batch.set(ledgerRef, {
+    actionType: 'frozenPanTenderIn',
+    actionId: logRef.id,
+    timestamp: now,
+    date: p.date,
+    status: 'active',
+    items: [{
+      collection: 'frozenPanLots',
+      docId: lotRef.id,
+      field: 'remaining',
+      delta: qty,
+      before: 0,
+      after: qty,
+      label: `${productName} 동결판(텐더동결 입고)`,
+      stockUpdatedAtSnapshot: now,
+      isNewDoc: true,
+    }],
+  });
+
+  batch.update(doc(db, 'productions', p.id), {
+    received: true,
+    receivedFreezeType: 'frozenPan',
+    receivedFreezeQty: qty,
+    receivedLotId: lotRef.id,
+    receivedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  await batch.commit();
 }
 
 function getProductionUnitRowName(p, ingredients) {
