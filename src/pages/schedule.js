@@ -215,10 +215,13 @@ function isCountIncomingUnit(unit) {
 }
 
 function formatGrams(value) {
-  return `${Number(value || 0).toLocaleString()}g`;
+  const g = Number(value || 0);
+  if (g > 9999) return `${(g / 1000).toFixed(2)}kg`;
+  return `${g.toLocaleString()}g`;
 }
 
 function formatScheduleQty(qty, unit, unitGrams) {
+  if (unit === 'g') return formatGrams(qty);
   const base = `${qty}${unit}`;
   if (!isCountIncomingUnit(unit) || !unitGrams) return base;
   return `${base} (${formatGrams(Number(qty || 0) * Number(unitGrams || 0))})`;
