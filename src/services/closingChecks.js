@@ -8,12 +8,14 @@
 import { db } from '../firebase.js';
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { getNextBusinessDayByType } from '../utils/date.js';
+import { getEarliestUnclosedWorkday, isDateClosed } from '../closing.js';
 import {
   DEFAULT_CLOSING_FLAGS,
   judgeTomorrowProductionLoaded,
   judgeFrozenOrdersConfirmed,
   judgeSchedulesProcessed,
   judgeEggOutputForProduction,
+  judgeProductReceiptsCompleted,
   judgeAutoRepackLogsAcknowledged,
   judgeProductionLogsAcknowledged,
   judgeOfficeLogsAcknowledged,
@@ -66,6 +68,15 @@ export async function checkEggOutputForProduction(dateStr) {
   const eggLogs = eggSnap.docs.map(d => d.data());
 
   return judgeEggOutputForProduction(productions, eggLogs, dateStr);
+}
+
+/**
+ * 8. 생식 제품입고 미완료
+ */
+export async function checkProductReceiptsCompleted(dateStr) {
+  const prodSnap = await getDocs(collection(db, 'productions'));
+  const productions = prodSnap.docs.map(d => d.data());
+  return judgeProductReceiptsCompleted(productions, dateStr);
 }
 
 export async function checkAutoRepackLogsAcknowledged(dateStr) {
@@ -173,6 +184,7 @@ export async function getAllBlockingItems(dateStr) {
     item5,
     item6,
     item7,
+    item8,
     warn1,
     warn2,
     warn3,
@@ -186,6 +198,7 @@ export async function getAllBlockingItems(dateStr) {
     checkProductionLogsAcknowledged(dateStr),
     checkOfficeLogsAcknowledged(dateStr),
     checkEggOutputForProduction(dateStr),
+    checkProductReceiptsCompleted(dateStr),
     checkNoTomorrowProduction(dateStr),
     checkBagMinimumStock(),
     checkMeatMinimumStock(),
@@ -201,6 +214,7 @@ export async function getAllBlockingItems(dateStr) {
     item5,
     item6,
     item7,
+    item8,
     warn1,
     warn2,
     warn3,
@@ -215,4 +229,43 @@ export async function getAllBlockingItems(dateStr) {
     warnings: aggregated.warnings,
     flags: aggregated.flags
   };
+}
+
+/**
+ * 오늘 화면/마감 버튼이 우선 처리해야 할 날짜를 찾는다.
+ * - 과거 미마감 영업일
+ * - 이미 마감됐지만 과거 생산일에 차단 항목이 남아 있는 날짜
+ *
+ * @param {string} today - 'YYYY-MM-DD'
+ * @param {Array|null} productions - 이미 로드한 productions 배열(선택)
+ * @returns {Promise<{date:string, closed:boolean, blockingData:Object}|null>}
+ */
+export async function findActionableClosingDate(today, productions = null) {
+  const earliestUnclosed = await getEarliestUnclosedWorkday();
+  const allProductions = productions || await loadAllProductions();
+  const productionDates = [...new Set((allProductions || [])
+    .filter(p => p.date && p.date < today && p.status !== 'deleted')
+    .map(p => p.date))]
+    .sort()
+    .slice(-14);
+
+  const candidates = new Set(productionDates);
+  if (earliestUnclosed && earliestUnclosed < today) candidates.add(earliestUnclosed);
+
+  for (const date of [...candidates].sort()) {
+    const [closed, candidateBlockingData] = await Promise.all([
+      isDateClosed(date),
+      getAllBlockingItems(date),
+    ]);
+    if (!closed || candidateBlockingData.totalBlocked > 0) {
+      return { date, closed, blockingData: candidateBlockingData };
+    }
+  }
+
+  return null;
+}
+
+async function loadAllProductions() {
+  const prodSnap = await getDocs(collection(db, 'productions'));
+  return prodSnap.docs.map(d => d.data());
 }
