@@ -242,7 +242,7 @@ function renderSupplementTypeRow(type) {
       <td class="supplement-td-status">${renderStockStatus(qty, inactive)}</td>
       <td class="supplement-td-recent">${renderRecentChange(type.id)}</td>
       <td class="supplement-td-actions">
-        ${!inactive && isProductionRole() ? `<button class="btn-secondary supplement-action-in" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">입고</button>` : ''}
+        ${!inactive && isStaffRole() ? `<button class="btn-secondary supplement-action-in" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">입고</button>` : ''}
         ${!inactive && isWriterRole() ? `<button class="btn-secondary supplement-action-adjust" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">수동조정</button>` : ''}
       </td>
     </tr>
@@ -290,8 +290,8 @@ function isWriterRole() {
   return currentUserRole === 'admin' || currentUserRole === 'office';
 }
 
-function isProductionRole() {
-  return currentUserRole === 'production';
+function isStaffRole() {
+  return currentUserRole === 'admin' || currentUserRole === 'office' || currentUserRole === 'production';
 }
 
 // 표 렌더링. 운영 기본 화면은 현재 재고와 최근 변동만 보여준다.
@@ -322,7 +322,7 @@ function renderSupplementFlatTable() {
         <td class="supplement-td-status">${renderStockStatus(qty, inactive)}</td>
         <td class="supplement-td-recent">${renderRecentChange(type.id)}</td>
         <td class="supplement-td-actions">
-          ${!inactive && isProductionRole() ? `<button class="btn-secondary supplement-action-in" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">입고</button>` : ''}
+          ${!inactive && isStaffRole() ? `<button class="btn-secondary supplement-action-in" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">입고</button>` : ''}
           ${!inactive && isWriterRole() ? `<button class="btn-secondary supplement-action-adjust" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">수동조정</button>` : ''}
         </td>
       </tr>
@@ -371,7 +371,7 @@ function renderDateCells(type, date, inactive) {
   const autoSum = getCellSum(typeId, date, 'autoDeduct');
 
   const hasIn = hasCellLog(typeId, date, 'in');
-  const canEditIn = !inactive && isProductionRole();
+  const canEditIn = !inactive && isStaffRole();
   const canEditAdjust = !inactive && isWriterRole();
 
   // 입고 셀: 그날 입고 로그 있으면 read-only 합계 표시, 없으면 입력 가능(production).

@@ -204,7 +204,7 @@ function renderMainLayout() {
   document.getElementById('btnBackToToday')?.addEventListener('click', handleBackToToday);
 
   // [spec_v27 P2] 생산 카드 클릭 → 제품 입고 모달 (생식 한정, 오늘 생산 모드, admin/office)
-  const canReceive = currentUserRole === 'admin' || currentUserRole === 'office';
+  const canReceive = currentUserRole === 'admin' || currentUserRole === 'office' || currentUserRole === 'production';
   if (canReceive && !isCompleted && !isViewingSelectedDate) {
     document.querySelectorAll('.main-production-card.receivable').forEach(card => {
       card.style.cursor = 'pointer';
