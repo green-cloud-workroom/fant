@@ -981,14 +981,45 @@ function renderLogRow(log) {
     : `<span class="log-ack-done" title="${log.acknowledgedBy || ''} 확인">✓</span>`;
 
   const criticalBadge = isCritical && isUnack ? '<span class="log-critical-badge">⚠️</span>' : '';
+  const message = getDisplayLogMessage(log);
 
   return `
     <div class="${cls}">
       <span class="log-row-time">${dateLabel}</span>
-      <span class="log-row-msg">${criticalBadge}${escapeHtmlMain(log.message || '(메시지 없음)')}</span>
+      <span class="log-row-msg">${criticalBadge}${escapeHtmlMain(message)}</span>
       <span class="log-row-action">${ackBtn}</span>
     </div>
   `;
+}
+
+function formatLogGrams(value) {
+  const g = Number(value || 0);
+  if (g > 9999) return `${(g / 1000).toFixed(2)}kg`;
+  return `${g.toLocaleString()}g`;
+}
+
+function formatScheduleLogQty(qty, unit, unitGrams) {
+  if (unit === 'g') return formatLogGrams(qty);
+  const base = `${qty}${unit}`;
+  if (unit !== '마리' || !unitGrams) return base;
+  return `${base} (${formatLogGrams(Number(qty || 0) * Number(unitGrams || 0))})`;
+}
+
+function getDisplayLogMessage(log) {
+  if (log.action !== 'schedule' || log.subAction !== 'completeDiff') {
+    return log.message || '(메시지 없음)';
+  }
+
+  const d = log.details || {};
+  if (d.orderedQty == null || d.actualQty == null) return log.message || '(메시지 없음)';
+
+  const orderedUnit = d.orderedUnit || d.unit || '';
+  const actualUnit = d.unit || orderedUnit;
+  const orderedText = formatScheduleLogQty(d.orderedQty, orderedUnit, d.orderedUnitGrams);
+  const actualText = formatScheduleLogQty(d.actualQty, actualUnit, d.orderedUnitGrams);
+  const itemName = d.itemName || '입고 예정';
+  const staff = log.staff || '';
+  return `${itemName} 입고 완료 ⚠️ 발주 ${orderedText} → 실제 ${actualText}${staff ? ` / 담당: ${staff}` : ''}`;
 }
 
 // 로그 timestamp → "HH:MM"
@@ -1522,11 +1553,12 @@ function renderModalLogRow(log) {
     : `<span class="log-ack-done" title="${log.acknowledgedBy || ''} 확인">✓ ${escapeHtmlMain(log.acknowledgedBy || '')}</span>`;
 
   const criticalBadge = isCritical && isUnack ? '<span class="log-critical-badge">⚠️</span>' : '';
+  const message = getDisplayLogMessage(log);
 
   return `
     <div class="${cls}">
       <span class="log-row-time">${timeLabel}</span>
-      <span class="log-row-msg">${criticalBadge}${escapeHtmlMain(log.message || '(메시지 없음)')}</span>
+      <span class="log-row-msg">${criticalBadge}${escapeHtmlMain(message)}</span>
       <span class="log-row-action">${ackBtn}</span>
     </div>
   `;
