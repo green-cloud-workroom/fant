@@ -158,24 +158,22 @@ async function updateBlockingBanner() {
   if (!banner) return;
 
   try {
-    const { getEarliestUnclosedWorkday } = await import('./closing.js');
-    const { getAllBlockingItems } = await import('./services/closingChecks.js');
-
-    const earliest = await getEarliestUnclosedWorkday();
+    const { findActionableClosingDate } = await import('./services/closingChecks.js');
     const today = getTodayKST();
+    const actionable = await findActionableClosingDate(today);
 
-    if (!earliest || earliest >= today) {
+    if (!actionable || actionable.date >= today) {
       banner.style.display = 'none';
       window.__blockingItems = null;
       updateMenuWarnings();
       return;
     }
 
-    // 지난 영업일 미마감 → 차단 항목 조회 + 배너 표시
-    const blocking = await getAllBlockingItems(earliest);
+    const blocking = { ...actionable.blockingData, closed: actionable.closed };
     window.__blockingItems = blocking;
 
-    banner.textContent = `⚠️ ${formatKstDateWithDay(earliest)} 마감 미처리 — 신규 등록이 차단되었습니다 (클릭하여 상세보기)`;
+    const statusText = actionable.closed ? '마감 후 미처리 항목' : '마감 미처리';
+    banner.textContent = `⚠️ ${formatKstDateWithDay(actionable.date)} ${statusText} — 신규 등록이 차단되었습니다 (클릭하여 상세보기)`;
     banner.style.display = 'block';
 
     updateMenuWarnings();
@@ -243,13 +241,16 @@ function showBlockingModal(options = {}) {
   const dateLabel = formatKstDateWithDay(data.date);
   const today = getTodayKST();
   const isPastTarget = data.date < today;
+  const isClosedTarget = data.closed === true;
   const modalTitle = isWarning
     ? `${dateLabel} 마감 경고`
     : isPastTarget
-    ? '⚠️ 지난 영업일 마감이 처리되지 않았습니다'
+    ? (isClosedTarget ? '⚠️ 마감된 날짜에 미처리 항목이 남아 있습니다' : '⚠️ 지난 영업일 마감이 처리되지 않았습니다')
     : '⚠️ 오늘 마감을 진행할 수 없습니다';
   const blockedIntro = isPastTarget
-    ? `${dateLabel} 마감이 완료되지 않아 다음 작업들이 차단됩니다:`
+    ? (isClosedTarget
+      ? `${dateLabel}은 이미 마감됐지만 아래 항목이 남아 있습니다. 마감해제 후 처리하세요:`
+      : `${dateLabel} 마감이 완료되지 않아 다음 작업들이 차단됩니다:`)
     : '아래 항목을 처리한 후 다시 시도해주세요.';
   const introText = isWarning
     ? '아래 경고 항목이 있습니다. 마감은 가능하지만 확인 후 진행해주세요.'
@@ -383,7 +384,18 @@ async function updateClosingButton() {
 
   try {
     const { getEarliestUnclosedWorkday } = await import('./closing.js');
+    const { findActionableClosingDate } = await import('./services/closingChecks.js');
     const today = getTodayKST();
+    const actionable = await findActionableClosingDate(today);
+
+    if (actionable?.date < today) {
+      btn.textContent = actionable.closed ? '미처리 마감해제' : '이전 날짜 마감';
+      btn.disabled = false;
+      btn.dataset.mode = actionable.closed ? 'release' : 'close';
+      btn.dataset.targetDate = actionable.date;
+      return;
+    }
+
     const earliest = await getEarliestUnclosedWorkday();
 
     if (earliest === null) {

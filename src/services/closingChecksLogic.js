@@ -12,6 +12,7 @@ export const DEFAULT_CLOSING_FLAGS = {
   blockProdLog: true,
   blockOfficeLog: true,
   blockEggOut: true,
+  blockProductReceipt: true,
   warnNoTomorrowProd: true,
   warnBagMin: true,
   warnMeatMin: true,
@@ -144,6 +145,32 @@ export function judgeEggOutputForProduction(productions, eggLogs, dateStr) {
     blocked: true,
     reason: `오늘 노른자 사용 생산 ${eggUsingProductions.length}건인데 계란 출고가 입력되지 않았습니다`,
     count: eggUsingProductions.length
+  };
+}
+
+/**
+ * 8. 생식 제품입고 미완료.
+ *
+ * 마감하려는 날짜의 raw 생산 중 제품입고가 완료되지 않은 카드가 있으면 차단한다.
+ *
+ * @param {Array} productions - productions 컬렉션 전체 문서 배열
+ * @param {string} dateStr - 'YYYY-MM-DD'
+ */
+export function judgeProductReceiptsCompleted(productions, dateStr) {
+  const unreceived = (productions || []).filter(p =>
+    p.date === dateStr &&
+    p.status !== 'deleted' &&
+    p.category === 'raw' &&
+    p.received !== true
+  );
+
+  return {
+    blocked: unreceived.length > 0,
+    reason: unreceived.length > 0
+      ? `${dateStr} 생식 제품입고 ${unreceived.length}건이 완료되지 않았습니다`
+      : '',
+    count: unreceived.length,
+    details: unreceived.map(p => p.recipeName || p.id || '생식 생산')
   };
 }
 
@@ -373,7 +400,8 @@ export const BLOCKING_ITEM_META = {
   4: { label: '자동 재포장 확인 미완료', jumpMenu: 'main' },
   5: { label: '생산 로그 미확인 항목 있음', jumpMenu: 'main' },
   6: { label: '사무 로그 미확인 항목 있음', jumpMenu: 'main' },
-  7: { label: '계란 출고 미입력', jumpMenu: 'egg' }
+  7: { label: '계란 출고 미입력', jumpMenu: 'egg' },
+  8: { label: '제품입고 미완료', jumpMenu: 'main' }
 };
 
 export const WARNING_ITEM_META = {
@@ -409,6 +437,7 @@ export function aggregateBlockingItems(results = {}, flags = DEFAULT_CLOSING_FLA
     5: { result: results.item5, flag: 'blockProdLog' },
     6: { result: results.item6, flag: 'blockOfficeLog' },
     7: { result: results.item7, flag: 'blockEggOut' },
+    8: { result: results.item8, flag: 'blockProductReceipt' },
   };
   const warningMap = {
     1: { result: results.warn1, flag: 'warnNoTomorrowProd' },
@@ -419,7 +448,7 @@ export function aggregateBlockingItems(results = {}, flags = DEFAULT_CLOSING_FLA
   const items = [];
   const warnings = [];
 
-  for (const id of [1, 2, 3, 4, 5, 6, 7]) {
+  for (const id of [1, 2, 3, 4, 5, 6, 7, 8]) {
     const entry = blockerMap[id];
     const result = entry?.result;
     if (mergedFlags[entry.flag] && result && result.blocked) {
