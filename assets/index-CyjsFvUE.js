@@ -2337,7 +2337,7 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
       </td>
       <td>${e.completeMemo||e.cancelReason||`-`}</td>
     </tr>
-  `}function Wm(e){return e===`마리`}function Gm(e){return`${Number(e||0).toLocaleString()}g`}function Km(e,t,n){let r=`${e}${t}`;return!Wm(t)||!n?r:`${r} (${Gm(Number(e||0)*Number(n||0))})`}function qm(e){return e===`meat`?`원육`:e===`bag`?`봉투`:`계란`}async function Jm(e=null){let t=!!e,n=await Rm(),r=await zm();th(`
+  `}function Wm(e){return e===`마리`}function Gm(e){let t=Number(e||0);return t>9999?`${(t/1e3).toFixed(2)}kg`:`${t.toLocaleString()}g`}function Km(e,t,n){if(t===`g`)return Gm(e);let r=`${e}${t}`;return!Wm(t)||!n?r:`${r} (${Gm(Number(e||0)*Number(n||0))})`}function qm(e){return e===`meat`?`원육`:e===`bag`?`봉투`:`계란`}async function Jm(e=null){let t=!!e,n=await Rm(),r=await zm();th(`
     <h3 class="modal-title">입고 예정 ${t?`수정`:`등록`}</h3>
     <div class="form-group">
       <label>예정일 *</label>
