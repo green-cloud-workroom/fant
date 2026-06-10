@@ -156,6 +156,7 @@ function renderMainLayout() {
           <span class="main-panel-title">📅 ${todayStr} 생산${isViewingSelectedDate ? ' <span style="font-size:11px;color:#3182ce;font-weight:normal;">(선택 날짜)</span>' : ''}${isOverdueClosingMode ? ` <span style="font-size:11px;color:#c53030;font-weight:normal;">(${overdueStatusText})</span>` : ''}</span>
           <div style="display:flex;gap:6px;align-items:center;">
             <button class="btn-secondary" id="btnBigView" style="font-size:11px;padding:3px 10px;">크게보기</button>
+            <button class="btn-secondary" id="btnTodayReceiptSummary" style="font-size:11px;padding:3px 10px;">입고 현황 전체 보기</button>
             ${isViewingSelectedDate
               ? `
                 <button class="btn-primary" id="btnTomorrowLoad" style="font-size:12px;padding:5px 14px;opacity:0.5;cursor:not-allowed;" disabled title="오늘 화면에서만 가능">내일생산불러오기</button>
@@ -219,6 +220,7 @@ function renderMainLayout() {
   `;
 
   document.getElementById('btnBigView')?.addEventListener('click', showBigView);
+  document.getElementById('btnTodayReceiptSummary')?.addEventListener('click', () => showReceiptSummaryModal(activeProductions, displayDate));
   document.getElementById('btnTomorrowLoad')?.addEventListener('click', handleTomorrowLoad);
   document.getElementById('btnCancelCompletion')?.addEventListener('click', handleCancelCompletion);
   // [묶음 6E-3] 새로고침 버튼 — 마감 후 다음 영업일 생산 변경됐을 때 롤백+재차감
@@ -1853,6 +1855,60 @@ function renderReceivedBadge(p) {
   return `<span class="main-received-badge">✅ 입고완료 ${p.receivedBox || 0}박스${p.receivedRemainder ? ` +${p.receivedRemainder}낱개` : ''}</span>`;
 }
 
+function showReceiptSummaryModal(targetProductions, dateStr) {
+  const receiptRows = (targetProductions || [])
+    .filter(p => p.category === 'raw' || p.category === 'freezeDry');
+  let rawBoxes = 0;
+  let rawRemainder = 0;
+  let breadPanTotal = 0;
+  let frozenPanTotal = 0;
+
+  const rowsHtml = receiptRows.length === 0
+    ? '<div style="color:#aaa;text-align:center;padding:18px;">입고 대상 생산이 없습니다.</div>'
+    : receiptRows.map(p => {
+      let summary = '<span style="color:#c53030;">미입고</span>';
+      if (p.received) {
+        if (p.category === 'raw') {
+          const boxes = Number(p.receivedBox || 0);
+          const remainder = Number(p.receivedRemainder || 0);
+          rawBoxes += boxes;
+          rawRemainder += remainder;
+          summary = `${boxes}박스${remainder ? ` + ${remainder}낱개` : ''}`;
+        } else {
+          const qty = Number(p.receivedFreezeQty || 0);
+          if (p.receivedFreezeType === 'breadPan') {
+            breadPanTotal = round2(breadPanTotal + qty);
+            summary = `${qty}빵판`;
+          } else {
+            frozenPanTotal += qty;
+            summary = `${qty}동결판`;
+          }
+        }
+      }
+      return `
+        <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #eee;">
+          <span>${p.recipeName || p.id || '생산'}</span>
+          <span style="font-weight:600;">${summary}</span>
+        </div>
+      `;
+    }).join('');
+
+  showModal(`
+    <h3 class="modal-title">생산 입고 현황 — ${dateStr}</h3>
+    <div style="background:#f8f9fa;border:1px solid #e5e5e5;border-radius:6px;padding:10px;margin-bottom:12px;font-size:13px;">
+      <div>생식 합계: <b>${rawBoxes}</b>박스${rawRemainder ? ` + <b>${rawRemainder}</b>낱개` : ''}</div>
+      <div>빵판 합계: <b>${breadPanTotal}</b>빵판</div>
+      <div>동결판 합계: <b>${frozenPanTotal}</b>동결판</div>
+    </div>
+    <div style="font-size:13px;max-height:420px;overflow:auto;">
+      ${rowsHtml}
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">닫기</button>
+    </div>
+  `);
+}
+
 // [spec_v27 P2] 생식 제품 입고 모달 — 판수×판당팩수+낱개 → 박스/낱개 환산, productions 완료 + productTransferRequests outbox
 async function openProductReceiptModal(productionId) {
   const p = [
@@ -1870,7 +1926,10 @@ async function openProductReceiptModal(productionId) {
   if (p.received) {
     const ok = await showConfirmModal({
       title: '입고완료 수정',
-      message: '입고완료된 내용을 수정하시겠습니까?\n저장하면 수정 이력이 재고앱으로 다시 전송됩니다.',
+      message: `현재 입력: 판수 ${p.receivedPlates ?? '-'} / 낱개 ${p.receivedLoosePacks ?? 0} → 총 ${p.receivedTotalPacks ?? '-'}팩 = ${p.receivedBox ?? '-'}박스 + ${p.receivedRemainder ?? 0}낱개
+
+입고완료 내용을 수정하시겠습니까?
+저장하면 수정 이력이 재고앱으로 다시 전송됩니다.`,
       confirmText: '수정하기',
     });
     if (!ok) return;
@@ -2035,18 +2094,30 @@ async function openFreezeDryReceiptModal(productionId) {
     return;
   }
   if (await blockIfClosed(p.date)) return;
-  if (p.received) {
-    alert('이미 입고 완료된 생산입니다.');
-    return;
-  }
 
   const recipe = recipes.find(r => r.id === p.recipeId);
   const productName = recipe?.displayName || p.recipeName || recipe?.name || '동결건조';
-  const isTender = p.requiresSeparation === false || recipe?.requiresSeparation === false;
+  const isTender = p.received
+    ? p.receivedFreezeType === 'frozenPan'
+    : (p.requiresSeparation === false || recipe?.requiresSeparation === false);
   const unitLabel = isTender ? '동결판' : '빵판';
+
+  if (p.received) {
+    const ok = await showConfirmModal({
+      title: '입고완료 수정',
+      message: `현재 입력된 수량: ${p.receivedFreezeQty ?? '-'}${unitLabel}\n\n입고완료 내용을 수정하시겠습니까?\n수정 차이만큼 ${unitLabel} 재고 lot을 조정합니다.`,
+      confirmText: '수정하기',
+    });
+    if (!ok) return;
+    if (!p.receivedLotId) {
+      alert('원본 lot을 찾을 수 없습니다. 빵판/동결판 수동 조정을 이용해주세요.');
+      return;
+    }
+  }
+
   const defaultQty = isTender
-    ? Math.round(Number(p.freezePanQty || 0))
-    : round2(Number(p.breadPanQty || 0));
+    ? Math.round(Number(p.received ? p.receivedFreezeQty : p.freezePanQty || 0))
+    : round2(Number(p.received ? p.receivedFreezeQty : p.breadPanQty || 0));
   const staffOptions = await loadReceiptStaffOptions(['senior', 'office']);
 
   document.getElementById('freezeDryReceiptModal')?.remove();
@@ -2068,7 +2139,7 @@ async function openFreezeDryReceiptModal(productionId) {
         </div>
         <div class="modal-actions">
           <button class="btn-secondary" id="fd_cancel">취소</button>
-          <button class="btn-primary" id="fd_confirm">입고</button>
+          <button class="btn-primary" id="fd_confirm">${p.received ? '수정 저장' : '입고'}</button>
         </div>
       </div>
     </div>
@@ -2094,7 +2165,10 @@ async function openFreezeDryReceiptModal(productionId) {
     if (await blockIfClosed(p.date)) return;
 
     try {
-      if (isTender) {
+      if (p.received && p.receivedLotId) {
+        const saved = await adjustExistingFreezeDryReceipt({ p, productName, qty, staffName, isTender });
+        if (!saved) return;
+      } else if (isTender) {
         await saveTenderFreezeDryReceipt({ p, productName, qty, staffName });
       } else {
         await saveBreadPanFreezeDryReceipt({ p, productName, qty, staffName });
@@ -2111,6 +2185,80 @@ async function openFreezeDryReceiptModal(productionId) {
       alert('동결건조 입고 저장 중 오류가 발생했습니다: ' + (err.message || err));
     }
   });
+}
+
+async function adjustExistingFreezeDryReceipt({ p, productName, qty, staffName, isTender }) {
+  const lotCollection = isTender ? 'frozenPanLots' : 'breadPanLots';
+  const logCollection = isTender ? 'frozenPanLogs' : 'breadPanLogs';
+  const lotRef = doc(db, lotCollection, p.receivedLotId);
+  const lotSnap = await getDoc(lotRef);
+  if (!lotSnap.exists()) {
+    alert('원본 lot을 찾을 수 없습니다. 빵판/동결판 수동 조정을 이용해주세요.');
+    return false;
+  }
+
+  const lot = lotSnap.data();
+  const before = Number(lot.remaining || 0);
+  const previousQty = Number(p.receivedFreezeQty || 0);
+  const delta = isTender ? qty - previousQty : round2(qty - previousQty);
+  if (delta === 0) {
+    alert('변경된 수량이 없습니다.');
+    return false;
+  }
+
+  const after = isTender ? before + delta : round2(before + delta);
+  if (after < 0) {
+    const usedQty = round2(Number(lot.initialQty || 0) - before);
+    alert(`이미 ${usedQty}개가 사용되어 ${qty}${isTender ? '동결판' : '빵판'}으로 줄일 수 없습니다.`);
+    return false;
+  }
+
+  const now = new Date();
+  const batch = writeBatch(db);
+  const logRef = doc(collection(db, logCollection));
+  const nextInitialQty = isTender
+    ? Number(lot.initialQty || 0) + delta
+    : round2(Number(lot.initialQty || 0) + delta);
+
+  batch.update(lotRef, {
+    initialQty: nextInitialQty,
+    remaining: after,
+    closed: isTender ? after <= 0 : after <= 0.005,
+    updatedAt: now,
+  });
+
+  const logPayload = {
+    type: 'adjust',
+    date: getToday(),
+    productName: lot.productName || productName,
+    qty: delta,
+    before,
+    after,
+    lotId: p.receivedLotId,
+    staffName,
+    uid: null,
+    note: null,
+    reason: '제품입고 수정',
+    batchId: null,
+    ledgerId: null,
+    timestamp: now,
+  };
+  if (!isTender) {
+    logPayload.lotDate = lot.date;
+    logPayload.expectedFrozenQty = null;
+    logPayload.actualFrozenQty = null;
+    logPayload.diff = null;
+  }
+  batch.set(logRef, logPayload);
+
+  batch.update(doc(db, 'productions', p.id), {
+    receivedFreezeQty: qty,
+    receivedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  await batch.commit();
+  return true;
 }
 
 async function saveBreadPanFreezeDryReceipt({ p, productName, qty, staffName }) {

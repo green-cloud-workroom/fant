@@ -1,6 +1,6 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc
+  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, writeBatch
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
@@ -265,6 +265,7 @@ function renderFrozenPanTab(rows, lotSummary, frozenPanLogs) {
       <span style="font-size:14px;color:#555;font-weight:600;">동결판 lot 잔량</span>
       <div style="display:flex;gap:8px;">
         <button class="btn-secondary" id="btnAddOrderRow">+ 발주 행 추가</button>
+        <button class="btn-secondary" id="btnFrozenPanAdjust">+ 수동 조정</button>
         <button class="btn-primary" id="btnTenderIn">+ 텐더동결 입고</button>
       </div>
     </div>
@@ -385,6 +386,9 @@ function bindBreadPanTabEvents(rows, lots) {
 function bindFrozenPanTabEvents(rows, lots) {
   const btnTender = document.getElementById('btnTenderIn');
   if (btnTender) btnTender.addEventListener('click', () => showTenderInModal());
+
+  const btnAdjust = document.getElementById('btnFrozenPanAdjust');
+  if (btnAdjust) btnAdjust.addEventListener('click', () => showFrozenPanAdjustModal());
 
   const btnOrderRow = document.getElementById('btnAddOrderRow');
   if (btnOrderRow) btnOrderRow.addEventListener('click', () => showOrderRowModal(rows, lots));
@@ -800,6 +804,122 @@ async function showBreadPanAdjustModal() {
       timestamp: now,
     });
 
+    closeModal();
+    await refreshFrozenPanLayout();
+    alert('수동 조정 완료!');
+  });
+}
+
+async function showFrozenPanAdjustModal() {
+  const allFrozenLots = await loadFrozenPanLots();
+
+  if (allFrozenLots.length === 0) {
+    alert('조정할 동결판 lot이 없습니다.\n동결판 입고를 먼저 진행해주세요.');
+    return;
+  }
+
+  const lotOptions = allFrozenLots
+    .sort((a, b) => {
+      const nameDiff = a.productName.localeCompare(b.productName);
+      if (nameDiff !== 0) return nameDiff;
+      return a.date.localeCompare(b.date);
+    })
+    .map(l => `<option value="${l.id}">${l.productName} / ${l.date} / 잔량 ${l.remaining}개</option>`)
+    .join('');
+
+  showModal(`
+    <h3 class="modal-title">동결판 수동 조정</h3>
+    <div class="form-group">
+      <label>대상 lot *</label>
+      <select id="m_lot">
+        <option value="">선택</option>
+        ${lotOptions}
+      </select>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>조정 유형 *</label>
+        <select id="m_adjustType">
+          <option value="plus">+ 증가</option>
+          <option value="minus">- 감소</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>수량 * (정수)</label>
+        <input type="number" id="m_qty" step="1" min="1" placeholder="예: 5" />
+      </div>
+    </div>
+    <div class="form-group">
+      <label>사유 *</label>
+      <input type="text" id="m_reason" placeholder="예: 실측 차이 보정 / 분실" />
+    </div>
+    <div class="form-group">
+      <label>담당자 *</label>
+      <select id="m_staff">
+        <option value="">선택</option>
+        ${getStaffOptions(['senior', 'office'])}
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">취소</button>
+      <button class="btn-primary" id="btnSaveFrozenPanAdjust">저장</button>
+    </div>
+  `);
+
+  document.getElementById('btnSaveFrozenPanAdjust').addEventListener('click', async () => {
+    const lotId = document.getElementById('m_lot').value;
+    const adjustType = document.getElementById('m_adjustType').value;
+    const qtyInput = parseInt(document.getElementById('m_qty').value, 10);
+    const reason = document.getElementById('m_reason').value.trim();
+    const staffName = document.getElementById('m_staff').value;
+
+    if (!lotId) { alert('대상 lot을 선택해주세요.'); return; }
+    if (!Number.isInteger(qtyInput) || qtyInput <= 0) { alert('수량은 0보다 큰 정수여야 합니다.'); return; }
+    if (!reason) { alert('사유를 입력해주세요.'); return; }
+    if (!staffName) { alert('담당자를 선택해주세요.'); return; }
+
+    const delta = adjustType === 'plus' ? qtyInput : -qtyInput;
+    const lotSnap = await getDoc(doc(db, 'frozenPanLots', lotId));
+    if (!lotSnap.exists()) { alert('lot을 찾을 수 없습니다.'); return; }
+
+    const lot = lotSnap.data();
+    if (await blockIfClosed(lot.date)) return;
+
+    const before = Number(lot.remaining || 0);
+    const after = before + delta;
+    if (after < 0) {
+      alert(`조정 후 잔량이 ${after}개가 됩니다.\n수동조정으로 음수 재고를 만들 수 없습니다.\n현재 ${before}개에서 최대 ${before}개까지만 감소 가능합니다.`);
+      return;
+    }
+
+    const now = new Date();
+    const today = getToday();
+    const batch = writeBatch(db);
+
+    batch.update(doc(db, 'frozenPanLots', lotId), {
+      remaining: after,
+      closed: after <= 0,
+      updatedAt: now,
+    });
+
+    batch.set(doc(collection(db, 'frozenPanLogs')), {
+      type: 'adjust',
+      date: today,
+      productName: lot.productName,
+      qty: delta,
+      before,
+      after,
+      lotId,
+      staffName,
+      uid: null,
+      note: null,
+      reason,
+      batchId: null,
+      ledgerId: null,
+      timestamp: now,
+    });
+
+    await batch.commit();
     closeModal();
     await refreshFrozenPanLayout();
     alert('수동 조정 완료!');
