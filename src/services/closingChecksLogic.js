@@ -448,7 +448,7 @@ export function aggregateBlockingItems(results = {}, flags = DEFAULT_CLOSING_FLA
   const items = [];
   const warnings = [];
 
-  for (const id of [1, 2, 3, 4, 5, 6, 7, 8]) {
+  for (const id of [3, 2, 8, 7, 4, 5, 6, 1]) {
     const entry = blockerMap[id];
     const result = entry?.result;
     if (mergedFlags[entry.flag] && result && result.blocked) {
