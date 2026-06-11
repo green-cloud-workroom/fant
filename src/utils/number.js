@@ -60,3 +60,19 @@ export function breadToFrozenPan(breadPanQty) {
 export function breadToSilicon(breadPanQty) {
   return round2(breadPanQty * 4);
 }
+
+/**
+ * 원료 수량 표시 통일 포맷(숫자만, 단위 미포함).
+ * g: 소수 1자리, kg: 소수 2자리. 정수면 소수점 생략.
+ *
+ * @param {number} grams - 원료량(g)
+ * @param {'kg'|'g'} unit
+ * @returns {string}
+ */
+export function formatIngredientQtyValue(grams, unit) {
+  const g = Number(grams) || 0;
+  const value = unit === 'kg' ? g / 1000 : g;
+  const maxDecimals = unit === 'kg' ? 2 : 1;
+  if (Number.isInteger(value)) return String(value);
+  return value.toLocaleString('ko-KR', { maximumFractionDigits: maxDecimals });
+}
