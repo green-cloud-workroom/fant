@@ -23,6 +23,8 @@ let blockingData = { totalBlocked: 0, items: [] };
 let overdueClosingDate = null;
 let overdueClosingAlreadyClosed = false;
 let overdueProductions = [];
+let overdueNextProductions = [];
+let overdueCompletionDoc = null;
 
 // [묶음 6B-1] 캘린더 데이터 — 14일치만 별도 보관 (productions/nextProductions는 오늘+다음영업일만)
 let calendarSchedules = [];
@@ -80,6 +82,10 @@ async function loadAllData() {
   overdueProductions = overdueClosingDate
     ? allProds.filter(p => p.date === overdueClosingDate && p.status !== 'deleted')
     : [];
+  const overdueNextBizDay = overdueClosingDate ? getNextBusinessDay(overdueClosingDate) : null;
+  overdueNextProductions = overdueNextBizDay
+    ? allProds.filter(p => p.date === overdueNextBizDay && p.status !== 'deleted')
+    : [];
   productions = allProds.filter(p => p.date === today && p.status !== 'deleted');
   nextProductions = allProds.filter(p => p.date === nextBizDay && p.status !== 'deleted');
 
@@ -94,6 +100,12 @@ async function loadAllData() {
 
   const compSnap = await getDoc(doc(db, 'productionCompletion', today));
   completionDoc = compSnap.exists() ? { id: compSnap.id, ...compSnap.data() } : null;
+  if (overdueClosingDate) {
+    const overdueCompSnap = await getDoc(doc(db, 'productionCompletion', overdueClosingDate));
+    overdueCompletionDoc = overdueCompSnap.exists() ? { id: overdueCompSnap.id, ...overdueCompSnap.data() } : null;
+  } else {
+    overdueCompletionDoc = null;
+  }
 
   blockingData = overdueClosing?.blockingData || await getAllBlockingItems(today);
 
@@ -163,7 +175,9 @@ function renderMainLayout() {
                 <button class="btn-secondary" id="btnBackToToday" style="font-size:11px;padding:3px 10px;color:#3182ce;">↩ 오늘로 돌아가기</button>
               `
               : (isOverdueClosingMode
-                ? `<button class="btn-primary" id="btnTomorrowLoad" style="font-size:12px;padding:5px 14px;opacity:0.5;cursor:not-allowed;" disabled title="${overdueClosingDate} 처리 후 진행 가능">${overdueClosingAlreadyClosed ? '미처리 확인 필요' : '미마감 마감 필요'}</button>`
+                ? (overdueCompletionDoc?.status === 'completed'
+                  ? `<button class="btn-primary" id="btnTomorrowLoad" style="font-size:12px;padding:5px 14px;opacity:0.5;cursor:not-allowed;" disabled title="이미 처리되었습니다">이미 처리됨</button>`
+                  : `<button class="btn-primary" id="btnTomorrowLoad" style="font-size:12px;padding:5px 14px;" ${overdueNextProductions.length === 0 ? 'disabled title="다음 영업일에 등록된 생산이 없습니다"' : ''}>내일생산불러오기 (${overdueClosingDate} 소급)</button>`)
                 : (isCompleted
                 ? `
                   ${canRefreshCompletion ? '<button class="btn-secondary" id="btnRefreshCompletion" style="font-size:11px;padding:3px 10px;color:#3182ce;" title="롤백 후 변경된 생산 기준으로 재차감">새로고침</button>' : ''}
@@ -221,7 +235,7 @@ function renderMainLayout() {
 
   document.getElementById('btnBigView')?.addEventListener('click', showBigView);
   document.getElementById('btnTodayReceiptSummary')?.addEventListener('click', () => showReceiptSummaryModal(activeProductions, displayDate));
-  document.getElementById('btnTomorrowLoad')?.addEventListener('click', handleTomorrowLoad);
+  document.getElementById('btnTomorrowLoad')?.addEventListener('click', () => handleTomorrowLoad(isOverdueClosingMode ? overdueClosingDate : undefined));
   document.getElementById('btnCancelCompletion')?.addEventListener('click', handleCancelCompletion);
   // [묶음 6E-3] 새로고침 버튼 — 마감 후 다음 영업일 생산 변경됐을 때 롤백+재차감
   document.getElementById('btnRefreshCompletion')?.addEventListener('click', handleRefreshCompletion);
@@ -2499,19 +2513,23 @@ function renderQuickInfo(isCompleted) {
   return cards.join('');
 }
 
-async function handleTomorrowLoad() {
+async function handleTomorrowLoad(runDate) {
   const today = getToday();
-  if (nextProductions.length === 0) {
+  const baseDate = runDate || today;
+  const isRetroactive = baseDate !== today;
+  const targetProductions = isRetroactive ? overdueNextProductions : nextProductions;
+  const activeCompletionDoc = isRetroactive ? overdueCompletionDoc : completionDoc;
+
+  if (targetProductions.length === 0) {
     alert('다음 영업일에 등록된 생산이 없습니다.');
     return;
   }
-  if (completionDoc?.status === 'completed') {
+  if (activeCompletionDoc?.status === 'completed') {
     alert('내일생산불러오기는 하루 1회만 가능합니다.');
     return;
   }
 
-  // [묶음 6E-1] 차단 5조건 통합 사전 검사 — 차단 있으면 한 팝업에 다 나열
-  const blockers = await gatherTomorrowLoadBlockers(today);
+  const blockers = await gatherTomorrowLoadBlockers(baseDate, targetProductions);
   if (blockers.length > 0) {
     showTomorrowLoadBlockersModal(blockers);
     return;
@@ -2523,7 +2541,8 @@ async function handleTomorrowLoad() {
   showModal(`
     <h3 class="modal-title">내일생산불러오기</h3>
     <p style="font-size:12px;color:#888;margin-bottom:16px;">
-      다음 영업일(${getNextBusinessDay(today)}) 생산 기준으로 원육/봉투 재고가 차감됩니다.
+      ${isRetroactive ? `※ ${baseDate} 소급 실행입니다. 해당일에 했어야 할 차감을 지금 수행합니다.<br>` : ''}
+      다음 영업일(${getNextBusinessDay(baseDate)}) 생산 기준으로 원육/봉투 재고가 차감됩니다.
     </p>
     <div class="form-group">
       <label>담당자 *</label>
@@ -2542,10 +2561,9 @@ async function handleTomorrowLoad() {
     const staff = document.getElementById('m_staff').value;
     if (!staff) { alert('담당자를 선택해주세요.'); return; }
     closeModal();
-    await executeProductionLoad(today, staff);
+    await executeProductionLoad(baseDate, staff, targetProductions);
   });
 }
-
 // ============================================================
 // [묶음 6E-1] 내일생산불러오기 차단 5조건 통합 사전 검사
 // ============================================================
@@ -2559,7 +2577,7 @@ async function handleTomorrowLoad() {
 //
 // 한 팝업에 모두 나열. 차단 0개일 때만 담당자 모달 진입.
 
-async function gatherTomorrowLoadBlockers(today) {
+async function gatherTomorrowLoadBlockers(today, targetProductions = nextProductions) {
   const blockers = [];
 
   // 차단 1, 5 — blockingData 활용 (이미 loadAllData에서 로드됨)
@@ -2586,7 +2604,7 @@ async function gatherTomorrowLoadBlockers(today) {
   const meatNeeds = {};
   const bagNeeds = {};
 
-  for (const p of nextProductions) {
+  for (const p of targetProductions) {
     (p.ingredientsSnapshot || []).forEach(ing => {
       if (ing.autoDeductInventory && ing.meatTypeId) {
         meatNeeds[ing.meatTypeId] = (meatNeeds[ing.meatTypeId] || 0) + ing.requiredQtyG;
@@ -2644,7 +2662,7 @@ async function gatherTomorrowLoadBlockers(today) {
   // 차단 4 — 자동 재포장 확인 미완료
   const autoRepackSnap = await getDocs(query(
     collection(db, 'activityLogs'),
-    where('date', '==', getToday()),
+    where('date', '==', today),
     where('action', '==', 'autoRepack')
   ));
   const pendingAutoRepackLogs = autoRepackSnap.docs
@@ -2703,13 +2721,13 @@ function showTomorrowLoadBlockersModal(blockers) {
   });
 }
 
-async function executeProductionLoad(today, staffName) {
+async function executeProductionLoad(today, staffName, targetProductions = nextProductions) {
   const nextBizDay = getNextBusinessDay(today);
   try {
     const meatNeeds = {};
     const bagNeeds = {};
 
-    for (const p of nextProductions) {
+    for (const p of targetProductions) {
       const recipe = recipes.find(r => r.id === p.recipeId);
       if (!recipe) continue;
       (p.ingredientsSnapshot || []).forEach(ing => {
@@ -3041,7 +3059,7 @@ async function executeProductionLoad(today, staffName) {
       completedAt: new Date(),
     });
 
-    for (const p of nextProductions) {
+    for (const p of targetProductions) {
       await updateDoc(doc(db, 'productions', p.id), { lockedByCompletion: true });
     }
 
