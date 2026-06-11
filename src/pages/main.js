@@ -2626,8 +2626,7 @@ async function gatherTomorrowLoadBlockers(today, targetProductions = nextProduct
       const boxQty = p.rawBoxQty || 0;
       const bagSnap = await getDoc(doc(db, 'bagTypes', recipe.bagTypeId));
       if (bagSnap.exists()) {
-        const piecesPerBox = bagSnap.data().piecesPerBox || 1;
-        bagNeeds[recipe.bagTypeId] = (bagNeeds[recipe.bagTypeId] || 0) + (boxQty * piecesPerBox);
+        bagNeeds[recipe.bagTypeId] = (bagNeeds[recipe.bagTypeId] || 0) + (boxQty * 20); // 1제품박스=20팩=봉투20장
       }
     }
   }
@@ -2641,7 +2640,7 @@ async function gatherTomorrowLoadBlockers(today, targetProductions = nextProduct
     if (current < needed) {
       blockers.push({
         kind: 'bag',
-        text: `🛍️ ${bagData.name || '봉투'} 재고 부족 — 필요 ${needed}장 / 현재 ${current}장`,
+        text: `🛍️ ${bagData.name || ''} 봉투 재고 부족 — 필요 ${needed}장 / 현재 ${current}장`,
         jumpMenu: 'bag',
       });
     }
@@ -2750,8 +2749,7 @@ async function executeProductionLoad(today, staffName, targetProductions = nextP
         const boxQty = p.rawBoxQty || 0;
         const bagSnap = await getDoc(doc(db, 'bagTypes', recipe.bagTypeId));
         if (bagSnap.exists()) {
-          const piecesPerBox = bagSnap.data().piecesPerBox || 1;
-          bagNeeds[recipe.bagTypeId] = (bagNeeds[recipe.bagTypeId] || 0) + (boxQty * piecesPerBox);
+          bagNeeds[recipe.bagTypeId] = (bagNeeds[recipe.bagTypeId] || 0) + (boxQty * 20); // 1제품박스=20팩=봉투20장
         }
       }
     }
@@ -2762,7 +2760,7 @@ async function executeProductionLoad(today, staffName, targetProductions = nextP
       if (bagSnap.exists()) {
         const current = bagSnap.data().currentQty || 0;
         if (current < needed) {
-          alert(`봉투가 부족하여 내일 생산을 불러올 수 없습니다.\n${bagSnap.data().name}: 현재 ${current}장 / 필요 ${needed}장`);
+          alert(`봉투가 부족하여 내일 생산을 불러올 수 없습니다.\n${bagSnap.data().name || ''} 봉투: 현재 ${current}장 / 필요 ${needed}장`);
           return;
         }
       }
