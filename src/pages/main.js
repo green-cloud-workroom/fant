@@ -2464,13 +2464,15 @@ function buildIngredientGroups(targetProductions = productions) {
     (p.ingredientsSnapshot || []).forEach(ing => {
       const ingName = ing.name || '';
       if (ingName === '물' || ingName.includes('노른자')) return;
-      const key = ing.meatTypeId || ing.name;
+      const key = ingName.trim();
+      if (!key) return;
       const unit = getIngredientDisplayUnit(p, ing);
       const g = Number(ing.requiredQtyG || 0);
       const cur = groups.get(key);
       if (cur) {
         cur.totalG += g;
         if (unit === 'kg') cur.unit = 'kg';
+        if (!cur.meatTypeId && ing.meatTypeId) cur.meatTypeId = ing.meatTypeId;
       } else {
         groups.set(key, { name: ing.name, totalG: g, unit, meatTypeId: ing.meatTypeId || null });
       }
