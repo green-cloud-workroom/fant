@@ -925,6 +925,7 @@ function showMeatTypesModal() {
             <th>원육명</th>
             <th>기본 단위중량(g)</th>
             <th>최소재고(kg)</th>
+            <th>구분</th>
             <th>통계 표시</th>
             <th>\uD65C\uC131</th>
           </tr>
@@ -953,6 +954,12 @@ function showMeatTypesModal() {
                          value="${((m.minimumQtyG || 0) / 1000).toFixed(1)}" min="0" step="any"
                          style="width:80px;padding:4px;text-align:right;" />
                   <span style="margin-left:4px;color:#666;font-size:12px;">kg</span>
+                </td>
+                <td>
+                  <select class="m-category" data-id="${m.id}" style="padding:4px;font-size:12px;">
+                    <option value="meat" ${(m.category || 'meat') === 'meat' ? 'selected' : ''}>원육</option>
+                    <option value="produce" ${m.category === 'produce' ? 'selected' : ''}>야채/과일</option>
+                  </select>
                 </td>
                 <td>
                   <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;">
@@ -987,6 +994,13 @@ function showMeatTypesModal() {
           <label>최소재고(kg)</label>
           <input type="number" id="m_newMinQty" placeholder="예: 5" />
         </div>
+        <div class="form-group">
+          <label>구분</label>
+          <select id="m_newCategory">
+            <option value="meat">원육</option>
+            <option value="produce">야채/과일</option>
+          </select>
+        </div>
       </div>
       <button class="btn-primary" id="btnAddMeatType">추가</button>
     </div>
@@ -1018,6 +1032,26 @@ function showMeatTypesModal() {
         console.error('[meat] showInStats 저장 실패:', err);
         alert('저장 실패: ' + (err.message || err));
         e.target.checked = !showInStats;
+      }
+    });
+  });
+
+  document.querySelectorAll('.m-category').forEach(select => {
+    select.addEventListener('change', async (e) => {
+      const id = e.target.dataset.id;
+      const category = e.target.value === 'produce' ? 'produce' : 'meat';
+      const target = meatTypes.find(m => m.id === id);
+      const previous = target?.category || 'meat';
+      try {
+        await updateDoc(doc(db, 'meatTypes', id), {
+          category,
+          updatedAt: new Date(),
+        });
+        if (target) target.category = category;
+      } catch (err) {
+        console.error('[meat] category save failed:', err);
+        alert('저장 실패: ' + (err.message || err));
+        e.target.value = previous;
       }
     });
   });
@@ -1113,6 +1147,7 @@ function showMeatTypesModal() {
     const name = document.getElementById('m_newMeatName').value.trim();
     const unitWeight = parseFloat(document.getElementById('m_newUnitWeight').value) || 0;
     const minQty = parseFloat(document.getElementById('m_newMinQty').value) || 0;
+    const category = document.getElementById('m_newCategory').value === 'produce' ? 'produce' : 'meat';
 
     if (!name) { alert('원육명은 필수입니다.'); return; }
 
@@ -1120,6 +1155,7 @@ function showMeatTypesModal() {
       name,
       defaultUnitWeightG: unitWeight,
       minimumQtyG: minQty * 1000,
+      category,
       sortOrder: meatTypes.length,
       active: true,
       showInStats: true,

@@ -17,6 +17,7 @@ let productions = [];
 let nextProductions = [];
 let recipes = [];
 let meatStocks = [];
+let meatTypeCategoryMap = new Map();
 let eggStock = { currentQty: 0, minimumQty: 0 };
 let completionDoc = null;
 let blockingData = { totalBlocked: 0, items: [] };
@@ -91,6 +92,12 @@ async function loadAllData() {
 
   const recipeSnap = await getDocs(collection(db, 'recipes'));
   recipes = recipeSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  const meatTypeSnap = await getDocs(collection(db, 'meatTypes'));
+  meatTypeCategoryMap = new Map(meatTypeSnap.docs.map(d => [
+    d.id,
+    d.data().category === 'produce' ? 'produce' : 'meat',
+  ]));
 
   const meatSnap = await getDocs(collection(db, 'meatStocks'));
   meatStocks = meatSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.closed);
@@ -2457,13 +2464,15 @@ function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
           cur.totalG += g;
           if (unit === 'kg') cur.unit = 'kg';
         } else {
-          groups.set(key, { name: ing.name, totalG: g, unit });
+          groups.set(key, { name: ing.name, totalG: g, unit, meatTypeId: ing.meatTypeId || null });
         }
       }
     });
   });
   if (groups.size === 0) return '<div style="color:#aaa;">원육 출고 없음</div>';
-  return [...groups.values()].map(grp => {
+  const rank = grp => (grp.meatTypeId && meatTypeCategoryMap.get(grp.meatTypeId) === 'produce') ? 1 : 0;
+  const sortedGroups = [...groups.values()].sort((a, b) => rank(a) - rank(b) || b.totalG - a.totalG);
+  return sortedGroups.map(grp => {
     const qty = grp.unit === 'kg' ? formatQty(grp.totalG / 1000, 2) : formatQty(Math.round(grp.totalG));
     return `
     <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f5f5f5;">
