@@ -40,7 +40,7 @@ let selectedProductionDate = null;
 let selectedDateProductions = [];
 let selectedDateBlockingData = null;
 
-const CHICKEN_ORDER_NAMES = ['닭가슴살', '넓적다리', '통닭', '닭목뼈', '닭안심'];
+const CHICKEN_ORDER_NAMES = ['닭가슴살', '닭정육', '통닭', '닭목뼈', '닭안심'];
 
 function isTenderFreezeDryProduction(item) {
   return item?.category === 'freezeDry' && item.requiresSeparation === false;
@@ -157,9 +157,9 @@ function renderMainLayout() {
       : (isCompleted ? `불러온 다음 영업일 생산 (${nextBizDay})` : '오늘 생산'));
 
   const meatNeedsTitle = isViewingSelectedDate
-    ? `🥩 ${selectedProductionDate} 원료 출고`
-    : (isOverdueClosingMode ? `🥩 ${overdueClosingDate} 원료 출고`
-      : (isCompleted ? '🥩 불러온 생산 원료 출고' : '🥩 오늘 원료 출고'));
+    ? `🥩 ${selectedProductionDate} 출고원료`
+    : (isOverdueClosingMode ? `🥩 ${overdueClosingDate} 출고원료`
+      : (isCompleted ? '🥩 금일 출고원료' : '🥩 금일 출고원료'));
 
   const days = ['일', '월', '화', '수', '목', '금', '토'];
   const displayDate = isViewingSelectedDate
@@ -216,7 +216,7 @@ function renderMainLayout() {
         <div class="main-panel-2">
           <div class="main-panel-header">
             <span class="main-panel-title">${meatNeedsTitle}</span>
-            <button class="btn-secondary" id="btnCopyChickenOrder" style="font-size:11px;padding:3px 10px;">닭발주 복사</button>
+            <button class="btn-secondary" id="btnCopyChickenOrder" style="font-size:11px;padding:3px 10px;">발주 복사</button>
           </div>
           <div style="padding:8px;font-size:12px;">
             ${renderMeatNeeds(activeProductions, isCompleted && !isViewingSelectedDate)}
