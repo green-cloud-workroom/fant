@@ -215,7 +215,7 @@ function renderMainLayout() {
           <div class="main-panel-header">
             <span class="main-panel-title">${meatNeedsTitle}</span>
           </div>
-          <div style="padding:12px;font-size:12px;">
+          <div style="padding:8px;font-size:12px;">
             ${renderMeatNeeds(activeProductions, isCompleted && !isViewingSelectedDate)}
           </div>
         </div>
@@ -223,8 +223,10 @@ function renderMainLayout() {
         <!-- 3번 화면 = 차단 영역 + 생산 로그 + 사무 로그 -->
         <div class="main-panel-3">
           ${renderBlockerArea(activeBlockingData)}
-          ${renderLogSection('production')}
-          ${renderLogSection('office')}
+          <div class="main-log-columns">
+            ${renderLogSection('production')}
+            ${renderLogSection('office')}
+          </div>
         </div>
       </div>
 
@@ -2475,7 +2477,7 @@ function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
   return sortedGroups.map(grp => {
     const qty = grp.unit === 'kg' ? formatQty(grp.totalG / 1000, 2) : formatQty(Math.round(grp.totalG));
     return `
-    <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f5f5f5;">
+    <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #f5f5f5;">
       <span>${grp.name}</span>
       <span style="font-weight:600;">${qty} ${grp.unit}</span>
     </div>

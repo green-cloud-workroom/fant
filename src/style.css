@@ -1939,7 +1939,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   border-bottom: 1px solid #e0e0e0;
   background: #fafafa;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 240px minmax(0, 1fr);
   overflow: hidden;
   min-height: 0;
 }
@@ -2936,6 +2936,20 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.main-log-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: start;
+  min-height: 0;
+}
+
+@media (max-width: 1280px) {
+  .main-log-columns {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* 차단 영역 — 패널 최상단 고정. 차단 없으면 영역 자체 사라짐. */
