@@ -2441,8 +2441,7 @@ function getIngredientDisplayUnit(p, ing) {
 
 function formatIngredientQty(p, ing) {
   const grams = Number(ing.requiredQtyG || 0);
-  if (getIngredientDisplayUnit(p, ing) === 'kg') return formatQty(grams / 1000, 2);
-  return formatQty(Math.round(grams));
+  return formatIngredientQtyValue(grams, getIngredientDisplayUnit(p, ing));
 }
 
 function getIngredientUnit(p, ing) {
