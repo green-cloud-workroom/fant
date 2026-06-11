@@ -1,7 +1,7 @@
 import { showPromptModal, showConfirmModal } from '../utils/modal.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, getDoc, setDoc, addDoc, serverTimestamp
+  collection, getDocs, doc, getDoc, setDoc, addDoc, serverTimestamp, writeBatch
 } from 'firebase/firestore';
 import { currentUser, currentUserRole } from '../app.js';
 import { getTodayKST, loadHolidaysCache } from '../utils/date.js';
@@ -60,6 +60,7 @@ export async function renderSettings() {
   const menuStaffGroups = await loadMenuStaffGroups();
   const copySheetOrder = await loadCopySheetOrder();
   const meatPriceRows = await loadMeatPriceRows(getTodayKST());
+  const ingredientNameRows = await loadIngredientNameRows();
   const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
   const canEditMeatPrice = isWriter;
 
@@ -144,6 +145,17 @@ export async function renderSettings() {
 
       <details class="settings-section">
         <summary class="settings-section-summary">
+          <span class="settings-section-title">원료 명칭 통합</span>
+          <span class="settings-section-toggle">펼치기</span>
+        </summary>
+        <div class="settings-section-body">
+          <p class="settings-section-desc">레시피에 적힌 원료명을 실제로 통합합니다. 과거 생산 기록은 변경하지 않고, 레시피의 원료명만 바뀝니다.</p>
+          ${renderIngredientNameMergeSection(ingredientNameRows, isWriter)}
+        </div>
+      </details>
+
+      <details class="settings-section">
+        <summary class="settings-section-summary">
           <span class="settings-section-title">시스템 설정값</span>
           <span class="settings-section-toggle">펼치기</span>
         </summary>
@@ -175,6 +187,7 @@ export async function renderSettings() {
   if (isWriter) bindSystemValueEvents(systemValues);
   if (isWriter) bindMenuStaffGroupEvents(menuStaffGroups);
   bindCopySheetOrderEvents(isWriter);
+  bindIngredientNameMergeEvents(ingredientNameRows, staffGroups, isWriter);
   bindHolidayEvents();
   bindMeatPriceEvents(meatPriceRows, canEditMeatPrice);
 }
@@ -220,6 +233,218 @@ function escapeSettingsHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+async function loadIngredientNameRows() {
+  const snap = await getDocs(collection(db, 'recipes'));
+  const byName = new Map();
+
+  snap.docs.forEach(recipeDoc => {
+    const recipe = { id: recipeDoc.id, ...recipeDoc.data() };
+    (recipe.ingredients || []).forEach(ing => {
+      const name = (ing.name || '').trim();
+      if (!name) return;
+      if (!byName.has(name)) {
+        byName.set(name, { name, recipes: [], activeCount: 0, inactiveCount: 0 });
+      }
+      const row = byName.get(name);
+      if (row.recipes.some(item => item.id === recipe.id)) return;
+      const isInactive = recipe.status === 'inactive' || recipe.active === false;
+      row.recipes.push({
+        id: recipe.id,
+        name: recipe.name || recipe.recipeName || '(이름 없음)',
+        inactive: isInactive,
+      });
+      if (isInactive) row.inactiveCount += 1;
+      else row.activeCount += 1;
+    });
+  });
+
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name, 'ko-KR'));
+}
+
+function renderIngredientNameMergeSection(rows, isWriter) {
+  if (!rows.length) {
+    return '<div class="cal-modal-empty">등록된 원료명이 없습니다.</div>';
+  }
+
+  const disabled = isWriter ? '' : 'disabled';
+  return `
+    <div class="ingredient-merge-list" style="display:flex;flex-direction:column;gap:6px;">
+      ${rows.map(row => `
+        <details class="ingredient-merge-row" style="border:1px solid #eee;border-radius:6px;background:#fff;">
+          <summary style="display:grid;grid-template-columns:28px 1fr 80px 90px;gap:8px;align-items:center;padding:8px 10px;cursor:pointer;font-size:13px;">
+            <input type="checkbox" class="ingredient-merge-checkbox" data-name="${escapeSettingsHtml(row.name)}" ${disabled}>
+            <span style="font-weight:600;">${escapeSettingsHtml(row.name)}</span>
+            <span style="color:#555;text-align:right;">${row.recipes.length}개 레시피</span>
+            <span style="color:${row.inactiveCount ? '#b7791f' : '#999'};font-size:12px;">${row.inactiveCount ? '비활성 포함' : ''}</span>
+          </summary>
+          <div style="padding:0 10px 10px 46px;color:#666;font-size:12px;line-height:1.7;">
+            ${row.recipes.map(recipe => `${escapeSettingsHtml(recipe.name)}${recipe.inactive ? ' (비활성)' : ''}`).join('<br>')}
+          </div>
+        </details>
+      `).join('')}
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:10px;">
+      <button class="btn-primary" id="btnMergeIngredientNames" ${disabled} disabled>선택 통합</button>
+    </div>
+    ${isWriter ? '' : '<p class="staff-empty">읽기 전용입니다. 통합은 대표/사무 계정에서 가능합니다.</p>'}
+  `;
+}
+
+function getStaffNameOptions(staffGroups) {
+  const names = [];
+  Object.values(staffGroups || {}).forEach(group => {
+    (group || []).forEach(member => {
+      const name = (member?.name || '').trim();
+      if (name && !names.includes(name)) names.push(name);
+    });
+  });
+  const fallback = currentUser?.email || currentUser?.uid || '';
+  if (fallback && !names.includes(fallback)) names.push(fallback);
+  return names;
+}
+
+function bindIngredientNameMergeEvents(rows, staffGroups, isWriter) {
+  const checkboxes = [...document.querySelectorAll('.ingredient-merge-checkbox')];
+  const btn = document.getElementById('btnMergeIngredientNames');
+  if (!btn) return;
+
+  checkboxes.forEach(cb => {
+    cb.addEventListener('click', ev => ev.stopPropagation());
+    cb.addEventListener('change', () => {
+      btn.disabled = !isWriter || checkboxes.filter(item => item.checked).length === 0;
+    });
+  });
+
+  if (!isWriter) return;
+
+  btn.addEventListener('click', () => {
+    const fromNames = checkboxes.filter(cb => cb.checked).map(cb => cb.dataset.name).filter(Boolean);
+    if (fromNames.length === 0) return;
+    showIngredientNameMergeModal(fromNames, rows, staffGroups);
+  });
+}
+
+function showIngredientNameMergeModal(fromNames, rows, staffGroups) {
+  const existing = document.getElementById('ingredientNameMergeModal');
+  if (existing) existing.remove();
+
+  const staffNames = getStaffNameOptions(staffGroups);
+  const staffOptions = staffNames.map(name => `<option value="${escapeSettingsHtml(name)}">${escapeSettingsHtml(name)}</option>`).join('');
+  const selectedList = fromNames.map(name => `<li>${escapeSettingsHtml(name)}</li>`).join('');
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'ingredientNameMergeModal';
+  overlay.innerHTML = `
+    <div class="modal-box" style="width:520px;">
+      <h3 class="modal-title">원료 명칭 통합</h3>
+      <p style="font-size:13px;color:#555;margin:0 0 10px;line-height:1.6;">선택한 원료명을 새 이름 하나로 통합합니다. 레시피의 원료명만 변경되고 과거 생산 기록은 유지됩니다.</p>
+      <div style="background:#f8f8f8;border:1px solid #eee;border-radius:6px;padding:10px;margin-bottom:12px;font-size:13px;">
+        <div style="font-weight:600;margin-bottom:6px;">선택 원료명</div>
+        <ul style="margin:0;padding-left:18px;">${selectedList}</ul>
+      </div>
+      <div class="form-group">
+        <label>새 원료명 *</label>
+        <input type="text" id="ingredientMergeToName" value="${escapeSettingsHtml(fromNames[0] || '')}" />
+      </div>
+      <div class="form-group">
+        <label>담당자 *</label>
+        <select id="ingredientMergeStaff" style="width:100%;padding:8px;border:1px solid #d0d0d0;border-radius:4px;">
+          ${staffOptions}
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="ingredientMergeCancel">취소</button>
+        <button class="btn-primary" id="ingredientMergeConfirm">통합</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector('#ingredientMergeCancel').addEventListener('click', close);
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) close();
+  });
+  overlay.querySelector('#ingredientMergeConfirm').addEventListener('click', async () => {
+    const toName = overlay.querySelector('#ingredientMergeToName').value.trim();
+    const staffName = overlay.querySelector('#ingredientMergeStaff').value || currentUser?.email || currentUser?.uid || '';
+    if (!toName) {
+      alert('새 원료명을 입력해주세요.');
+      return;
+    }
+    await mergeIngredientNames(fromNames, toName, staffName, close);
+  });
+}
+
+async function mergeIngredientNames(fromNames, toName, staffName, onDone) {
+  const selected = new Set(fromNames);
+  try {
+    const snap = await getDocs(collection(db, 'recipes'));
+    const affected = [];
+    const duplicated = [];
+
+    snap.docs.forEach(recipeDoc => {
+      const recipe = { id: recipeDoc.id, ...recipeDoc.data() };
+      const ingredients = recipe.ingredients || [];
+      const matchedCount = ingredients.filter(ing => selected.has((ing.name || '').trim())).length;
+      const hasTargetName = ingredients.some(ing => {
+        const name = (ing.name || '').trim();
+        return name === toName && !selected.has(name);
+      });
+      if (matchedCount > 1) {
+        duplicated.push(recipe.name || recipe.recipeName || recipe.id);
+      } else if (matchedCount === 1 && hasTargetName) {
+        duplicated.push(recipe.name || recipe.recipeName || recipe.id);
+      } else if (matchedCount === 1) {
+        affected.push({ doc: recipeDoc, recipe, ingredients });
+      }
+    });
+
+    if (duplicated.length > 0) {
+      alert(`한 레시피에 통합 대상 원료가 2개 이상 있어 중복 원료가 생깁니다.\n레시피에서 먼저 정리해주세요.\n\n${duplicated.join('\n')}`);
+      return;
+    }
+
+    if (affected.length === 0) {
+      alert('변경할 레시피가 없습니다.');
+      return;
+    }
+
+    const batch = writeBatch(db);
+    affected.forEach(item => {
+      const nextIngredients = item.ingredients.map(ing => (
+        selected.has((ing.name || '').trim()) ? { ...ing, name: toName } : ing
+      ));
+      batch.update(doc(db, 'recipes', item.doc.id), {
+        ingredients: nextIngredients,
+        updatedAt: serverTimestamp(),
+      });
+    });
+    await batch.commit();
+
+    await addDoc(collection(db, 'activityLogs'), {
+      date: getTodayKST(),
+      timestamp: serverTimestamp(),
+      action: 'recipe',
+      subAction: 'ingredientRename',
+      message: `원료 명칭 통합 — [${fromNames.join(', ')}] → ${toName} (레시피 ${affected.length}건) / 담당: ${staffName}`,
+      details: {
+        fromNames,
+        toName,
+        recipeIds: affected.map(item => item.doc.id),
+      },
+      staffName,
+      acknowledged: false,
+    });
+
+    onDone?.();
+    await renderSettings();
+  } catch (err) {
+    console.error('[settings] ingredient name merge failed:', err);
+    alert('원료 명칭 통합 실패: ' + err.message);
+  }
 }
 
 function formatUnitPrice(value) {

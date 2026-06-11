@@ -40,6 +40,8 @@ let selectedProductionDate = null;
 let selectedDateProductions = [];
 let selectedDateBlockingData = null;
 
+const CHICKEN_ORDER_NAMES = ['닭가슴살', '넓적다리', '통닭', '닭목뼈', '닭안심'];
+
 function isTenderFreezeDryProduction(item) {
   return item?.category === 'freezeDry' && item.requiresSeparation === false;
 }
@@ -214,6 +216,7 @@ function renderMainLayout() {
         <div class="main-panel-2">
           <div class="main-panel-header">
             <span class="main-panel-title">${meatNeedsTitle}</span>
+            <button class="btn-secondary" id="btnCopyChickenOrder" style="font-size:11px;padding:3px 10px;">닭발주 복사</button>
           </div>
           <div style="padding:8px;font-size:12px;">
             ${renderMeatNeeds(activeProductions, isCompleted && !isViewingSelectedDate)}
@@ -244,6 +247,7 @@ function renderMainLayout() {
 
   document.getElementById('btnBigView')?.addEventListener('click', showBigView);
   document.getElementById('btnTodayReceiptSummary')?.addEventListener('click', () => showReceiptSummaryModal(activeProductions, displayDate));
+  document.getElementById('btnCopyChickenOrder')?.addEventListener('click', () => copyChickenOrder(activeProductions));
   document.getElementById('btnTomorrowLoad')?.addEventListener('click', () => handleTomorrowLoad(isOverdueClosingMode ? overdueClosingDate : undefined));
   document.getElementById('btnCancelCompletion')?.addEventListener('click', handleCancelCompletion);
   // [묶음 6E-3] 새로고침 버튼 — 마감 후 다음 영업일 생산 변경됐을 때 롤백+재차감
@@ -2454,8 +2458,7 @@ function formatQty(value, maxDecimals = 1) {
   return num.toLocaleString('ko-KR', { maximumFractionDigits: maxDecimals });
 }
 
-function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
-  if (targetProductions.length === 0) return `<div style="color:#aaa;">${isCompleted ? '불러온 생산 없음' : '오늘 생산 없음'}</div>`;
+function buildIngredientGroups(targetProductions = productions) {
   const groups = new Map();
   targetProductions.forEach(p => {
     (p.ingredientsSnapshot || []).forEach(ing => {
@@ -2473,9 +2476,19 @@ function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
       }
     });
   });
-  if (groups.size === 0) return '<div style="color:#aaa;">원료 출고 없음</div>';
+  return groups;
+}
+
+function sortIngredientGroups(groups) {
   const rank = grp => (grp.meatTypeId && meatTypeCategoryMap.get(grp.meatTypeId) === 'produce') ? 1 : 0;
-  const sortedGroups = [...groups.values()].sort((a, b) => rank(a) - rank(b) || b.totalG - a.totalG);
+  return [...groups.values()].sort((a, b) => rank(a) - rank(b) || b.totalG - a.totalG);
+}
+
+function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
+  if (targetProductions.length === 0) return `<div style="color:#aaa;">${isCompleted ? '불러온 생산 없음' : '오늘 생산 없음'}</div>`;
+  const groups = buildIngredientGroups(targetProductions);
+  if (groups.size === 0) return '<div style="color:#aaa;">원료 출고 없음</div>';
+  const sortedGroups = sortIngredientGroups(groups);
   return sortedGroups.map(grp => {
     const qty = formatIngredientQtyValue(grp.totalG, grp.unit);
     return `
@@ -2485,6 +2498,54 @@ function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
     </div>
   `;
   }).join('');
+}
+
+function showCopyFallbackModal(text) {
+  const existing = document.getElementById('chickenOrderCopyFallbackModal');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'chickenOrderCopyFallbackModal';
+  overlay.innerHTML = `
+    <div class="modal-box" style="width:480px;">
+      <h3 class="modal-title">닭발주 복사</h3>
+      <p style="font-size:13px;color:#555;margin:0 0 10px;">클립보드 복사가 막혔습니다. 아래 내용을 직접 복사해주세요.</p>
+      <textarea id="chickenOrderCopyText" style="width:100%;height:90px;font-size:13px;padding:10px;border:1px solid #d0d0d0;border-radius:6px;box-sizing:border-box;resize:none;">${escapeHtmlMain(text)}</textarea>
+      <div class="modal-actions">
+        <button class="btn-primary" id="chickenOrderCopyClose">확인</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const textarea = overlay.querySelector('#chickenOrderCopyText');
+  setTimeout(() => {
+    textarea.focus();
+    textarea.select();
+  }, 50);
+  overlay.querySelector('#chickenOrderCopyClose').addEventListener('click', () => overlay.remove());
+}
+
+function copyChickenOrder(targetProductions = productions) {
+  const groups = buildIngredientGroups(targetProductions);
+  const parts = CHICKEN_ORDER_NAMES
+    .map(name => {
+      const totalG = [...groups.values()]
+        .filter(item => item.name === name)
+        .reduce((sum, item) => sum + Number(item.totalG || 0), 0);
+      if (totalG <= 0) return '';
+      return `${name} ${formatIngredientQtyValue(totalG, 'kg')}kg`;
+    })
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    alert('복사할 닭발주 품목이 없습니다.');
+    return;
+  }
+
+  const text = parts.join(', ');
+  navigator.clipboard.writeText(text)
+    .then(() => alert('닭발주 내용이 복사되었습니다!'))
+    .catch(() => showCopyFallbackModal(text));
 }
 
 function renderQuickInfo(isCompleted) {
