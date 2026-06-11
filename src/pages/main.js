@@ -11,7 +11,7 @@ import { recordMeatLog } from '../services/meatLogs.js';
 import { showPromptModal, showConfirmModal } from '../utils/modal.js';
 import { acknowledgeLog, recordActivity } from '../services/activityLogs.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
-import { round2 } from '../utils/number.js';
+import { round2, formatIngredientQtyValue } from '../utils/number.js';
 
 let productions = [];
 let nextProductions = [];
@@ -155,9 +155,9 @@ function renderMainLayout() {
       : (isCompleted ? `불러온 다음 영업일 생산 (${nextBizDay})` : '오늘 생산'));
 
   const meatNeedsTitle = isViewingSelectedDate
-    ? `🥩 ${selectedProductionDate} 원육 출고`
-    : (isOverdueClosingMode ? `🥩 ${overdueClosingDate} 원육 출고`
-      : (isCompleted ? '🥩 불러온 생산 원육 출고' : '🥩 오늘 원육 출고'));
+    ? `🥩 ${selectedProductionDate} 원료 출고`
+    : (isOverdueClosingMode ? `🥩 ${overdueClosingDate} 원료 출고`
+      : (isCompleted ? '🥩 불러온 생산 원료 출고' : '🥩 오늘 원료 출고'));
 
   const days = ['일', '월', '화', '수', '목', '금', '토'];
   const displayDate = isViewingSelectedDate
@@ -2457,25 +2457,25 @@ function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
   const groups = new Map();
   targetProductions.forEach(p => {
     (p.ingredientsSnapshot || []).forEach(ing => {
-      if (ing.autoDeductInventory && ing.linkedToInventory) {
-        const key = ing.meatTypeId || ing.name;
-        const unit = getIngredientDisplayUnit(p, ing);
-        const g = Number(ing.requiredQtyG || 0);
-        const cur = groups.get(key);
-        if (cur) {
-          cur.totalG += g;
-          if (unit === 'kg') cur.unit = 'kg';
-        } else {
-          groups.set(key, { name: ing.name, totalG: g, unit, meatTypeId: ing.meatTypeId || null });
-        }
+      const ingName = ing.name || '';
+      if (ingName === '물' || ingName.includes('노른자')) return;
+      const key = ing.meatTypeId || ing.name;
+      const unit = getIngredientDisplayUnit(p, ing);
+      const g = Number(ing.requiredQtyG || 0);
+      const cur = groups.get(key);
+      if (cur) {
+        cur.totalG += g;
+        if (unit === 'kg') cur.unit = 'kg';
+      } else {
+        groups.set(key, { name: ing.name, totalG: g, unit, meatTypeId: ing.meatTypeId || null });
       }
     });
   });
-  if (groups.size === 0) return '<div style="color:#aaa;">원육 출고 없음</div>';
+  if (groups.size === 0) return '<div style="color:#aaa;">원료 출고 없음</div>';
   const rank = grp => (grp.meatTypeId && meatTypeCategoryMap.get(grp.meatTypeId) === 'produce') ? 1 : 0;
   const sortedGroups = [...groups.values()].sort((a, b) => rank(a) - rank(b) || b.totalG - a.totalG);
   return sortedGroups.map(grp => {
-    const qty = grp.unit === 'kg' ? formatQty(grp.totalG / 1000, 2) : formatQty(Math.round(grp.totalG));
+    const qty = formatIngredientQtyValue(grp.totalG, grp.unit);
     return `
     <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #f5f5f5;">
       <span>${grp.name}</span>
