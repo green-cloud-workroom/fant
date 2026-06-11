@@ -750,12 +750,14 @@ Newer settings UI stores which staff groups are exposed per menu. Each menu must
 
 ```js
 showInStats: boolean
+category: 'meat' | 'produce'
 ```
 
 의미:
 - `true`: 통계 탭 원료 소모량에 표시
 - `false`: 통계 탭 원료 소모량에서 제외
 - 필드 없음: `true`로 처리
+- category: 메인 원육 출고 목록 정렬용 구분. produce는 야채/과일 그룹으로 표시하고, 필드가 없으면 meat로 처리.
 
 신규 원육:
 - `showInStats: true`로 저장
