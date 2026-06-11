@@ -630,6 +630,10 @@ function showRecipeDetail(recipe) {
             <input type="number" id="packWeightG" value="${recipe?.packWeightG || ''}" placeholder="예: 75" />
           </div>
           <div class="form-group">
+            <label>판당 팩수 (팩/판)</label>
+            <input type="number" id="recipePacksPerPlate" value="${recipe?.packsPerPlate || ''}" placeholder="비우면 설정 기본값" />
+          </div>
+          <div class="form-group">
             <label>사용 봉투 *</label>
             <select id="recipeBagType">
               <option value="">선택</option>
@@ -1126,6 +1130,8 @@ async function saveRecipe(id) {
 
   if (category === 'raw') {
     data.packWeightG = parseFloat(document.getElementById('packWeightG').value) || null;
+    // 판당 팩수 레시피별 오버라이드 — 비우면 null(설정 기본값 사용). 예: 램/래빗 55g = 180
+    data.packsPerPlate = parseInt(document.getElementById('recipePacksPerPlate')?.value, 10) || null;
     // [봉투 연동] 사용 봉투 필수 — 빈값이면 저장 차단
     const selectedBagId = document.getElementById('recipeBagType')?.value || '';
     if (!selectedBagId) {

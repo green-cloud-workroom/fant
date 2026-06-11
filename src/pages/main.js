@@ -1968,8 +1968,11 @@ async function openProductReceiptModal(productionId) {
   } catch (err) {
     console.error('[receipt] systemValues load failed:', err);
   }
+  // 판당 팩수: 레시피별 오버라이드 우선 (예: 램/래빗 55g = 180팩/판), 없으면 시스템 설정값
+  const recipeOverride = Number(recipe?.packsPerPlate);
+  const hasOverride = Number.isFinite(recipeOverride) && recipeOverride > 0;
   const pppKey = target === 'cat' ? 'packsPerPlateCat' : target === 'dog' ? 'packsPerPlateDog' : null;
-  const packsPerPlate = Number(pppKey ? sysVals[pppKey] : NaN);
+  const packsPerPlate = hasOverride ? recipeOverride : Number(pppKey ? sysVals[pppKey] : NaN);
   if (!Number.isFinite(packsPerPlate) || packsPerPlate <= 0) {
     const tgtLabel = target === 'cat' ? '고양이' : target === 'dog' ? '강아지' : '대상';
     alert(`설정 > 시스템 설정값에서 ${tgtLabel} 판당 팩수를 먼저 등록해주세요.`);
@@ -1988,7 +1991,7 @@ async function openProductReceiptModal(productionId) {
     <div class="modal-overlay" id="productReceiptModal">
       <div class="modal-box" style="width:420px;">
         <h3 class="modal-title">제품 입고 — ${p.recipeName}</h3>
-        <p style="font-size:12px;color:#888;margin:0 0 12px;">판당 팩수 ${packsPerPlate}팩/판 · 1박스 = 20팩</p>
+        <p style="font-size:12px;color:#888;margin:0 0 12px;">판당 팩수 ${packsPerPlate}팩/판${hasOverride ? ' (레시피 지정)' : ''} · 1박스 = 20팩</p>
         <div class="form-group" style="margin-bottom:10px;">
           <label style="display:block;font-size:12px;color:#555;margin-bottom:4px;">생산방식 (기록용)</label>
           <select id="pr_method" style="width:100%;padding:8px;border:1px solid #d0d0d0;border-radius:4px;">${methodOptions}</select>
