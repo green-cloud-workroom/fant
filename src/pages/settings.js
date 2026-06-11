@@ -26,6 +26,7 @@ const COPY_SHEET_ORDER_LABELS = {
 };
 
 let copySheetOrderSortable = null;
+const FIRESTORE_BATCH_LIMIT = 450;
 
 const CLOSING_FLAG_BLOCKS = [
   { key: 'blockTomorrowProd', label: '내일생산불러오기 미완료 시 마감 차단', desc: '다음 영업일 생산이 있는데 내일생산불러오기를 안 했으면 차단' },
@@ -150,7 +151,7 @@ export async function renderSettings() {
           <span class="settings-section-toggle">펼치기</span>
         </summary>
         <div class="settings-section-body">
-          <p class="settings-section-desc">레시피에 적힌 원료명을 실제로 통합합니다. 과거 생산 기록은 변경하지 않고, 레시피의 원료명만 바뀝니다.</p>
+          <p class="settings-section-desc">레시피에 적힌 원료명을 실제로 통합합니다. 오늘 이후 생산 카드의 원료명도 함께 갱신되고, 과거 기록은 보존됩니다.</p>
           ${renderIngredientNameMergeSection(ingredientNameRows, isWriter)}
         </div>
       </details>
@@ -353,7 +354,7 @@ function showIngredientNameMergeModal(fromNames, rows, staffGroups) {
   overlay.innerHTML = `
     <div class="modal-box" style="width:520px;">
       <h3 class="modal-title">${isSingle ? '원료명 수정' : '원료 명칭 통합'}</h3>
-      <p style="font-size:13px;color:#555;margin:0 0 10px;line-height:1.6;">${isSingle ? '이 원료명을 새 이름으로 변경합니다.' : '선택한 원료명을 새 이름 하나로 통합합니다.'} 레시피의 원료명만 변경되고 과거 생산 기록은 유지됩니다.</p>
+      <p style="font-size:13px;color:#555;margin:0 0 10px;line-height:1.6;">${isSingle ? '이 원료명을 새 이름으로 변경합니다.' : '선택한 원료명을 새 이름 하나로 통합합니다.'} 오늘 이후 생산 카드의 원료명도 함께 갱신됩니다. 과거 기록은 보존됩니다.</p>
       <div style="background:#f8f8f8;border:1px solid #eee;border-radius:6px;padding:10px;margin-bottom:12px;font-size:13px;">
         <div style="font-weight:600;margin-bottom:6px;">선택 원료명</div>
         <ul style="margin:0;padding-left:18px;">${selectedList}</ul>
@@ -421,33 +422,69 @@ async function mergeIngredientNames(fromNames, toName, staffName, onDone) {
       return;
     }
 
-    if (affected.length === 0) {
-      alert('변경할 레시피가 없습니다.');
-      return;
-    }
-
-    const batch = writeBatch(db);
+    const updates = [];
     affected.forEach(item => {
       const nextIngredients = item.ingredients.map(ing => (
         selected.has((ing.name || '').trim()) ? { ...ing, name: toName } : ing
       ));
-      batch.update(doc(db, 'recipes', item.doc.id), {
-        ingredients: nextIngredients,
-        updatedAt: serverTimestamp(),
+      updates.push({
+        ref: doc(db, 'recipes', item.doc.id),
+        data: {
+          ingredients: nextIngredients,
+          updatedAt: serverTimestamp(),
+        },
       });
     });
-    await batch.commit();
+
+    const today = getTodayKST();
+    const prodSnap = await getDocs(collection(db, 'productions'));
+    const syncedProductions = [];
+    prodSnap.docs.forEach(prodDoc => {
+      const production = prodDoc.data();
+      if (!production.date || production.date < today || production.status === 'deleted') return;
+      const snapshot = production.ingredientsSnapshot || [];
+      let changed = false;
+      // lockedByCompletion=true 카드도 포함한다. 이름 문자열만 바꾸므로 차감/수량 정합성은 변경하지 않는다.
+      const nextSnapshot = snapshot.map(ing => {
+        if (!selected.has((ing.name || '').trim())) return ing;
+        changed = true;
+        return { ...ing, name: toName };
+      });
+      if (!changed) return;
+      syncedProductions.push(prodDoc.id);
+      updates.push({
+        ref: doc(db, 'productions', prodDoc.id),
+        data: {
+          ingredientsSnapshot: nextSnapshot,
+          updatedAt: serverTimestamp(),
+        },
+      });
+    });
+
+    if (updates.length === 0) {
+      alert('변경할 레시피나 생산 카드가 없습니다.');
+      return;
+    }
+
+    for (let i = 0; i < updates.length; i += FIRESTORE_BATCH_LIMIT) {
+      const batch = writeBatch(db);
+      updates.slice(i, i + FIRESTORE_BATCH_LIMIT).forEach(update => {
+        batch.update(update.ref, update.data);
+      });
+      await batch.commit();
+    }
 
     await recordActivity({
       date: getTodayKST(),
       action: 'recipe',
       subAction: 'ingredientRename',
       staff: staffName,
-      message: `원료 명칭 ${fromNames.length > 1 ? '통합' : '수정'} — [${fromNames.join(', ')}] → ${toName} (레시피 ${affected.length}건) / 담당: ${staffName}`,
+      message: `원료 명칭 ${fromNames.length > 1 ? '통합' : '수정'} — [${fromNames.join(', ')}] → ${toName} (레시피 ${affected.length}건, 생산 ${syncedProductions.length}건 동기화) / 담당: ${staffName}`,
       details: {
         fromNames,
         toName,
         recipeIds: affected.map(item => item.doc.id),
+        productionIds: syncedProductions,
       },
     });
 
