@@ -9,6 +9,7 @@ import { currentUser, currentUserRole } from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
 import { makeSupplementId } from '../utils/supplement.js';
 import { formatIngredientQtyValue, round2 } from '../utils/number.js';
+import { buildChickenOrderText, copyTextToClipboard } from '../utils/orderCopy.js';
 import Sortable from 'sortablejs';
 
 let recipes = [];
@@ -262,6 +263,7 @@ function renderProductionLayout() {
         <div class="production-form-header">
           <span style="font-size:13px;font-weight:600;color:#333;">생산 입력</span>
           <button class="btn-secondary" id="btnCopySheet" style="font-size:11px;padding:3px 10px;">생산지시서 복사</button>
+          <button class="btn-secondary" id="btnCopyOrder" style="font-size:11px;padding:3px 10px;">발주 복사</button>
         </div>
         <div id="productionForm">
           <div style="color:#aaa;font-size:12px;text-align:center;padding:20px;">
@@ -285,11 +287,22 @@ function renderProductionLayout() {
 
   document.getElementById('btnNewProduction')?.addEventListener('click', () => showProductionForm(null));
   document.getElementById('btnCopySheet').addEventListener('click', showCopySheetModal);
+  document.getElementById('btnCopyOrder').addEventListener('click', handleCopyOrder);
   document.getElementById('btnBigView').addEventListener('click', showBigViewModal);
 
   bindCardEvents();
   initProductionCardsSortable();
 }
+
+function handleCopyOrder() {
+  const text = buildChickenOrderText(productions);
+  if (!text) {
+    alert('복사할 발주 품목이 없습니다.');
+    return;
+  }
+  copyTextToClipboard(text, '발주 복사');
+}
+
 // [Phase 7B-2] 휴일 배지 렌더 (read-only)
 // 선택한 날짜가 holidays 캐시에 있으면 휴일명 배지 표시. 토/일은 자동 처리되므로 별도 표시 안 함.
 function renderHolidayBadge(dateStr) {
