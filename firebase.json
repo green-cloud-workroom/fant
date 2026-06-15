@@ -1,5 +1,3 @@
 {
-  "firestore": {
-    "rules": "firestore.rules"
-  }
+  "_note": "Firestore rules managed ONLY from fantapet-inventory repo. Do NOT add firestore section here."
 }

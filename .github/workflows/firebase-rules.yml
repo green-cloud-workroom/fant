@@ -1,11 +1,16 @@
 name: Deploy Firestore Rules
 
+# ⚠️ 2026-06-15: main push 자동배포 비활성화.
+# fant-e5ae5 rules는 5개 앱(생산/재고/운영·급여/레시피계산기/재무)이 공유하는 단일 파일이라,
+# 이 repo의 (production-only) rules가 자동배포되면 라이브의 재고·급여 규칙을 덮어써 사고가 됨.
+# 정본 = Firebase 라이브 배포본. 단일 소유 repo 확정 전까지 이 repo는 수동(workflow_dispatch)만 허용.
+# 되돌리려면 아래 push 트리거 주석을 해제하면 됨.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - firestore.rules
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - firestore.rules
   workflow_dispatch:
 
 permissions:
