@@ -82,6 +82,29 @@ async function loadMeatStocks(stage) {
     .filter(s => s.stage === stage && !s.closed);
 }
 
+function renderStockSummary(stocks) {
+  const byType = new Map();
+  (stocks || []).forEach(s => {
+    const key = s.meatTypeId || s.meatNameSnapshot || s.id;
+    const totalG = Number(s.remaining || 0);
+    const cur = byType.get(key);
+    if (cur) cur.totalG += totalG;
+    else byType.set(key, { name: s.meatNameSnapshot || '원육', totalG });
+  });
+  if (byType.size === 0) return '';
+
+  const rows = [...byType.values()]
+    .sort((a, b) => b.totalG - a.totalG)
+    .map(g => `<span style="display:inline-block;margin:2px 10px 2px 0;">${g.name} <b>${(g.totalG / 1000).toFixed(2)}kg</b></span>`)
+    .join('');
+
+  return `
+    <div style="background:#f8f9fa;border:1px solid #e8e8e8;border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:13px;line-height:1.9;">
+      <span style="color:#666;font-weight:600;margin-right:8px;">원육별 합계</span>${rows}
+    </div>
+  `;
+}
+
 function renderMeatLayout() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `
@@ -142,6 +165,7 @@ function renderFrozenTab(stocks, logs) {
       <div class="section-header">
         <span class="section-title">잔량</span>
       </div>
+      ${renderStockSummary(stocks)}
       <div class="table-wrap">
         <table class="data-table">
           <thead>
@@ -226,6 +250,7 @@ function renderProcessedTab(stocks, logs) {
       <div class="section-header">
         <span class="section-title">잔량</span>
       </div>
+      ${renderStockSummary(stocks)}
       <div class="table-wrap">
         <table class="data-table">
           <thead>
@@ -303,6 +328,7 @@ function renderRepackedTab(stocks, logs) {
       <div class="section-header">
         <span class="section-title">잔량</span>
       </div>
+      ${renderStockSummary(stocks)}
       <div class="table-wrap">
         <table class="data-table">
           <thead>
