@@ -31,6 +31,30 @@ function getActiveMeatTypes() {
   return meatTypes.filter(m => m.active !== false);
 }
 
+function getMeatTypeCategory(meatTypeId) {
+  return meatTypes.find(m => m.id === meatTypeId)?.category || 'meat';
+}
+
+function isProduceMeatType(meatTypeId) {
+  return getMeatTypeCategory(meatTypeId) === 'produce';
+}
+
+function isMeatCategoryStock(stock) {
+  return !isProduceMeatType(stock.meatTypeId);
+}
+
+function isProduceCategoryStock(stock) {
+  return isProduceMeatType(stock.meatTypeId);
+}
+
+function isMeatCategoryLog(log) {
+  return !isProduceMeatType(log.meatTypeId);
+}
+
+function isProduceCategoryLog(log) {
+  return isProduceMeatType(log.meatTypeId);
+}
+
 async function loadMeatLogs(stage) {
   const q = query(
     collection(db, 'meatLogs'),
@@ -115,6 +139,7 @@ function renderMeatLayout() {
           <button class="tab-btn ${currentTab === 'frozen' ? 'active' : ''}" data-tab="frozen">냉동창고</button>
           <button class="tab-btn ${currentTab === 'processed' ? 'active' : ''}" data-tab="processed">전처리</button>
           <button class="tab-btn ${currentTab === 'repacked' ? 'active' : ''}" data-tab="repacked">재포장</button>
+          <button class="tab-btn ${currentTab === 'produce' ? 'active' : ''}" data-tab="produce">채소/과일</button>
         </div>
       </div>
       <div id="tabContent"></div>
@@ -137,15 +162,18 @@ async function renderTab(tab) {
   const tabContent = document.getElementById('tabContent');
   tabContent.innerHTML = `<div style="padding:24px;"><p>로딩 중...</p></div>`;
 
+  const dataStage = tab === 'produce' ? 'frozen' : tab;
   const [stocks, logs] = await Promise.all([
-    loadMeatStocks(tab),
-    loadMeatLogs(tab),
+    loadMeatStocks(dataStage),
+    loadMeatLogs(dataStage),
   ]);
 
   if (tab === 'frozen') {
     renderFrozenTab(stocks, logs);
   } else if (tab === 'processed') {
     renderProcessedTab(stocks, logs);
+  } else if (tab === 'produce') {
+    renderProduceTab(stocks, logs);
   } else {
     renderRepackedTab(stocks, logs);
   }
@@ -155,6 +183,8 @@ async function renderTab(tab) {
 function renderFrozenTab(stocks, logs) {
   const tabContent = document.getElementById('tabContent');
   const canManageMeatTypes = currentUserRole === 'admin' || currentUserRole === 'office';
+  const meatStocks = stocks.filter(isMeatCategoryStock);
+  const meatLogs = logs.filter(isMeatCategoryLog);
   tabContent.innerHTML = `
     <div style="display:flex;gap:8px;margin-bottom:16px;">
       <button class="btn-primary" id="btnAddFrozen">+ 원육 입고 등록</button>
@@ -165,7 +195,7 @@ function renderFrozenTab(stocks, logs) {
       <div class="section-header">
         <span class="section-title">잔량</span>
       </div>
-      ${renderStockSummary(stocks)}
+      ${renderStockSummary(meatStocks)}
       <div class="table-wrap">
         <table class="data-table">
           <thead>
@@ -177,8 +207,8 @@ function renderFrozenTab(stocks, logs) {
             </tr>
           </thead>
           <tbody>
-            ${stocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">등록된 재고 없음</td></tr>` :
-              stocks.map(s => `
+            ${meatStocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">등록된 재고 없음</td></tr>` :
+              meatStocks.map(s => `
                 <tr>
                   <td>${s.meatNameSnapshot}</td>
                   <td>${s.incomingDate || '-'}</td>
@@ -208,8 +238,8 @@ function renderFrozenTab(stocks, logs) {
             </tr>
           </thead>
           <tbody>
-            ${logs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
-              logs.map(l => `
+            ${meatLogs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
+              meatLogs.map(l => `
                 <tr>
                   <td>${formatMeatLogTimestamp(l.timestamp)}</td>
                   <td>${l.meatNameSnapshot || '-'}</td>
@@ -225,13 +255,106 @@ function renderFrozenTab(stocks, logs) {
     </div>
   `;
 
-  document.getElementById('btnAddFrozen').addEventListener('click', showAddFrozenModal);
+  document.getElementById('btnAddFrozen').addEventListener('click', () => showAddFrozenModal());
   document.getElementById('btnMeatTypes')?.addEventListener('click', () => {
     if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
       alert('원육 종류 관리는 대표/사무실 계정만 가능합니다.');
       return;
     }
     showMeatTypesModal();
+  });
+  document.querySelectorAll('.btn-adjust').forEach(btn => {
+    btn.addEventListener('click', () => showAdjustModal(btn.dataset.id, btn.dataset.name, parseFloat(btn.dataset.remaining)));
+  });
+}
+
+// 채소/과일 탭
+function renderProduceTab(stocks, logs) {
+  const tabContent = document.getElementById('tabContent');
+  const produceStocks = stocks.filter(isProduceCategoryStock);
+  const produceLogs = logs.filter(isProduceCategoryLog);
+
+  tabContent.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <button class="btn-primary" id="btnAddProduce">+ 채소/과일 입고 등록</button>
+    </div>
+
+    <div class="form-section">
+      <div class="section-header">
+        <span class="section-title">잔량</span>
+      </div>
+      ${renderStockSummary(produceStocks)}
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>이름</th>
+              <th>입고일</th>
+              <th>초기량</th>
+              <th>잔량</th>
+              <th>담당</th>
+              <th>비고</th>
+              <th>조정</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${produceStocks.length === 0 ? `<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">등록된 채소/과일 재고 없음</td></tr>` :
+              produceStocks.map(s => `
+                <tr>
+                  <td>${s.meatNameSnapshot}</td>
+                  <td>${s.incomingDate || '-'}</td>
+                  <td>${((s.initialQtyG || 0) / 1000).toFixed(2)}kg</td>
+                  <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(2)}kg</td>
+                  <td>${s.staffName || '-'}</td>
+                  <td>${s.note || '-'}</td>
+                  <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
+                </tr>
+              `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <div class="section-header">
+        <span class="section-title">이력</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>날짜</th>
+              <th>원료명</th>
+              <th>구분</th>
+              <th>수량</th>
+              <th>담당자</th>
+              <th>사유</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${produceLogs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
+              produceLogs.map(l => `
+                <tr>
+                  <td>${formatMeatLogTimestamp(l.timestamp)}</td>
+                  <td>${l.meatNameSnapshot || '-'}</td>
+                  <td>${getMeatLogTypeLabel(l.type)}</td>
+                  <td style="color:${l.delta < 0 ? '#e53e3e' : '#2d7a3a'};font-weight:600;">${formatMeatLogQty(l.delta)}</td>
+                  <td>${l.staff || '-'}</td>
+                  <td>${l.reason || '-'}</td>
+                </tr>
+              `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('btnAddProduce').addEventListener('click', () => {
+    showAddFrozenModal({
+      categoryFilter: 'produce',
+      title: '채소/과일 입고 등록',
+      returnTab: 'produce',
+    });
   });
   document.querySelectorAll('.btn-adjust').forEach(btn => {
     btn.addEventListener('click', () => showAdjustModal(btn.dataset.id, btn.dataset.name, parseFloat(btn.dataset.remaining)));
@@ -395,14 +518,26 @@ function renderRepackedTab(stocks, logs) {
 }
 
 // 원육 입고 등록 모달
-function showAddFrozenModal() {
+function showAddFrozenModal(options = {}) {
+  const {
+    categoryFilter = 'meat',
+    title = categoryFilter === 'produce' ? '채소/과일 입고 등록' : '원육 입고 등록',
+    returnTab = 'frozen',
+  } = options;
+  const itemLabel = categoryFilter === 'produce' ? '채소/과일' : '원육';
+  const activeMeatTypes = getActiveMeatTypes().filter(m => (
+    categoryFilter === 'produce'
+      ? m.category === 'produce'
+      : (m.category || 'meat') === 'meat'
+  ));
+
   showModal(`
-    <h3 class="modal-title">원육 입고 등록</h3>
+    <h3 class="modal-title">${title}</h3>
     <div class="form-group">
-      <label>원육 종류 *</label>
+      <label>${itemLabel} 종류 *</label>
       <select id="m_meatType">
         <option value="">선택</option>
-        ${getActiveMeatTypes().map(m => `<option value="${m.id}" data-weight="${m.defaultUnitWeightG}">${m.name}</option>`).join('')}
+        ${activeMeatTypes.map(m => `<option value="${m.id}" data-weight="${m.defaultUnitWeightG}">${m.name}</option>`).join('')}
       </select>
     </div>
     <div class="form-row">
@@ -450,7 +585,7 @@ function showAddFrozenModal() {
     const note = document.getElementById('m_note').value;
 
     if (!meatTypeId || !weight || !date) {
-      alert('원육 종류, 중량, 날짜는 필수입니다.');
+      alert(`${itemLabel} 종류, 중량, 날짜는 필수입니다.`);
       return;
     }
     if (!staff) {
@@ -495,7 +630,7 @@ function showAddFrozenModal() {
       subAction: 'incoming',
       date,
       staff,
-      message: `원육 입고 (냉동창고) — ${meatName} +${(qtyG/1000).toFixed(1)}kg / 담당: ${staff}`,
+      message: `${itemLabel} 입고 (냉동창고) - ${meatName} +${(qtyG/1000).toFixed(1)}kg / 담당: ${staff}`,
       details: {
         meatStockId: stockRef.id,
         meatTypeId,
@@ -507,7 +642,7 @@ function showAddFrozenModal() {
     });
 
     closeModal();
-    renderTab('frozen');
+    renderTab(returnTab);
     alert('입고 등록 완료!');
   });
 }
@@ -900,7 +1035,8 @@ function showAdjustModal(id, name, remaining) {
       updatedAt: new Date(),
     });
 
-    const stageKor = currentTab === 'frozen' ? '냉동창고' : currentTab === 'processed' ? '전처리' : '재포장';
+    const logStage = currentTab === 'produce' ? 'frozen' : currentTab;
+    const stageKor = currentTab === 'frozen' ? '냉동창고' : currentTab === 'processed' ? '전처리' : currentTab === 'produce' ? '채소/과일' : '재포장';
     await recordActivity({
       action: 'meat',
       subAction: 'adjust',
@@ -923,7 +1059,7 @@ function showAdjustModal(id, name, remaining) {
       date: adjustDate,
       meatTypeId,
       meatNameSnapshot: name,
-      stage: currentTab,
+      stage: logStage,
       meatStockId: id,
       delta,
       before: remaining,
@@ -982,9 +1118,9 @@ function showMeatTypesModal() {
                   <span style="margin-left:4px;color:#666;font-size:12px;">kg</span>
                 </td>
                 <td>
-                  <select class="m-category" data-id="${m.id}" style="padding:4px;font-size:12px;">
+                  <select class="m-category meat-category" data-id="${m.id}" style="padding:4px;font-size:12px;">
                     <option value="meat" ${(m.category || 'meat') === 'meat' ? 'selected' : ''}>원육</option>
-                    <option value="produce" ${m.category === 'produce' ? 'selected' : ''}>야채/과일</option>
+                    <option value="produce" ${m.category === 'produce' ? 'selected' : ''}>채소/과일</option>
                   </select>
                 </td>
                 <td>
@@ -1022,9 +1158,9 @@ function showMeatTypesModal() {
         </div>
         <div class="form-group">
           <label>구분</label>
-          <select id="m_newCategory">
+          <select id="m_newCategory" class="meat-category">
             <option value="meat">원육</option>
-            <option value="produce">야채/과일</option>
+            <option value="produce">채소/과일</option>
           </select>
         </div>
       </div>
