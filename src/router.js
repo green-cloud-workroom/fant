@@ -70,7 +70,7 @@ function getMenuLabel(menuId) {
   const labels = {
     main: '메인 대시보드',
     production: '생산 입력',
-    meat: '원육 재고',
+    meat: '원료 재고',
     egg: '계란',
     bag: '봉투 재고',
     supplement: '영양제 재고',

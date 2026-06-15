@@ -16,7 +16,7 @@ export async function loadUserInfo(user) {
 export const MENUS = [
   { id: 'main', label: '메인', roles: ['admin', 'office', 'production'] },
   { id: 'production', label: '생산 입력', roles: ['admin', 'office', 'production'] },
-  { id: 'meat', label: '원육 재고', roles: ['admin', 'office', 'production'] },
+  { id: 'meat', label: '원료 재고', roles: ['admin', 'office', 'production'] },
   { id: 'egg', label: '계란', roles: ['admin', 'office', 'production'] },
   { id: 'bag', label: '봉투 재고', roles: ['admin', 'office', 'production'] },
   { id: 'supplement', label: '영양제 재고', roles: ['admin', 'office', 'production'] },

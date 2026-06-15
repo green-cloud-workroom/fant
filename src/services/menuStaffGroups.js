@@ -25,7 +25,7 @@ export const STAFF_GROUP_LABELS = {
 export const STAFF_GROUP_KEYS = ['senior', 'lead', 'office'];
 
 export const MENU_STAFF_GROUP_FIELDS = [
-  { key: 'meatStock', label: '원육 재고' },
+  { key: 'meatStock', label: '원료 재고' },
   { key: 'egg', label: '계란' },
   { key: 'bagStockIn', label: '봉투 재고 (입고)' },
   { key: 'bagScheduleComplete', label: '봉투 재고 (입고예정 완료처리)' },
