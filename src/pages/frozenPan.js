@@ -761,7 +761,7 @@ async function showBreadPanAdjustModal() {
     const lot = lotSnap.data();
     const lotDate = lot.date;
 
-    if (await blockIfClosed(lotDate)) return;
+    if (await blockIfClosed(getToday())) return;
 
     const before = lot.remaining || 0;
     const after = round2(before + delta);
@@ -883,7 +883,7 @@ async function showFrozenPanAdjustModal() {
     if (!lotSnap.exists()) { alert('lot을 찾을 수 없습니다.'); return; }
 
     const lot = lotSnap.data();
-    if (await blockIfClosed(lot.date)) return;
+    if (await blockIfClosed(getToday())) return;
 
     const before = Number(lot.remaining || 0);
     const after = before + delta;
