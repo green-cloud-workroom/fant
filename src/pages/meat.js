@@ -106,25 +106,41 @@ async function loadMeatStocks(stage) {
     .filter(s => s.stage === stage && !s.closed);
 }
 
-function renderStockSummary(stocks) {
-  const byType = new Map();
+function getStockColor(totalG, meatTypeId) {
+  const mt = meatTypes.find(m => m.id === meatTypeId);
+  const minG = mt?.minimumQtyG || 0;
+  if (minG <= 0) return '#1a1a1a';
+  if (totalG < minG) return '#e53e3e';
+  if (totalG < minG * 1.5) return '#dd6b20';
+  return '#1a1a1a';
+}
+
+function buildTotalByType(stocks) {
+  const map = new Map();
   (stocks || []).forEach(s => {
     const key = s.meatTypeId || s.meatNameSnapshot || s.id;
-    const totalG = Number(s.remaining || 0);
-    const cur = byType.get(key);
-    if (cur) cur.totalG += totalG;
-    else byType.set(key, { name: s.meatNameSnapshot || '원육', totalG });
+    const cur = map.get(key);
+    if (cur) cur.totalG += Number(s.remaining || 0);
+    else map.set(key, { name: s.meatNameSnapshot || '원료', totalG: Number(s.remaining || 0), meatTypeId: s.meatTypeId });
   });
+  return map;
+}
+
+function renderStockSummary(stocks) {
+  const byType = buildTotalByType(stocks);
   if (byType.size === 0) return '';
 
   const rows = [...byType.values()]
     .sort((a, b) => b.totalG - a.totalG)
-    .map(g => `<span style="display:inline-block;margin:2px 10px 2px 0;">${g.name} <b>${(g.totalG / 1000).toFixed(2)}kg</b></span>`)
+    .map(g => {
+      const color = getStockColor(g.totalG, g.meatTypeId);
+      return `<span style="display:inline-block;margin:2px 10px 2px 0;color:${color};">${g.name} <b>${(g.totalG / 1000).toFixed(2)}kg</b></span>`;
+    })
     .join('');
 
   return `
     <div style="background:#f8f9fa;border:1px solid #e8e8e8;border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:13px;line-height:1.9;">
-      <span style="color:#666;font-weight:600;margin-right:8px;">원육별 합계</span>${rows}
+      <span style="color:#666;font-weight:600;margin-right:8px;">원료별 합계</span>${rows}
     </div>
   `;
 }
@@ -185,6 +201,7 @@ function renderFrozenTab(stocks, logs) {
   const canManageMeatTypes = currentUserRole === 'admin' || currentUserRole === 'office';
   const meatStocks = stocks.filter(isMeatCategoryStock);
   const meatLogs = logs.filter(isMeatCategoryLog);
+  const meatTotals = buildTotalByType(meatStocks);
   tabContent.innerHTML = `
     <div style="display:flex;gap:8px;margin-bottom:16px;">
       <button class="btn-primary" id="btnAddFrozen">+ 원육 입고 등록</button>
@@ -208,14 +225,17 @@ function renderFrozenTab(stocks, logs) {
           </thead>
           <tbody>
             ${meatStocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">등록된 재고 없음</td></tr>` :
-              meatStocks.map(s => `
+              meatStocks.map(s => {
+                const typeTotal = meatTotals.get(s.meatTypeId || s.meatNameSnapshot || s.id)?.totalG ?? s.remaining;
+                const color = getStockColor(typeTotal, s.meatTypeId);
+                return `
                 <tr>
                   <td>${s.meatNameSnapshot}</td>
                   <td>${s.incomingDate || '-'}</td>
-                  <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(2)}kg</td>
+                  <td style="font-weight:600;color:${color}">${(s.remaining / 1000).toFixed(2)}kg</td>
                   <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
-                </tr>
-              `).join('')}
+                </tr>`;
+              }).join('')}
           </tbody>
         </table>
       </div>
@@ -273,6 +293,7 @@ function renderProduceTab(stocks, logs) {
   const tabContent = document.getElementById('tabContent');
   const produceStocks = stocks.filter(isProduceCategoryStock);
   const produceLogs = logs.filter(isProduceCategoryLog);
+  const produceTotals = buildTotalByType(produceStocks);
 
   tabContent.innerHTML = `
     <div style="display:flex;gap:8px;margin-bottom:16px;">
@@ -299,17 +320,20 @@ function renderProduceTab(stocks, logs) {
           </thead>
           <tbody>
             ${produceStocks.length === 0 ? `<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">등록된 채소/과일 재고 없음</td></tr>` :
-              produceStocks.map(s => `
+              produceStocks.map(s => {
+                const typeTotal = produceTotals.get(s.meatTypeId || s.meatNameSnapshot || s.id)?.totalG ?? s.remaining;
+                const color = getStockColor(typeTotal, s.meatTypeId);
+                return `
                 <tr>
                   <td>${s.meatNameSnapshot}</td>
                   <td>${s.incomingDate || '-'}</td>
                   <td>${((s.initialQtyG || 0) / 1000).toFixed(2)}kg</td>
-                  <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(2)}kg</td>
+                  <td style="font-weight:600;color:${color}">${(s.remaining / 1000).toFixed(2)}kg</td>
                   <td>${s.staffName || '-'}</td>
                   <td>${s.note || '-'}</td>
                   <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
-                </tr>
-              `).join('')}
+                </tr>`;
+              }).join('')}
           </tbody>
         </table>
       </div>
