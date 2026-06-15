@@ -1016,10 +1016,14 @@ function bindIngredientEvents() {
 }
 
 function handleIngredientPaste(e) {
-  e.preventDefault();
   const text = e.clipboardData.getData('text');
+  // 단일 값(탭/줄바꿈 없음)은 기본 붙여넣기를 허용한다.
+  if (!text.includes('\t') && !text.includes('\n')) return;
+  e.preventDefault();
   const rows = text.trim().split('\n');
   const tbody = document.getElementById('ingredientBody');
+  const startTr = e.target.closest('tr');
+  const startIdx = startTr ? [...tbody.querySelectorAll('tr')].indexOf(startTr) : 0;
 
   rows.forEach((row, i) => {
     const cols = row.split('\t');
@@ -1032,8 +1036,9 @@ function handleIngredientPaste(e) {
     const meatTypeId = matchedMeat?.id || null;
 
     const existingRows = tbody.querySelectorAll('tr');
-    if (existingRows[i]) {
-      const tr = existingRows[i];
+    const targetIdx = startIdx + i;
+    if (existingRows[targetIdx]) {
+      const tr = existingRows[targetIdx];
       tr.querySelector('.ing-name').value = name;
       tr.querySelector('.ing-weight').value = weight;
       const weightUnitSelect = tr.querySelector('.ing-weight-unit');
