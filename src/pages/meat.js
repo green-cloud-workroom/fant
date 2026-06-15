@@ -15,7 +15,7 @@ let meatTypesSortable = null;
 
 export async function renderMeat() {
   const content = document.getElementById('mainContent');
-  content.innerHTML = `<div style="padding:24px;"><p>원육 재고 로딩 중...</p></div>`;
+  content.innerHTML = `<div style="padding:24px;"><p>원료 재고 로딩 중...</p></div>`;
   await loadStaffCache();
   meatTypes = await loadMeatTypes();
   renderMeatLayout();
@@ -134,7 +134,7 @@ function renderMeatLayout() {
   content.innerHTML = `
     <div class="page-wrap">
       <div class="page-header">
-        <h2 class="page-title">원육 재고</h2>
+        <h2 class="page-title">원료 재고</h2>
         <div class="tab-group">
           <button class="tab-btn ${currentTab === 'frozen' ? 'active' : ''}" data-tab="frozen">냉동창고</button>
           <button class="tab-btn ${currentTab === 'processed' ? 'active' : ''}" data-tab="processed">전처리</button>
