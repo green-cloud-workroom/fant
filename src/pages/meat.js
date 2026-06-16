@@ -130,17 +130,25 @@ function renderStockSummary(stocks) {
   const byType = buildTotalByType(stocks);
   if (byType.size === 0) return '';
 
-  const rows = [...byType.values()]
+  const cells = [...byType.values()]
     .sort((a, b) => b.totalG - a.totalG)
     .map(g => {
       const color = getStockColor(g.totalG, g.meatTypeId);
-      return `<span style="display:inline-block;margin:2px 10px 2px 0;color:${color};">${g.name} <b>${(g.totalG / 1000).toFixed(2)}kg</b></span>`;
+      return `
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;border:1px solid #e8e8e8;border-radius:6px;padding:6px 8px;background:#fff;">
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#444;">${g.name}</span>
+          <b style="color:${color};font-variant-numeric:tabular-nums;">${(g.totalG / 1000).toFixed(2)}kg</b>
+        </div>
+      `;
     })
     .join('');
 
   return `
-    <div style="background:#f8f9fa;border:1px solid #e8e8e8;border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:13px;line-height:1.9;">
-      <span style="color:#666;font-weight:600;margin-right:8px;">원료별 합계</span>${rows}
+    <div style="background:#f8f9fa;border:1px solid #e8e8e8;border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:13px;">
+      <div style="color:#666;font-weight:600;margin-bottom:8px;">원료별 합계</div>
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;">
+        ${cells}
+      </div>
     </div>
   `;
 }
