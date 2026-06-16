@@ -1028,30 +1028,30 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
       <button class="btn-primary" id="btnSaveAdjust">조정</button>
     </div>
   `),document.getElementById(`btnSaveAdjust`).addEventListener(`click`,async()=>{let r=document.getElementById(`m_actualRemaining`).value,i=document.getElementById(`m_adjustReason`).value.trim(),a=document.getElementById(`m_staff`).value;if(r===``||isNaN(parseFloat(r))){alert(`실제 잔량을 입력해주세요.`);return}let o=parseFloat(r);if(o<0){alert(`실제 잔량은 0 이상이어야 합니다.
-잔량이 음수가 될 수 없습니다.`);return}if(!i||!a){alert(`사유와 담당자는 필수입니다.`);return}let s=o-n;if(s===0){alert(`기존 잔량과 동일합니다. 변경할 값을 입력해주세요.`);return}let c=z();if(await Wu(c))return;let l=await j(k(I,`meatStocks`,e)),u=(l.exists()?l.data():{}).meatTypeId||null;await O(k(I,`meatStocks`,e),{remaining:o,closed:o===0,updatedAt:new Date});let d=qu===`produce`?`frozen`:qu,f=qu===`frozen`?`냉동창고`:qu===`processed`?`전처리`:qu===`produce`?`채소/과일`:`재포장`;await wo({action:`meat`,subAction:`adjust`,date:c,staff:a,message:`원육 수동조정 (${f}) — ${t} ${(n/1e3).toFixed(1)}kg → ${(o/1e3).toFixed(1)}kg / 사유: ${i} / 담당: ${a}`,details:{meatStockId:e,meatName:t,stage:f,delta:s,before:n,after:o,reason:i}}),await Gu({type:`adjust`,date:c,meatTypeId:u,meatNameSnapshot:t,stage:d,meatStockId:e,delta:s,before:n,after:o,staff:a,reason:i}),closeModal(),Sd(qu),alert(`조정 완료!`)})}function jd(e={}){let{categoryFilter:t=null}=e,n=!t&&(R===`admin`||R===`office`),r=t?Ku.filter(e=>td(e.id)===t):Ku,i=t===`produce`?`채소/과일`:`원육`;Bd(`
-    <h3 class="modal-title">${t===`produce`?`채소/과일 종류 관리`:`원육 종류 관리`}</h3>
+잔량이 음수가 될 수 없습니다.`);return}if(!i||!a){alert(`사유와 담당자는 필수입니다.`);return}let s=o-n;if(s===0){alert(`기존 잔량과 동일합니다. 변경할 값을 입력해주세요.`);return}let c=z();if(await Wu(c))return;let l=await j(k(I,`meatStocks`,e)),u=(l.exists()?l.data():{}).meatTypeId||null;await O(k(I,`meatStocks`,e),{remaining:o,closed:o===0,updatedAt:new Date});let d=qu===`produce`?`frozen`:qu,f=qu===`frozen`?`냉동창고`:qu===`processed`?`전처리`:qu===`produce`?`채소/과일`:`재포장`;await wo({action:`meat`,subAction:`adjust`,date:c,staff:a,message:`원육 수동조정 (${f}) — ${t} ${(n/1e3).toFixed(1)}kg → ${(o/1e3).toFixed(1)}kg / 사유: ${i} / 담당: ${a}`,details:{meatStockId:e,meatName:t,stage:f,delta:s,before:n,after:o,reason:i}}),await Gu({type:`adjust`,date:c,meatTypeId:u,meatNameSnapshot:t,stage:d,meatStockId:e,delta:s,before:n,after:o,staff:a,reason:i}),closeModal(),Sd(qu),alert(`조정 완료!`)})}function jd(e={}){let{categoryFilter:t=null}=e,n=!t&&(R===`admin`||R===`office`),r=t?Ku.filter(e=>td(e.id)===t):Ku,i=t===`produce`,a=i?`채소/과일`:`원육`,o=i?`채소/과일 종류 관리`:`원육 종류 관리`,s=i?`g`:`kg`;Bd(`
+    <h3 class="modal-title">${o}</h3>
     <div class="table-wrap" style="margin-bottom:16px;">
       <table class="data-table">
         <thead>
           <tr>
             <th class="master-table-drag-col"></th>
-            <th>${i}명</th>
+            <th>${a}명</th>
             <th>기본 단위중량(g)</th>
-            <th>최소재고(kg)</th>
-            <th>구분</th>
-            <th>통계 표시</th>
+            <th>최소재고(${s})</th>
+            ${i?``:`<th>구분</th>`}
+            ${i?``:`<th>통계 표시</th>`}
             <th>\uD65C\uC131</th>
           </tr>
         </thead>
         <tbody id="meatTypesList">
-          ${r.map(e=>{let r=e.showInStats!==!1,i=e.active!==!1;return`
-              <tr class="${i?``:`inactive-master`}" data-id="${e.id}">
+          ${r.map(e=>{let r=e.showInStats!==!1,a=e.active!==!1,o=i?e.minimumQtyG||0:((e.minimumQtyG||0)/1e3).toFixed(1);return`
+              <tr class="${a?``:`inactive-master`}" data-id="${e.id}">
                 <td class="master-table-drag-cell">
                   ${n?`<span class="drag-handle" title="순서 변경" aria-label="순서 변경">≡</span>`:``}
                 </td>
                 <td>
                   ${e.name}
-                  ${i?``:`<span class="tag tag-inactive" style="margin-left:6px;">비활성</span>`}
+                  ${a?``:`<span class="tag tag-inactive" style="margin-left:6px;">비활성</span>`}
                 </td>
                 <td>
                   <input type="number" class="m-unit-weight" data-id="${e.id}"
@@ -1061,25 +1061,25 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
                 </td>
                 <td>
                   <input type="number" class="m-min-qty" data-id="${e.id}"
-                         value="${((e.minimumQtyG||0)/1e3).toFixed(1)}" min="0" step="any"
+                         value="${o}" min="0" step="any"
                          style="width:80px;padding:4px;text-align:right;" />
-                  <span style="margin-left:4px;color:#666;font-size:12px;">kg</span>
+                  <span style="margin-left:4px;color:#666;font-size:12px;">${s}</span>
                 </td>
-                <td>
+                ${i?``:`<td>
                   <select class="m-category meat-category" data-id="${e.id}" style="padding:4px;font-size:12px;" ${t?`disabled`:``}>
                     <option value="meat" ${(e.category||`meat`)===`meat`?`selected`:``}>원육</option>
                     <option value="produce" ${e.category===`produce`?`selected`:``}>채소/과일</option>
                   </select>
-                </td>
-                <td>
+                </td>`}
+                ${i?``:`<td>
                   <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;">
                     <input type="checkbox" class="m-show-in-stats" data-id="${e.id}" ${r?`checked`:``}>
                     <span>통계에 표시</span>
                   </label>
-                </td>
+                </td>`}
                 <td>
-                  <label class="toggle-switch" title="${i?`활성`:`비활성`}">
-                    <input type="checkbox" class="m-active-toggle" data-id="${e.id}" ${i?`checked`:``}>
+                  <label class="toggle-switch" title="${a?`활성`:`비활성`}">
+                    <input type="checkbox" class="m-active-toggle" data-id="${e.id}" ${a?`checked`:``}>
                     <span class="toggle-slider"></span>
                   </label>
                 </td>
@@ -1089,10 +1089,10 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
       </table>
     </div>
     <div style="background:#f9f9f9;border-radius:6px;padding:14px;border:1px solid #eee;">
-      <p style="font-size:12px;font-weight:600;margin-bottom:10px;">새 ${i} 종류 추가</p>
+      <p style="font-size:12px;font-weight:600;margin-bottom:10px;">새 ${a} 종류 추가</p>
       <div class="form-row">
         <div class="form-group">
-          <label>${i}명 *</label>
+          <label>${a}명 *</label>
           <input type="text" id="m_newMeatName" placeholder="예: 닭가슴살" />
         </div>
         <div class="form-group">
@@ -1100,23 +1100,23 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
           <input type="number" id="m_newUnitWeight" placeholder="예: 500" />
         </div>
         <div class="form-group">
-          <label>최소재고(kg)</label>
-          <input type="number" id="m_newMinQty" placeholder="예: 5" />
+          <label>최소재고(${s})</label>
+          <input type="number" id="m_newMinQty" placeholder="${i?`예: 500`:`예: 5`}" />
         </div>
-        <div class="form-group">
+        ${i?``:`<div class="form-group">
           <label>구분</label>
           <select id="m_newCategory" class="meat-category" ${t?`disabled`:``}>
             <option value="meat" ${t===`meat`?`selected`:``}>원육</option>
             <option value="produce" ${t===`produce`?`selected`:``}>채소/과일</option>
           </select>
-        </div>
+        </div>`}
       </div>
       <button class="btn-primary" id="btnAddMeatType">추가</button>
     </div>
     <div class="modal-actions" style="margin-top:16px;">
       <button class="btn-secondary" onclick="closeModal()">닫기</button>
     </div>
-  `),Md();let a=window.closeModal;window.closeModal=function(){Nd(),a?.(),window.closeModal=a},document.querySelectorAll(`.m-show-in-stats`).forEach(e=>{e.addEventListener(`change`,async e=>{let t=e.target.dataset.id,n=e.target.checked;try{await O(k(I,`meatTypes`,t),{showInStats:n,updatedAt:new Date});let e=Ku.find(e=>e.id===t);e&&(e.showInStats=n)}catch(t){console.error(`[meat] showInStats 저장 실패:`,t),alert(`저장 실패: `+(t.message||t)),e.target.checked=!n}})}),document.querySelectorAll(`.m-category`).forEach(e=>{e.addEventListener(`change`,async e=>{let t=e.target.dataset.id,n=e.target.value===`produce`?`produce`:`meat`,r=Ku.find(e=>e.id===t),i=r?.category||`meat`;try{await O(k(I,`meatTypes`,t),{category:n,updatedAt:new Date}),r&&(r.category=n)}catch(t){console.error(`[meat] category save failed:`,t),alert(`저장 실패: `+(t.message||t)),e.target.value=i}})}),document.querySelectorAll(`.m-unit-weight`).forEach(e=>{e.addEventListener(`change`,async e=>{let t=e.target.dataset.id,n=Ku.find(e=>e.id===t),r=n?.defaultUnitWeightG,i=parseFloat(e.target.value);if(!isFinite(i)||i<=0){alert(`기본 단위중량은 양수(g)여야 합니다.`),e.target.value=r??``;return}try{await O(k(I,`meatTypes`,t),{defaultUnitWeightG:i,updatedAt:new Date}),n&&(n.defaultUnitWeightG=i)}catch(t){console.error(`[meat] defaultUnitWeightG 저장 실패:`,t),alert(`저장 실패: `+(t.message||t)),e.target.value=r??``}})}),document.querySelectorAll(`.m-min-qty`).forEach(e=>{e.addEventListener(`change`,async e=>{let t=e.target.dataset.id,n=Ku.find(e=>e.id===t),r=n?.minimumQtyG??0,i=parseFloat(e.target.value);if(!isFinite(i)||i<0){alert(`최소재고는 0 이상(kg)이어야 합니다.`),e.target.value=(r/1e3).toFixed(1);return}let a=Math.round(i*1e3);try{await O(k(I,`meatTypes`,t),{minimumQtyG:a,updatedAt:new Date}),n&&(n.minimumQtyG=a)}catch(t){console.error(`[meat] minimumQtyG 저장 실패:`,t),alert(`저장 실패: `+(t.message||t)),e.target.value=(r/1e3).toFixed(1)}})}),document.querySelectorAll(`.m-active-toggle`).forEach(t=>{t.addEventListener(`change`,async t=>{let n=t.target.dataset.id,r=t.target.checked,i=Ku.find(e=>e.id===n),a=i?.active!==!1;try{await O(k(I,`meatTypes`,n),{active:r,updatedAt:new Date}),i&&(i.active=r),a!==r&&await wo({action:`meat`,subAction:`activeToggle`,date:z(),staff:Rd(),message:`Meat type ${r?`active`:`inactive`} — ${i?.name||n}`,details:{meatTypeId:n,meatName:i?.name||``,active:r}}),closeModal(),jd(e)}catch(e){console.error(`[meat] active save failed:`,e),alert(`Save failed: `+(e.message||e)),t.target.checked=!r}})}),document.getElementById(`btnAddMeatType`).addEventListener(`click`,async()=>{let n=document.getElementById(`m_newMeatName`).value.trim(),r=parseFloat(document.getElementById(`m_newUnitWeight`).value)||0,a=parseFloat(document.getElementById(`m_newMinQty`).value)||0,o=t||(document.getElementById(`m_newCategory`).value===`produce`?`produce`:`meat`);if(!n){alert(`${i}명은 필수입니다.`);return}await M(A(I,`meatTypes`),{name:n,defaultUnitWeightG:r,minimumQtyG:a*1e3,category:o,sortOrder:Ku.length,active:!0,showInStats:!0,createdAt:new Date,updatedAt:new Date}),Ku=await $u(),closeModal(),jd(e)})}function Md(){if(Nd(),R!==`admin`&&R!==`office`)return;let e=document.getElementById(`meatTypesList`);e&&(Ju=W.create(e,{handle:`.drag-handle`,animation:150,ghostClass:`sortable-ghost`,chosenClass:`sortable-chosen`,onEnd:async e=>{e.oldIndex!==e.newIndex&&await Pd()}}))}function Nd(){if(Ju){try{Ju.destroy()}catch(e){console.warn(`[meat] sortable destroy skipped:`,e)}Ju=null}}async function Pd(){let e=document.getElementById(`meatTypesList`);if(!e)return;let t=Array.from(e.querySelectorAll(`tr[data-id]`)).map(e=>e.dataset.id).filter(Boolean),n=new Date,r=re(I);t.forEach((e,t)=>{r.update(k(I,`meatTypes`,e),{sortOrder:t,updatedAt:n})});try{await r.commit();let e=new Map(t.map((e,t)=>[e,t]));Ku=Ku.map(t=>e.has(t.id)?{...t,sortOrder:e.get(t.id),updatedAt:n}:t).sort((e,t)=>(e.sortOrder??0)-(t.sortOrder??0))}catch(e){console.error(`[meat] reorder save failed:`,e),alert(`순번 저장 실패: `+(e.message||e)),Ku=await $u(),closeModal(),jd()}}function Fd(){let e=[`#e8f4ea`,`#e8eef8`,`#fef0e8`,`#f0e8fe`,`#fff0e8`,`#e8f8f4`];return e[Math.floor(Math.random()*e.length)]}var Id={};async function Ld(){if(!(Object.keys(Id).length>0))for(let e of[`senior`,`lead`,`office`]){let t=await j(k(I,`staffGroups`,e));t.exists()&&(Id[e]=t.data().members||[])}}function Rd(){return R===`admin`?`대표`:R===`office`?`사무실`:R===`production`?`생산실`:`시스템`}function zd(e){let t=``;for(let n of e)(Id[n]||[]).forEach(e=>{t+=`<option value="${e.name}">${e.name}</option>`});return t}function Bd(e){let t=document.getElementById(`modalOverlay`);t&&t.remove();let n=document.createElement(`div`);n.id=`modalOverlay`,n.className=`modal-overlay`,n.innerHTML=`<div class="modal-box">${e}</div>`,document.body.appendChild(n),n.addEventListener(`click`,e=>{})}window.closeModal=function(){let e=document.getElementById(`modalOverlay`);e&&e.remove()};var Vd=[];async function Hd(){let e=document.getElementById(`mainContent`);e.innerHTML=`<div style="padding:24px;"><p>봉투 재고 로딩 중...</p></div>`,[Vd]=await Promise.all([Ud(),cf()]),Gd()}async function Ud(){return(await w(E(A(I,`bagTypes`),se(`sortOrder`)))).docs.map(e=>({id:e.id,...e.data()}))}var Wd=null;function Gd(){let e=document.getElementById(`mainContent`);e.innerHTML=`
+  `),Md();let c=window.closeModal;window.closeModal=function(){Nd(),c?.(),window.closeModal=c},document.querySelectorAll(`.m-show-in-stats`).forEach(e=>{e.addEventListener(`change`,async e=>{let t=e.target.dataset.id,n=e.target.checked;try{await O(k(I,`meatTypes`,t),{showInStats:n,updatedAt:new Date});let e=Ku.find(e=>e.id===t);e&&(e.showInStats=n)}catch(t){console.error(`[meat] showInStats 저장 실패:`,t),alert(`저장 실패: `+(t.message||t)),e.target.checked=!n}})}),document.querySelectorAll(`.m-category`).forEach(e=>{e.addEventListener(`change`,async e=>{let t=e.target.dataset.id,n=e.target.value===`produce`?`produce`:`meat`,r=Ku.find(e=>e.id===t),i=r?.category||`meat`;try{await O(k(I,`meatTypes`,t),{category:n,updatedAt:new Date}),r&&(r.category=n)}catch(t){console.error(`[meat] category save failed:`,t),alert(`저장 실패: `+(t.message||t)),e.target.value=i}})}),document.querySelectorAll(`.m-unit-weight`).forEach(e=>{e.addEventListener(`change`,async e=>{let t=e.target.dataset.id,n=Ku.find(e=>e.id===t),r=n?.defaultUnitWeightG,i=parseFloat(e.target.value);if(!isFinite(i)||i<=0){alert(`기본 단위중량은 양수(g)여야 합니다.`),e.target.value=r??``;return}try{await O(k(I,`meatTypes`,t),{defaultUnitWeightG:i,updatedAt:new Date}),n&&(n.defaultUnitWeightG=i)}catch(t){console.error(`[meat] defaultUnitWeightG 저장 실패:`,t),alert(`저장 실패: `+(t.message||t)),e.target.value=r??``}})}),document.querySelectorAll(`.m-min-qty`).forEach(e=>{e.addEventListener(`change`,async e=>{let t=e.target.dataset.id,n=Ku.find(e=>e.id===t),r=n?.minimumQtyG??0,a=parseFloat(e.target.value);if(!isFinite(a)||a<0){alert(`최소재고는 0 이상(${s})이어야 합니다.`),e.target.value=i?r:(r/1e3).toFixed(1);return}let o=Math.round(i?a:a*1e3);try{await O(k(I,`meatTypes`,t),{minimumQtyG:o,updatedAt:new Date}),n&&(n.minimumQtyG=o)}catch(t){console.error(`[meat] minimumQtyG 저장 실패:`,t),alert(`저장 실패: `+(t.message||t)),e.target.value=i?r:(r/1e3).toFixed(1)}})}),document.querySelectorAll(`.m-active-toggle`).forEach(t=>{t.addEventListener(`change`,async t=>{let n=t.target.dataset.id,r=t.target.checked,i=Ku.find(e=>e.id===n),a=i?.active!==!1;try{await O(k(I,`meatTypes`,n),{active:r,updatedAt:new Date}),i&&(i.active=r),a!==r&&await wo({action:`meat`,subAction:`activeToggle`,date:z(),staff:Rd(),message:`Meat type ${r?`active`:`inactive`} — ${i?.name||n}`,details:{meatTypeId:n,meatName:i?.name||``,active:r}}),closeModal(),jd(e)}catch(e){console.error(`[meat] active save failed:`,e),alert(`Save failed: `+(e.message||e)),t.target.checked=!r}})}),document.getElementById(`btnAddMeatType`).addEventListener(`click`,async()=>{let n=document.getElementById(`m_newMeatName`).value.trim(),r=parseFloat(document.getElementById(`m_newUnitWeight`).value)||0,o=parseFloat(document.getElementById(`m_newMinQty`).value)||0,s=i?`produce`:t||(document.getElementById(`m_newCategory`).value===`produce`?`produce`:`meat`);if(!n){alert(`${a}명은 필수입니다.`);return}await M(A(I,`meatTypes`),{name:n,defaultUnitWeightG:r,minimumQtyG:Math.round(i?o:o*1e3),category:s,sortOrder:Ku.length,active:!0,showInStats:!0,createdAt:new Date,updatedAt:new Date}),Ku=await $u(),closeModal(),jd(e)})}function Md(){if(Nd(),R!==`admin`&&R!==`office`)return;let e=document.getElementById(`meatTypesList`);e&&(Ju=W.create(e,{handle:`.drag-handle`,animation:150,ghostClass:`sortable-ghost`,chosenClass:`sortable-chosen`,onEnd:async e=>{e.oldIndex!==e.newIndex&&await Pd()}}))}function Nd(){if(Ju){try{Ju.destroy()}catch(e){console.warn(`[meat] sortable destroy skipped:`,e)}Ju=null}}async function Pd(){let e=document.getElementById(`meatTypesList`);if(!e)return;let t=Array.from(e.querySelectorAll(`tr[data-id]`)).map(e=>e.dataset.id).filter(Boolean),n=new Date,r=re(I);t.forEach((e,t)=>{r.update(k(I,`meatTypes`,e),{sortOrder:t,updatedAt:n})});try{await r.commit();let e=new Map(t.map((e,t)=>[e,t]));Ku=Ku.map(t=>e.has(t.id)?{...t,sortOrder:e.get(t.id),updatedAt:n}:t).sort((e,t)=>(e.sortOrder??0)-(t.sortOrder??0))}catch(e){console.error(`[meat] reorder save failed:`,e),alert(`순번 저장 실패: `+(e.message||e)),Ku=await $u(),closeModal(),jd()}}function Fd(){let e=[`#e8f4ea`,`#e8eef8`,`#fef0e8`,`#f0e8fe`,`#fff0e8`,`#e8f8f4`];return e[Math.floor(Math.random()*e.length)]}var Id={};async function Ld(){if(!(Object.keys(Id).length>0))for(let e of[`senior`,`lead`,`office`]){let t=await j(k(I,`staffGroups`,e));t.exists()&&(Id[e]=t.data().members||[])}}function Rd(){return R===`admin`?`대표`:R===`office`?`사무실`:R===`production`?`생산실`:`시스템`}function zd(e){let t=``;for(let n of e)(Id[n]||[]).forEach(e=>{t+=`<option value="${e.name}">${e.name}</option>`});return t}function Bd(e){let t=document.getElementById(`modalOverlay`);t&&t.remove();let n=document.createElement(`div`);n.id=`modalOverlay`,n.className=`modal-overlay`,n.innerHTML=`<div class="modal-box">${e}</div>`,document.body.appendChild(n),n.addEventListener(`click`,e=>{})}window.closeModal=function(){let e=document.getElementById(`modalOverlay`);e&&e.remove()};var Vd=[];async function Hd(){let e=document.getElementById(`mainContent`);e.innerHTML=`<div style="padding:24px;"><p>봉투 재고 로딩 중...</p></div>`,[Vd]=await Promise.all([Ud(),cf()]),Gd()}async function Ud(){return(await w(E(A(I,`bagTypes`),se(`sortOrder`)))).docs.map(e=>({id:e.id,...e.data()}))}var Wd=null;function Gd(){let e=document.getElementById(`mainContent`);e.innerHTML=`
     <div class="recipe-wrap">
       <!-- 왼쪽: 봉투 목록 -->
       <div class="recipe-list-panel">
