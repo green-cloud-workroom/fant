@@ -1056,14 +1056,12 @@ import{t as e}from"./rolldown-runtime-lhHHWwHU.js";import{A as t,B as n,C as r,D
                 <td>
                   <input type="number" class="m-unit-weight" data-id="${e.id}"
                          value="${e.defaultUnitWeightG}" min="1" step="any"
-                         style="width:80px;padding:4px;text-align:right;" />
-                  <span style="margin-left:4px;color:#666;font-size:12px;">g</span>
+                         style="width:70px;padding:3px 4px;text-align:right;" />
                 </td>
                 <td>
                   <input type="number" class="m-min-qty" data-id="${e.id}"
                          value="${n}" min="0" step="any"
-                         style="width:80px;padding:4px;text-align:right;" />
-                  <span style="margin-left:4px;color:#666;font-size:12px;">${c}</span>
+                         style="width:70px;padding:3px 4px;text-align:right;" />
                 </td>
                 <td>
                   <label class="toggle-switch" title="${t?`활성`:`비활성`}">
