@@ -1265,14 +1265,12 @@ function showMeatTypesModal(options = {}) {
                 <td>
                   <input type="number" class="m-unit-weight" data-id="${m.id}"
                          value="${m.defaultUnitWeightG}" min="1" step="any"
-                         style="width:80px;padding:4px;text-align:right;" />
-                  <span style="margin-left:4px;color:#666;font-size:12px;">g</span>
+                         style="width:70px;padding:3px 4px;text-align:right;" />
                 </td>
                 <td>
                   <input type="number" class="m-min-qty" data-id="${m.id}"
                          value="${minQtyValue}" min="0" step="any"
-                         style="width:80px;padding:4px;text-align:right;" />
-                  <span style="margin-left:4px;color:#666;font-size:12px;">${minQtyUnit}</span>
+                         style="width:70px;padding:3px 4px;text-align:right;" />
                 </td>
                 <td>
                   <label class="toggle-switch" title="${active ? '\uD65C\uC131' : '\uBE44\uD65C\uC131'}">
