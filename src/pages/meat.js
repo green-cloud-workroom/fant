@@ -15,6 +15,7 @@ let meatTypesSortable = null;
 let stockSummarySortable = null;
 
 const STOCK_SUMMARY_ORDER_KEY = 'meatStockSummaryOrder';
+const STOCK_SUMMARY_ROW_BREAKS_KEY = 'meatStockSummaryRowBreaks';
 
 export async function renderMeat() {
   const content = document.getElementById('mainContent');
@@ -138,12 +139,22 @@ function getStockSummaryOrder() {
   }
 }
 
+function getStockSummaryRowBreaks() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STOCK_SUMMARY_ROW_BREAKS_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
 function renderStockSummary(stocks) {
   const byType = buildTotalByType(stocks);
   if (byType.size === 0) return '';
 
   const savedOrder = getStockSummaryOrder();
   const orderIndex = new Map(savedOrder.map((id, idx) => [id, idx]));
+  const rowBreakSet = new Set(getStockSummaryRowBreaks());
   const cells = [...byType.values()]
     .sort((a, b) => {
       const aRank = orderIndex.has(a.meatTypeId) ? orderIndex.get(a.meatTypeId) : Number.MAX_SAFE_INTEGER;
@@ -153,9 +164,14 @@ function renderStockSummary(stocks) {
     })
     .map(g => {
       const color = getStockColor(g.totalG, g.meatTypeId);
+      const hasRowBreak = rowBreakSet.has(g.meatTypeId);
+      const rowBreakStyle = hasRowBreak
+        ? 'grid-column:1;border-left:4px solid #4a7c59;padding-left:4px;'
+        : '';
+      const marker = hasRowBreak ? '<span class="stock-summary-row-break-marker" style="color:#4a7c59;font-weight:700;font-size:10px;margin-right:3px;">↵</span>' : '';
       return `
-        <div class="stock-summary-cell" data-meat-type-id="${g.meatTypeId || ''}" style="display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0;border:1px solid #e8e8e8;border-radius:5px;padding:4px 6px;background:#fff;cursor:grab;">
-          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#444;font-size:12px;">${g.name}</span>
+        <div class="stock-summary-cell" data-meat-type-id="${g.meatTypeId || ''}" data-row-break="${hasRowBreak ? 'true' : 'false'}" title="더블클릭: 새 행 시작 토글" style="display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0;border:1px solid #e8e8e8;border-radius:5px;padding:4px 6px;background:#fff;cursor:grab;${rowBreakStyle}">
+          <span style="display:flex;align-items:center;min-width:0;overflow:hidden;white-space:nowrap;color:#444;font-size:12px;">${marker}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">${g.name}</span></span>
           <b style="color:${color};font-variant-numeric:tabular-nums;font-size:12px;white-space:nowrap;">${(g.totalG / 1000).toFixed(2)}kg</b>
         </div>
       `;
@@ -185,6 +201,35 @@ function saveStockSummaryOrderFromGrid(gridEl) {
   }
 }
 
+function saveStockSummaryRowBreaksFromGrid(gridEl) {
+  const rowBreakIds = Array.from(gridEl.querySelectorAll('.stock-summary-cell[data-row-break="true"]'))
+    .map(cell => cell.dataset.meatTypeId)
+    .filter(Boolean);
+  try {
+    localStorage.setItem(STOCK_SUMMARY_ROW_BREAKS_KEY, JSON.stringify(rowBreakIds));
+  } catch (err) {
+    console.warn('[meat] stock summary row breaks save skipped:', err);
+  }
+}
+
+function toggleStockSummaryRowBreak(cellEl, gridEl) {
+  const enabled = cellEl.dataset.rowBreak !== 'true';
+  cellEl.dataset.rowBreak = enabled ? 'true' : 'false';
+  cellEl.style.gridColumn = enabled ? '1' : '';
+  cellEl.style.borderLeft = enabled ? '4px solid #4a7c59' : '';
+  cellEl.style.paddingLeft = enabled ? '4px' : '';
+  const nameWrap = cellEl.querySelector('span');
+  if (nameWrap) {
+    const existingMarker = nameWrap.querySelector('.stock-summary-row-break-marker');
+    if (enabled && !existingMarker) {
+      nameWrap.insertAdjacentHTML('afterbegin', '<span class="stock-summary-row-break-marker" style="color:#4a7c59;font-weight:700;font-size:10px;margin-right:3px;">↵</span>');
+    } else if (!enabled && existingMarker) {
+      existingMarker.remove();
+    }
+  }
+  saveStockSummaryRowBreaksFromGrid(gridEl);
+}
+
 function initStockSummarySortable() {
   if (stockSummarySortable) {
     try {
@@ -204,6 +249,10 @@ function initStockSummarySortable() {
     ghostClass: 'sortable-ghost',
     chosenClass: 'sortable-chosen',
     onEnd: () => saveStockSummaryOrderFromGrid(gridEl),
+  });
+
+  gridEl.querySelectorAll('.stock-summary-cell').forEach(cell => {
+    cell.addEventListener('dblclick', () => toggleStockSummaryRowBreak(cell, gridEl));
   });
 }
 
