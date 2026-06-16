@@ -1223,11 +1223,10 @@ function showAdjustModal(id, name, remaining) {
 // 원육 종류 관리 모달
 function showMeatTypesModal(options = {}) {
   const { categoryFilter = null } = options;
-  const canReorderMeatTypes = !categoryFilter && (currentUserRole === 'admin' || currentUserRole === 'office');
-  const filteredMeatTypes = categoryFilter
-    ? meatTypes.filter(m => getMeatTypeCategory(m.id) === categoryFilter)
-    : meatTypes;
-  const isProduceModal = categoryFilter === 'produce';
+  const effectiveCategoryFilter = categoryFilter || 'meat';
+  const canReorderMeatTypes = effectiveCategoryFilter === 'meat' && (currentUserRole === 'admin' || currentUserRole === 'office');
+  const filteredMeatTypes = meatTypes.filter(m => getMeatTypeCategory(m.id) === effectiveCategoryFilter);
+  const isProduceModal = effectiveCategoryFilter === 'produce';
   const itemLabel = isProduceModal ? '채소/과일' : '원육';
   const modalTitle = isProduceModal ? '채소/과일 종류 관리' : '원육 종류 관리';
   const minQtyUnit = isProduceModal ? 'g' : 'kg';
@@ -1241,14 +1240,11 @@ function showMeatTypesModal(options = {}) {
             <th>${itemLabel}명</th>
             <th>기본 단위중량(g)</th>
             <th>최소재고(${minQtyUnit})</th>
-            ${isProduceModal ? '' : '<th>구분</th>'}
-            ${isProduceModal ? '' : '<th>통계 표시</th>'}
             <th>\uD65C\uC131</th>
           </tr>
         </thead>
         <tbody id="meatTypesList">
           ${filteredMeatTypes.map(m => {
-            const showInStats = m.showInStats !== false;
             const active = m.active !== false;
             const minQtyValue = isProduceModal ? (m.minimumQtyG || 0) : ((m.minimumQtyG || 0) / 1000).toFixed(1);
             return `
@@ -1272,18 +1268,6 @@ function showMeatTypesModal(options = {}) {
                          style="width:80px;padding:4px;text-align:right;" />
                   <span style="margin-left:4px;color:#666;font-size:12px;">${minQtyUnit}</span>
                 </td>
-                ${isProduceModal ? '' : `<td>
-                  <select class="m-category meat-category" data-id="${m.id}" style="padding:4px;font-size:12px;" ${categoryFilter ? 'disabled' : ''}>
-                    <option value="meat" ${(m.category || 'meat') === 'meat' ? 'selected' : ''}>원육</option>
-                    <option value="produce" ${m.category === 'produce' ? 'selected' : ''}>채소/과일</option>
-                  </select>
-                </td>`}
-                ${isProduceModal ? '' : `<td>
-                  <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;">
-                    <input type="checkbox" class="m-show-in-stats" data-id="${m.id}" ${showInStats ? 'checked' : ''}>
-                    <span>통계에 표시</span>
-                  </label>
-                </td>`}
                 <td>
                   <label class="toggle-switch" title="${active ? '\uD65C\uC131' : '\uBE44\uD65C\uC131'}">
                     <input type="checkbox" class="m-active-toggle" data-id="${m.id}" ${active ? 'checked' : ''}>
@@ -1311,13 +1295,6 @@ function showMeatTypesModal(options = {}) {
           <label>최소재고(${minQtyUnit})</label>
           <input type="number" id="m_newMinQty" placeholder="${isProduceModal ? '예: 500' : '예: 5'}" />
         </div>
-        ${isProduceModal ? '' : `<div class="form-group">
-          <label>구분</label>
-          <select id="m_newCategory" class="meat-category" ${categoryFilter ? 'disabled' : ''}>
-            <option value="meat" ${categoryFilter === 'meat' ? 'selected' : ''}>원육</option>
-            <option value="produce" ${categoryFilter === 'produce' ? 'selected' : ''}>채소/과일</option>
-          </select>
-        </div>`}
       </div>
       <button class="btn-primary" id="btnAddMeatType">추가</button>
     </div>
@@ -1333,45 +1310,6 @@ function showMeatTypesModal(options = {}) {
     baseCloseModal?.();
     window.closeModal = baseCloseModal;
   };
-
-  document.querySelectorAll('.m-show-in-stats').forEach(cb => {
-    cb.addEventListener('change', async (e) => {
-      const id = e.target.dataset.id;
-      const showInStats = e.target.checked;
-      try {
-        await updateDoc(doc(db, 'meatTypes', id), {
-          showInStats,
-          updatedAt: new Date(),
-        });
-        const target = meatTypes.find(m => m.id === id);
-        if (target) target.showInStats = showInStats;
-      } catch (err) {
-        console.error('[meat] showInStats 저장 실패:', err);
-        alert('저장 실패: ' + (err.message || err));
-        e.target.checked = !showInStats;
-      }
-    });
-  });
-
-  document.querySelectorAll('.m-category').forEach(select => {
-    select.addEventListener('change', async (e) => {
-      const id = e.target.dataset.id;
-      const category = e.target.value === 'produce' ? 'produce' : 'meat';
-      const target = meatTypes.find(m => m.id === id);
-      const previous = target?.category || 'meat';
-      try {
-        await updateDoc(doc(db, 'meatTypes', id), {
-          category,
-          updatedAt: new Date(),
-        });
-        if (target) target.category = category;
-      } catch (err) {
-        console.error('[meat] category save failed:', err);
-        alert('저장 실패: ' + (err.message || err));
-        e.target.value = previous;
-      }
-    });
-  });
 
   document.querySelectorAll('.m-unit-weight').forEach(input => {
     input.addEventListener('change', async (e) => {
@@ -1464,7 +1402,7 @@ function showMeatTypesModal(options = {}) {
     const name = document.getElementById('m_newMeatName').value.trim();
     const unitWeight = parseFloat(document.getElementById('m_newUnitWeight').value) || 0;
     const minQty = parseFloat(document.getElementById('m_newMinQty').value) || 0;
-    const category = isProduceModal ? 'produce' : (categoryFilter || (document.getElementById('m_newCategory').value === 'produce' ? 'produce' : 'meat'));
+    const category = effectiveCategoryFilter;
 
     if (!name) { alert(`${itemLabel}명은 필수입니다.`); return; }
 
