@@ -168,11 +168,12 @@ function renderStockSummary(stocks) {
       const rowBreakStyle = hasRowBreak
         ? 'grid-column:1;border-left:4px solid #4a7c59;padding-left:4px;'
         : '';
-      const marker = hasRowBreak ? '<span class="stock-summary-row-break-marker" style="color:#4a7c59;font-weight:700;font-size:10px;margin-right:3px;">↵</span>' : '';
       return `
-        <div class="stock-summary-cell" data-meat-type-id="${g.meatTypeId || ''}" data-row-break="${hasRowBreak ? 'true' : 'false'}" title="더블클릭: 새 행 시작 토글" style="display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0;border:1px solid #e8e8e8;border-radius:5px;padding:4px 6px;background:#fff;cursor:grab;${rowBreakStyle}">
-          <span style="display:flex;align-items:center;min-width:0;overflow:hidden;white-space:nowrap;color:#444;font-size:12px;">${marker}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">${g.name}</span></span>
+        <div class="stock-summary-cell" data-meat-type-id="${g.meatTypeId || ''}" data-row-break="${hasRowBreak ? 'true' : 'false'}" style="display:flex;align-items:center;gap:4px;min-width:0;border:1px solid #e8e8e8;border-radius:5px;padding:3px 5px;background:#fff;${rowBreakStyle}">
+          <span class="stock-summary-drag-handle" style="cursor:grab;color:#bbb;font-size:11px;flex-shrink:0;">⠿</span>
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#444;font-size:12px;flex:1;">${g.name}</span>
           <b style="color:${color};font-variant-numeric:tabular-nums;font-size:12px;white-space:nowrap;">${(g.totalG / 1000).toFixed(2)}kg</b>
+          <button class="stock-summary-rowbreak-btn" data-meat-type-id="${g.meatTypeId || ''}" title="줄 바꿈 토글" style="border:none;background:none;cursor:pointer;font-size:11px;padding:0 2px;color:${hasRowBreak ? '#4a7c59' : '#ccc'};flex-shrink:0;">↵</button>
         </div>
       `;
     })
@@ -245,14 +246,19 @@ function initStockSummarySortable() {
 
   stockSummarySortable = Sortable.create(gridEl, {
     animation: 150,
+    handle: '.stock-summary-drag-handle',
     draggable: '.stock-summary-cell',
     ghostClass: 'sortable-ghost',
     chosenClass: 'sortable-chosen',
     onEnd: () => saveStockSummaryOrderFromGrid(gridEl),
   });
 
-  gridEl.querySelectorAll('.stock-summary-cell').forEach(cell => {
-    cell.addEventListener('dblclick', () => toggleStockSummaryRowBreak(cell, gridEl));
+  gridEl.querySelectorAll('.stock-summary-rowbreak-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cell = btn.closest('.stock-summary-cell');
+      toggleStockSummaryRowBreak(cell, gridEl);
+      btn.style.color = cell.dataset.rowBreak === 'true' ? '#4a7c59' : '#ccc';
+    });
   });
 }
 
