@@ -291,6 +291,7 @@ function renderFrozenTab(stocks, logs) {
 // 채소/과일 탭
 function renderProduceTab(stocks, logs) {
   const tabContent = document.getElementById('tabContent');
+  const canManageMeatTypes = currentUserRole === 'admin' || currentUserRole === 'office';
   const produceStocks = stocks.filter(isProduceCategoryStock);
   const produceLogs = logs.filter(isProduceCategoryLog);
   const produceTotals = buildTotalByType(produceStocks);
@@ -298,6 +299,7 @@ function renderProduceTab(stocks, logs) {
   tabContent.innerHTML = `
     <div style="display:flex;gap:8px;margin-bottom:16px;">
       <button class="btn-primary" id="btnAddProduce">+ 채소/과일 입고 등록</button>
+      ${canManageMeatTypes ? '<button class="btn-secondary" id="btnProduceTypes">채소/과일 종류 관리</button>' : ''}
     </div>
 
     <div class="form-section">
@@ -379,6 +381,13 @@ function renderProduceTab(stocks, logs) {
       title: '채소/과일 입고 등록',
       returnTab: 'produce',
     });
+  });
+  document.getElementById('btnProduceTypes')?.addEventListener('click', () => {
+    if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+      alert('채소/과일 종류 관리는 대표/사무실 계정만 가능합니다.');
+      return;
+    }
+    showMeatTypesModal({ categoryFilter: 'produce' });
   });
   document.querySelectorAll('.btn-adjust').forEach(btn => {
     btn.addEventListener('click', () => showAdjustModal(btn.dataset.id, btn.dataset.name, parseFloat(btn.dataset.remaining)));
@@ -1099,16 +1108,22 @@ function showAdjustModal(id, name, remaining) {
 }
 
 // 원육 종류 관리 모달
-function showMeatTypesModal() {
-  const canReorderMeatTypes = currentUserRole === 'admin' || currentUserRole === 'office';
+function showMeatTypesModal(options = {}) {
+  const { categoryFilter = null } = options;
+  const canReorderMeatTypes = !categoryFilter && (currentUserRole === 'admin' || currentUserRole === 'office');
+  const filteredMeatTypes = categoryFilter
+    ? meatTypes.filter(m => getMeatTypeCategory(m.id) === categoryFilter)
+    : meatTypes;
+  const itemLabel = categoryFilter === 'produce' ? '채소/과일' : '원육';
+  const modalTitle = categoryFilter === 'produce' ? '채소/과일 종류 관리' : '원육 종류 관리';
   showModal(`
-    <h3 class="modal-title">원육 종류 관리</h3>
+    <h3 class="modal-title">${modalTitle}</h3>
     <div class="table-wrap" style="margin-bottom:16px;">
       <table class="data-table">
         <thead>
           <tr>
             <th class="master-table-drag-col"></th>
-            <th>원육명</th>
+            <th>${itemLabel}명</th>
             <th>기본 단위중량(g)</th>
             <th>최소재고(kg)</th>
             <th>구분</th>
@@ -1117,7 +1132,7 @@ function showMeatTypesModal() {
           </tr>
         </thead>
         <tbody id="meatTypesList">
-          ${meatTypes.map(m => {
+          ${filteredMeatTypes.map(m => {
             const showInStats = m.showInStats !== false;
             const active = m.active !== false;
             return `
@@ -1142,7 +1157,7 @@ function showMeatTypesModal() {
                   <span style="margin-left:4px;color:#666;font-size:12px;">kg</span>
                 </td>
                 <td>
-                  <select class="m-category meat-category" data-id="${m.id}" style="padding:4px;font-size:12px;">
+                  <select class="m-category meat-category" data-id="${m.id}" style="padding:4px;font-size:12px;" ${categoryFilter ? 'disabled' : ''}>
                     <option value="meat" ${(m.category || 'meat') === 'meat' ? 'selected' : ''}>원육</option>
                     <option value="produce" ${m.category === 'produce' ? 'selected' : ''}>채소/과일</option>
                   </select>
@@ -1166,10 +1181,10 @@ function showMeatTypesModal() {
       </table>
     </div>
     <div style="background:#f9f9f9;border-radius:6px;padding:14px;border:1px solid #eee;">
-      <p style="font-size:12px;font-weight:600;margin-bottom:10px;">새 원육 종류 추가</p>
+      <p style="font-size:12px;font-weight:600;margin-bottom:10px;">새 ${itemLabel} 종류 추가</p>
       <div class="form-row">
         <div class="form-group">
-          <label>원육명 *</label>
+          <label>${itemLabel}명 *</label>
           <input type="text" id="m_newMeatName" placeholder="예: 닭가슴살" />
         </div>
         <div class="form-group">
@@ -1182,9 +1197,9 @@ function showMeatTypesModal() {
         </div>
         <div class="form-group">
           <label>구분</label>
-          <select id="m_newCategory" class="meat-category">
-            <option value="meat">원육</option>
-            <option value="produce">채소/과일</option>
+          <select id="m_newCategory" class="meat-category" ${categoryFilter ? 'disabled' : ''}>
+            <option value="meat" ${categoryFilter === 'meat' ? 'selected' : ''}>원육</option>
+            <option value="produce" ${categoryFilter === 'produce' ? 'selected' : ''}>채소/과일</option>
           </select>
         </div>
       </div>
@@ -1320,7 +1335,7 @@ function showMeatTypesModal() {
           });
         }
         closeModal();
-        showMeatTypesModal();
+        showMeatTypesModal(options);
       } catch (err) {
         console.error('[meat] active save failed:', err);
         alert('Save failed: ' + (err.message || err));
@@ -1333,9 +1348,9 @@ function showMeatTypesModal() {
     const name = document.getElementById('m_newMeatName').value.trim();
     const unitWeight = parseFloat(document.getElementById('m_newUnitWeight').value) || 0;
     const minQty = parseFloat(document.getElementById('m_newMinQty').value) || 0;
-    const category = document.getElementById('m_newCategory').value === 'produce' ? 'produce' : 'meat';
+    const category = categoryFilter || (document.getElementById('m_newCategory').value === 'produce' ? 'produce' : 'meat');
 
-    if (!name) { alert('원육명은 필수입니다.'); return; }
+    if (!name) { alert(`${itemLabel}명은 필수입니다.`); return; }
 
     await addDoc(collection(db, 'meatTypes'), {
       name,
@@ -1351,7 +1366,7 @@ function showMeatTypesModal() {
 
     meatTypes = await loadMeatTypes();
     closeModal();
-    showMeatTypesModal();
+    showMeatTypesModal(options);
   });
 }
 
