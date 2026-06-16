@@ -12,6 +12,9 @@ import Sortable from 'sortablejs';
 let meatTypes = [];
 let currentTab = 'frozen';
 let meatTypesSortable = null;
+let stockSummarySortable = null;
+
+const STOCK_SUMMARY_ORDER_KEY = 'meatStockSummaryOrder';
 
 export async function renderMeat() {
   const content = document.getElementById('mainContent');
@@ -126,31 +129,82 @@ function buildTotalByType(stocks) {
   return map;
 }
 
+function getStockSummaryOrder() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STOCK_SUMMARY_ORDER_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
 function renderStockSummary(stocks) {
   const byType = buildTotalByType(stocks);
   if (byType.size === 0) return '';
 
+  const savedOrder = getStockSummaryOrder();
+  const orderIndex = new Map(savedOrder.map((id, idx) => [id, idx]));
   const cells = [...byType.values()]
-    .sort((a, b) => b.totalG - a.totalG)
+    .sort((a, b) => {
+      const aRank = orderIndex.has(a.meatTypeId) ? orderIndex.get(a.meatTypeId) : Number.MAX_SAFE_INTEGER;
+      const bRank = orderIndex.has(b.meatTypeId) ? orderIndex.get(b.meatTypeId) : Number.MAX_SAFE_INTEGER;
+      if (aRank !== bRank) return aRank - bRank;
+      return b.totalG - a.totalG;
+    })
     .map(g => {
       const color = getStockColor(g.totalG, g.meatTypeId);
       return `
-        <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;border:1px solid #e8e8e8;border-radius:6px;padding:6px 8px;background:#fff;">
-          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#444;">${g.name}</span>
-          <b style="color:${color};font-variant-numeric:tabular-nums;">${(g.totalG / 1000).toFixed(2)}kg</b>
+        <div class="stock-summary-cell" data-meat-type-id="${g.meatTypeId || ''}" style="display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0;border:1px solid #e8e8e8;border-radius:5px;padding:4px 6px;background:#fff;cursor:grab;">
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#444;font-size:12px;">${g.name}</span>
+          <b style="color:${color};font-variant-numeric:tabular-nums;font-size:12px;white-space:nowrap;">${(g.totalG / 1000).toFixed(2)}kg</b>
         </div>
       `;
     })
     .join('');
 
   return `
-    <div style="background:#f8f9fa;border:1px solid #e8e8e8;border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:13px;">
-      <div style="color:#666;font-weight:600;margin-bottom:8px;">원료별 합계</div>
-      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;">
+    <div style="background:#f8f9fa;border:1px solid #e8e8e8;border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:13px;">
+      <div style="color:#666;font-weight:600;margin-bottom:6px;">원료별 합계</div>
+      <div class="stock-summary-grid" style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px;">
         ${cells}
       </div>
     </div>
   `;
+}
+
+function saveStockSummaryOrderFromGrid(gridEl) {
+  const visibleIds = Array.from(gridEl.querySelectorAll('.stock-summary-cell'))
+    .map(cell => cell.dataset.meatTypeId)
+    .filter(Boolean);
+  const visibleSet = new Set(visibleIds);
+  const preservedIds = getStockSummaryOrder().filter(id => !visibleSet.has(id));
+  try {
+    localStorage.setItem(STOCK_SUMMARY_ORDER_KEY, JSON.stringify([...visibleIds, ...preservedIds]));
+  } catch (err) {
+    console.warn('[meat] stock summary order save skipped:', err);
+  }
+}
+
+function initStockSummarySortable() {
+  if (stockSummarySortable) {
+    try {
+      stockSummarySortable.destroy();
+    } catch (err) {
+      console.warn('[meat] stock summary sortable destroy skipped:', err);
+    }
+    stockSummarySortable = null;
+  }
+
+  const gridEl = document.querySelector('.stock-summary-grid');
+  if (!gridEl) return;
+
+  stockSummarySortable = Sortable.create(gridEl, {
+    animation: 150,
+    draggable: '.stock-summary-cell',
+    ghostClass: 'sortable-ghost',
+    chosenClass: 'sortable-chosen',
+    onEnd: () => saveStockSummaryOrderFromGrid(gridEl),
+  });
 }
 
 function renderMeatLayout() {
@@ -201,6 +255,8 @@ async function renderTab(tab) {
   } else {
     renderRepackedTab(stocks, logs);
   }
+
+  initStockSummarySortable();
 }
 
 // 냉동창고 탭
