@@ -1227,8 +1227,10 @@ function showMeatTypesModal(options = {}) {
   const filteredMeatTypes = categoryFilter
     ? meatTypes.filter(m => getMeatTypeCategory(m.id) === categoryFilter)
     : meatTypes;
-  const itemLabel = categoryFilter === 'produce' ? '채소/과일' : '원육';
-  const modalTitle = categoryFilter === 'produce' ? '채소/과일 종류 관리' : '원육 종류 관리';
+  const isProduceModal = categoryFilter === 'produce';
+  const itemLabel = isProduceModal ? '채소/과일' : '원육';
+  const modalTitle = isProduceModal ? '채소/과일 종류 관리' : '원육 종류 관리';
+  const minQtyUnit = isProduceModal ? 'g' : 'kg';
   showModal(`
     <h3 class="modal-title">${modalTitle}</h3>
     <div class="table-wrap" style="margin-bottom:16px;">
@@ -1238,9 +1240,9 @@ function showMeatTypesModal(options = {}) {
             <th class="master-table-drag-col"></th>
             <th>${itemLabel}명</th>
             <th>기본 단위중량(g)</th>
-            <th>최소재고(kg)</th>
-            <th>구분</th>
-            <th>통계 표시</th>
+            <th>최소재고(${minQtyUnit})</th>
+            ${isProduceModal ? '' : '<th>구분</th>'}
+            ${isProduceModal ? '' : '<th>통계 표시</th>'}
             <th>\uD65C\uC131</th>
           </tr>
         </thead>
@@ -1248,6 +1250,7 @@ function showMeatTypesModal(options = {}) {
           ${filteredMeatTypes.map(m => {
             const showInStats = m.showInStats !== false;
             const active = m.active !== false;
+            const minQtyValue = isProduceModal ? (m.minimumQtyG || 0) : ((m.minimumQtyG || 0) / 1000).toFixed(1);
             return `
               <tr class="${active ? '' : 'inactive-master'}" data-id="${m.id}">
                 <td class="master-table-drag-cell">
@@ -1265,22 +1268,22 @@ function showMeatTypesModal(options = {}) {
                 </td>
                 <td>
                   <input type="number" class="m-min-qty" data-id="${m.id}"
-                         value="${((m.minimumQtyG || 0) / 1000).toFixed(1)}" min="0" step="any"
+                         value="${minQtyValue}" min="0" step="any"
                          style="width:80px;padding:4px;text-align:right;" />
-                  <span style="margin-left:4px;color:#666;font-size:12px;">kg</span>
+                  <span style="margin-left:4px;color:#666;font-size:12px;">${minQtyUnit}</span>
                 </td>
-                <td>
+                ${isProduceModal ? '' : `<td>
                   <select class="m-category meat-category" data-id="${m.id}" style="padding:4px;font-size:12px;" ${categoryFilter ? 'disabled' : ''}>
                     <option value="meat" ${(m.category || 'meat') === 'meat' ? 'selected' : ''}>원육</option>
                     <option value="produce" ${m.category === 'produce' ? 'selected' : ''}>채소/과일</option>
                   </select>
-                </td>
-                <td>
+                </td>`}
+                ${isProduceModal ? '' : `<td>
                   <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;">
                     <input type="checkbox" class="m-show-in-stats" data-id="${m.id}" ${showInStats ? 'checked' : ''}>
                     <span>통계에 표시</span>
                   </label>
-                </td>
+                </td>`}
                 <td>
                   <label class="toggle-switch" title="${active ? '\uD65C\uC131' : '\uBE44\uD65C\uC131'}">
                     <input type="checkbox" class="m-active-toggle" data-id="${m.id}" ${active ? 'checked' : ''}>
@@ -1305,16 +1308,16 @@ function showMeatTypesModal(options = {}) {
           <input type="number" id="m_newUnitWeight" placeholder="예: 500" />
         </div>
         <div class="form-group">
-          <label>최소재고(kg)</label>
-          <input type="number" id="m_newMinQty" placeholder="예: 5" />
+          <label>최소재고(${minQtyUnit})</label>
+          <input type="number" id="m_newMinQty" placeholder="${isProduceModal ? '예: 500' : '예: 5'}" />
         </div>
-        <div class="form-group">
+        ${isProduceModal ? '' : `<div class="form-group">
           <label>구분</label>
           <select id="m_newCategory" class="meat-category" ${categoryFilter ? 'disabled' : ''}>
             <option value="meat" ${categoryFilter === 'meat' ? 'selected' : ''}>원육</option>
             <option value="produce" ${categoryFilter === 'produce' ? 'selected' : ''}>채소/과일</option>
           </select>
-        </div>
+        </div>`}
       </div>
       <button class="btn-primary" id="btnAddMeatType">추가</button>
     </div>
@@ -1400,13 +1403,13 @@ function showMeatTypesModal(options = {}) {
       const id = e.target.dataset.id;
       const target = meatTypes.find(m => m.id === id);
       const prevG = target?.minimumQtyG ?? 0;
-      const kg = parseFloat(e.target.value);
-      if (!isFinite(kg) || kg < 0) {
-        alert('최소재고는 0 이상(kg)이어야 합니다.');
-        e.target.value = (prevG / 1000).toFixed(1);
+      const value = parseFloat(e.target.value);
+      if (!isFinite(value) || value < 0) {
+        alert(`최소재고는 0 이상(${minQtyUnit})이어야 합니다.`);
+        e.target.value = isProduceModal ? prevG : (prevG / 1000).toFixed(1);
         return;
       }
-      const grams = Math.round(kg * 1000);
+      const grams = isProduceModal ? Math.round(value) : Math.round(value * 1000);
       try {
         await updateDoc(doc(db, 'meatTypes', id), {
           minimumQtyG: grams,
@@ -1416,7 +1419,7 @@ function showMeatTypesModal(options = {}) {
       } catch (err) {
         console.error('[meat] minimumQtyG 저장 실패:', err);
         alert('저장 실패: ' + (err.message || err));
-        e.target.value = (prevG / 1000).toFixed(1);
+        e.target.value = isProduceModal ? prevG : (prevG / 1000).toFixed(1);
       }
     });
   });
@@ -1461,14 +1464,14 @@ function showMeatTypesModal(options = {}) {
     const name = document.getElementById('m_newMeatName').value.trim();
     const unitWeight = parseFloat(document.getElementById('m_newUnitWeight').value) || 0;
     const minQty = parseFloat(document.getElementById('m_newMinQty').value) || 0;
-    const category = categoryFilter || (document.getElementById('m_newCategory').value === 'produce' ? 'produce' : 'meat');
+    const category = isProduceModal ? 'produce' : (categoryFilter || (document.getElementById('m_newCategory').value === 'produce' ? 'produce' : 'meat'));
 
     if (!name) { alert(`${itemLabel}명은 필수입니다.`); return; }
 
     await addDoc(collection(db, 'meatTypes'), {
       name,
       defaultUnitWeightG: unitWeight,
-      minimumQtyG: minQty * 1000,
+      minimumQtyG: isProduceModal ? Math.round(minQty) : Math.round(minQty * 1000),
       category,
       sortOrder: meatTypes.length,
       active: true,
