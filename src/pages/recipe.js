@@ -711,7 +711,6 @@ function showRecipeDetail(recipe) {
                 <th>기준 중량</th>
                 <th>생산단위</th>
                 <th>단위명</th>
-                <th>자동차감</th>
                 <th>재고연동</th>
                 <th>원육 종류</th>
                 <th></th>
@@ -932,7 +931,7 @@ function getIngredientWeightDisplay(ing) {
 
 function renderIngredientRow(ing, idx) {
   // 기본값: 신규 행은 재고연동 ON, 기존 행은 저장된 값 유지
-  const isLinked = ing.linkedToInventory === undefined ? true : ing.linkedToInventory;
+  const isLinked = ing.linkedToInventory === true || ing.autoDeductInventory === true || (ing.linkedToInventory === undefined && ing.autoDeductInventory === undefined);
   const weightDisplayUnit = ing.weightDisplayUnit === 'kg' ? 'kg' : 'g';
   const displayWeight = getIngredientWeightDisplay(ing);
   const meatOptions = meatTypes
@@ -956,9 +955,6 @@ function renderIngredientRow(ing, idx) {
         <input type="radio" name="productionUnit" class="ing-unit-radio" value="${idx}" ${ing.isProductionUnit ? 'checked' : ''} />
       </td>
       <td><input type="text" class="ing-unit-name cell-input" value="${ing.unitName || ''}" placeholder="예: 마리" /></td>
-      <td style="text-align:center">
-        <input type="checkbox" class="ing-auto-deduct" ${ing.autoDeductInventory !== false ? 'checked' : ''} />
-      </td>
       <td style="text-align:center">
         <input type="checkbox" class="ing-linked" ${isLinked ? 'checked' : ''} />
       </td>
@@ -1086,7 +1082,7 @@ function getIngredients() {
       weightDisplayUnit,
       isProductionUnit: row.querySelector('.ing-unit-radio').checked,
       unitName: row.querySelector('.ing-unit-name').value.trim(),
-      autoDeductInventory: row.querySelector('.ing-auto-deduct').checked,
+      autoDeductInventory: linked,
       linkedToInventory: linked,
       meatTypeId,
       sortOrder: idx,
