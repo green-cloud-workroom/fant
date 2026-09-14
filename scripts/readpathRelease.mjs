@@ -5,7 +5,7 @@ import { resolve, relative } from 'node:path';
 export const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 export const source = () => execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
 export function requireClean() {
-  const paths=execFileSync('git',['status','--porcelain','--untracked-files=all'],{encoding:'utf8'}).split(/\r?\n/).filter(Boolean);
+  const paths=execFileSync('git',['status','--porcelain','-z','--untracked-files=all'],{encoding:'utf8'}).split('\0').filter(Boolean);
   if(paths.some(line=>!line.slice(3).startsWith('output/')))throw Error('Commit source changes before preparing or deploying a release.');
 }
 export function validateFlags(flags) {
