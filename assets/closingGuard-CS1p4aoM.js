@@ -1,1 +1,0 @@
-import{r as e}from"./closing-DcGLNdJF.js";async function t(t){if(!t)return!1;try{return await e(t)?(alert(`${t}는 이미 마감된 날짜입니다.\n수정하려면 마감해제하세요.`),!0):!1}catch(e){return console.error(`blockIfClosed error:`,e),!1}}export{t};

@@ -1,0 +1,1 @@
+var e=new Map,t=null,n=new Set;function r(t,n){e.set(t,n)}function i(e){t=e}function a(e){return n.add(e),()=>n.delete(e)}function o(){for(let e of[...n])e();e.get(t)?.(),document.querySelectorAll(`.modal-overlay`).forEach(e=>e.remove())}typeof window<`u`&&(window.closeModal=()=>e.get(t)?.());export{i,r as n,a as r,o as t};
