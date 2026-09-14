@@ -24,7 +24,7 @@ export function makeFirestore({ latencyMs = 0, alertCount = 80 } = {}) {
   };
   const reference = (...parts) => ({ path:parts.filter(p=>typeof p === 'string').join('/'), conditions:[] });
   const delay = () => state.latencyMs ? new Promise(resolve=>setTimeout(resolve,state.latencyMs)) : Promise.resolve();
-  const snapshot = row => ({ id:row?.id, exists:()=>Boolean(row), data:()=>row && {...row}, metadata:{fromCache:false,hasPendingWrites:false} });
+  const snapshot = row => ({ id:row?.id, exists:()=>Boolean(row), data:()=>{if(!row)return undefined;const {id,...data}=row;return data;}, metadata:{fromCache:false,hasPendingWrites:false} });
   const getRow = ref => { const parts=ref.path.split('/');const id=parts.pop();return (state.rows[parts.join('/')]||[]).find(row=>row.id===id); };
   const setRow = (ref,data) => {const parts=ref.path.split('/');const id=parts.pop();const key=parts.join('/');const rows=state.rows[key]||=[];const i=rows.findIndex(r=>r.id===id);const row={id,...data};if(i<0)rows.push(row);else rows[i]=row;state.writes.push(ref.path);};
   const api = {
