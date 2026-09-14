@@ -22,6 +22,8 @@ let aggregation = 'daily';
 
 let refreshTimer = null;
 let queryToken = 0;
+let loadedStatsKey = null;
+const statsKey=()=>JSON.stringify([activeTab,startDate,endDate,aggregation]);
 const DEBOUNCE_MS = 300;
 
 let productionChart = null;
@@ -231,6 +233,11 @@ function bindStatsEvents() {
 }
 
 function scheduleRefresh() {
+  // Invalidate immediately, before the debounce period. Otherwise an older
+  // response can be interpreted as the newly selected tab's data.
+  queryToken++;
+  loadedStatsKey=null;
+  clearTimeout(statsRefreshTimer);
   if (refreshTimer) clearTimeout(refreshTimer);
   refreshTimer = setTimeout(() => {
     refreshTimer = null;
@@ -521,6 +528,7 @@ function loadStatsTab(tab,scope) {
 
 async function refreshStats() {
   const myToken = ++queryToken;
+  loadedStatsKey=null;
   const summary = document.getElementById('statsSummary');
   const detail = document.getElementById('statsDetailArea');
   if (summary) summary.innerHTML = `<div class="stats-placeholder">로딩 중...</div>`;
@@ -537,7 +545,7 @@ async function refreshStats() {
       if(error){if(summary)summary.textContent='최신 통계를 확인하지 못했습니다. 연결을 확인한 뒤 기간을 다시 선택해주세요.';return;}
       statsRefreshTimer=setTimeout(()=>refreshStats(),120);
     }});
-    if(!data || myToken!==queryToken)return;
+    if(!data || myToken!==queryToken || tab!==activeTab || key!==JSON.stringify([activeTab,startDate,endDate]))return;
     if (activeTab === 'production') {
       const [productions] = data;
       if (myToken !== queryToken) return;
@@ -583,6 +591,7 @@ async function refreshStats() {
       registerNewSupplements(agg.rows);
       renderSupplementTab(agg);
     }
+    loadedStatsKey=statsKey();
   } catch (err) {
     console.error('[stats] 로드 실패:', err);
     if (myToken !== queryToken) return;
@@ -957,7 +966,10 @@ function chartLineOptions(labelCallback) {
 }
 
 async function handleExcelDownload() {
+  const page=getPageContext(),token=queryToken,key=statsKey();
+  if(loadedStatsKey!==key){alert('통계 자료를 불러오는 중입니다. 잠시 후 다시 시도해주세요.');return;}
   XLSX ||= await import('../utils/spreadsheet.js');
+  if((page&&!page.isCurrent())||token!==queryToken||key!==statsKey())return;
   const tab = TABS.find(t => t.id === activeTab);
   if (!tab) return;
   let rows = null;
@@ -989,6 +1001,7 @@ async function handleExcelDownload() {
 async function handleExcelDownloadAll() {
   const page = getPageContext(), token = queryToken;
   XLSX ||= await import('../utils/spreadsheet.js');
+  if((page&&!page.isCurrent())||token!==queryToken)return;
   const dlBtn = document.getElementById('statsDownloadAllBtn');
   if (!dlBtn) return;
   const originalText = dlBtn.textContent;
