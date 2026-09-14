@@ -1,4 +1,4 @@
-import{d as e,i as t,n,o as r,p as i,u as a,v as o,y as s}from"./index.esm-ESivpAya.js";import{n as c}from"./firebase-I0rBIq9V.js";import{n as l}from"./modalManager-Z4b2ihO9.js";import{M as u}from"./index-BMnUILA5.js";import{n as d}from"./activityLogs-Dl6VA3lF.js";import{t as f}from"./closingGuard-CmDbUY7v.js";var p=!1;async function m(){let e=document.getElementById(`mainContent`);e.innerHTML=`<div style="padding:24px;"><p>계란 로딩 중...</p></div>`;let[t,n]=await Promise.all([h(),g(),k()]);e.isConnected&&_(t,n)}async function h(){let e=await t(s(c,`eggStock`,`global`));return e.exists()?e.data():{currentQty:0,minimumQty:0}}async function g(){return(await r(e(o(c,`eggLogs`),a(`timestamp`,`desc`)))).docs.map(e=>({id:e.id,...e.data()}))}function _(e,t){let n=document.getElementById(`mainContent`),r=Number(e.currentQty||0),i=Number(e.minimumQty||0),a=r<i,o=v(t,r),s=x(t).slice(0,50);n.innerHTML=`
+import{b as e,d as t,i as n,n as r,o as i,p as a,u as o,y as s}from"./index.esm-rHmxwfvm.js";import{n as c}from"./firebase-qGjqjNvO.js";import{n as l}from"./modalManager-Z4b2ihO9.js";import{P as u}from"./index-ihWgJTcM.js";import{n as d}from"./activityLogs-Jg2Ymepu.js";import{t as f}from"./closingGuard-BCSnBl5U.js";var p=!1;async function m(){let e=document.getElementById(`mainContent`);e.innerHTML=`<div style="padding:24px;"><p>계란 로딩 중...</p></div>`;let[t,n]=await Promise.all([h(),g(),k()]);e.isConnected&&_(t,n)}async function h(){let t=await n(e(c,`eggStock`,`global`));return t.exists()?t.data():{currentQty:0,minimumQty:0}}async function g(){return(await i(t(s(c,`eggLogs`),o(`timestamp`,`desc`)))).docs.map(e=>({id:e.id,...e.data()}))}function _(e,t){let n=document.getElementById(`mainContent`),r=Number(e.currentQty||0),i=Number(e.minimumQty||0),a=r<i,o=v(t,r),s=x(t).slice(0,50);n.innerHTML=`
     <div class="page-wrap">
       <div class="page-header">
         <h2 class="page-title">계란</h2>
@@ -90,7 +90,7 @@ import{d as e,i as t,n,o as r,p as i,u as a,v as o,y as s}from"./index.esm-ESivp
       ${i}
       ${a}
     </div>
-  `}function b(e){return[...e].sort((e,t)=>{let n=S(e)-S(t);return n===0?String(e.id||``).localeCompare(String(t.id||``)):n})}function x(e){return[...e].sort((e,t)=>{let n=S(t)-S(e);return n===0?String(t.id||``).localeCompare(String(e.id||``)):n})}function S(e){let t=e.timestamp;if(t?.toMillis)return t.toMillis();if(t instanceof Date)return t.getTime();if(typeof t==`number`)return t;let n=Date.parse(e.date||``);return Number.isFinite(n)?n:0}function C(e){return`${Number(e||0).toLocaleString()}개`}function w(e){return String(e??``).replaceAll(`&`,`&amp;`).replaceAll(`<`,`&lt;`).replaceAll(`>`,`&gt;`).replaceAll(`"`,`&quot;`).replaceAll(`'`,`&#39;`)}function T(e,t){let r=e===`in`,a=Number(t.currentQty||0),l=r?`
+  `}function b(e){return[...e].sort((e,t)=>{let n=S(e)-S(t);return n===0?String(e.id||``).localeCompare(String(t.id||``)):n})}function x(e){return[...e].sort((e,t)=>{let n=S(t)-S(e);return n===0?String(t.id||``).localeCompare(String(e.id||``)):n})}function S(e){let t=e.timestamp;if(t?.toMillis)return t.toMillis();if(t instanceof Date)return t.getTime();if(typeof t==`number`)return t;let n=Date.parse(e.date||``);return Number.isFinite(n)?n:0}function C(e){return`${Number(e||0).toLocaleString()}개`}function w(e){return String(e??``).replaceAll(`&`,`&amp;`).replaceAll(`<`,`&lt;`).replaceAll(`>`,`&gt;`).replaceAll(`"`,`&quot;`).replaceAll(`'`,`&#39;`)}function T(t,n){let i=t===`in`,o=Number(n.currentQty||0),l=i?`
     <div class="form-group">
       <label>수량(개) *</label>
       <input type="number" id="m_qty" placeholder="개수 입력" />
@@ -98,12 +98,12 @@ import{d as e,i as t,n,o as r,p as i,u as a,v as o,y as s}from"./index.esm-ESivp
   `:`
     <div class="form-group">
       <label>남은 재고(개) *</label>
-      <input type="number" id="m_remaining" placeholder="실사 후 남은 개수" min="0" max="${a}" />
+      <input type="number" id="m_remaining" placeholder="실사 후 남은 개수" min="0" max="${o}" />
       <div id="m_outPreview" style="font-size:12px;color:#888;margin-top:4px;">출고량: -</div>
     </div>
   `;j(`
-    <h3 class="modal-title">계란 ${r?`입고`:`출고`}</h3>
-    <p style="font-size:12px;color:#888;margin-bottom:16px;">현재 재고: ${a}개</p>
+    <h3 class="modal-title">계란 ${i?`입고`:`출고`}</h3>
+    <p style="font-size:12px;color:#888;margin-bottom:16px;">현재 재고: ${o}개</p>
     ${l}
     <div class="form-group">
       <label>날짜</label>
@@ -122,11 +122,11 @@ import{d as e,i as t,n,o as r,p as i,u as a,v as o,y as s}from"./index.esm-ESivp
     </div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
-      <button class="btn-primary" id="btnSaveEgg">${r?`입고`:`출고`}</button>
+      <button class="btn-primary" id="btnSaveEgg">${i?`입고`:`출고`}</button>
     </div>
-  `),r||document.getElementById(`m_remaining`).addEventListener(`input`,e=>{let t=parseInt(e.target.value),n=document.getElementById(`m_outPreview`);if(isNaN(t)||t<0)n.textContent=`출고량: -`,n.style.color=`#888`;else{let e=a-t;e<0?(n.textContent=`남은 재고가 현재(${a}개)보다 많습니다`,n.style.color=`#e53e3e`):e===0?(n.textContent=`출고량: 0개 (변동 없음)`,n.style.color=`#888`):(n.textContent=`출고량: ${e}개`,n.style.color=`#2d7a3a`)}}),document.getElementById(`btnSaveEgg`).addEventListener(`click`,async()=>{let e;if(r){if(e=parseInt(document.getElementById(`m_qty`).value),!e){alert(`수량을 입력해주세요.`);return}}else{let t=parseInt(document.getElementById(`m_remaining`).value);if(isNaN(t)||t<0){alert(`남은 재고를 입력해주세요.`);return}if(t>a){alert(`남은 재고가 현재 재고(${a}개)보다 많을 수 없습니다.`);return}if(e=a-t,e===0){alert(`변동이 없습니다. (출고량 0개)`);return}}let l=document.getElementById(`m_date`).value,u=document.getElementById(`m_staff`).value,p=document.getElementById(`m_note`).value;if(!l){alert(`날짜는 필수입니다.`);return}if(!u){alert(`담당자는 필수입니다.`);return}if(await f(l))return;let m=r?e:-e,v=t.currentQty,y=v+m;await i(s(c,`eggStock`,`global`),{currentQty:y,minimumQty:t.minimumQty,updatedAt:new Date}),await n(o(c,`eggLogs`),{date:l,timestamp:new Date,type:r?`in`:`out`,qty:m,before:v,after:y,staffName:u,note:p}),await d({action:`egg`,subAction:r?`in`:`out`,date:l,staff:u,message:`계란 ${r?`입고`:`출고`} — ${r?`+`:`-`}${e}개 / 담당: ${u}`,details:{delta:m,before:v,after:y,note:p||null}}),closeModal(),_(await h(),await g()),alert(`${r?`입고`:`출고`} 완료!`)})}function E(e){j(`
+  `),i||document.getElementById(`m_remaining`).addEventListener(`input`,e=>{let t=parseInt(e.target.value),n=document.getElementById(`m_outPreview`);if(isNaN(t)||t<0)n.textContent=`출고량: -`,n.style.color=`#888`;else{let e=o-t;e<0?(n.textContent=`남은 재고가 현재(${o}개)보다 많습니다`,n.style.color=`#e53e3e`):e===0?(n.textContent=`출고량: 0개 (변동 없음)`,n.style.color=`#888`):(n.textContent=`출고량: ${e}개`,n.style.color=`#2d7a3a`)}}),document.getElementById(`btnSaveEgg`).addEventListener(`click`,async()=>{let t;if(i){if(t=parseInt(document.getElementById(`m_qty`).value),!t){alert(`수량을 입력해주세요.`);return}}else{let e=parseInt(document.getElementById(`m_remaining`).value);if(isNaN(e)||e<0){alert(`남은 재고를 입력해주세요.`);return}if(e>o){alert(`남은 재고가 현재 재고(${o}개)보다 많을 수 없습니다.`);return}if(t=o-e,t===0){alert(`변동이 없습니다. (출고량 0개)`);return}}let l=document.getElementById(`m_date`).value,u=document.getElementById(`m_staff`).value,p=document.getElementById(`m_note`).value;if(!l){alert(`날짜는 필수입니다.`);return}if(!u){alert(`담당자는 필수입니다.`);return}if(await f(l))return;let m=i?t:-t,v=n.currentQty,y=v+m;await a(e(c,`eggStock`,`global`),{currentQty:y,minimumQty:n.minimumQty,updatedAt:new Date}),await r(s(c,`eggLogs`),{date:l,timestamp:new Date,type:i?`in`:`out`,qty:m,before:v,after:y,staffName:u,note:p}),await d({action:`egg`,subAction:i?`in`:`out`,date:l,staff:u,message:`계란 ${i?`입고`:`출고`} — ${i?`+`:`-`}${t}개 / 담당: ${u}`,details:{delta:m,before:v,after:y,note:p||null}}),closeModal(),_(await h(),await g()),alert(`${i?`입고`:`출고`} 완료!`)})}function E(t){j(`
     <h3 class="modal-title">수동 재고 조정</h3>
-    <p style="font-size:12px;color:#888;margin-bottom:16px;">현재 재고: ${e.currentQty}개</p>
+    <p style="font-size:12px;color:#888;margin-bottom:16px;">현재 재고: ${t.currentQty}개</p>
     <div class="form-row">
       <div class="form-group">
         <label>조정 유형</label>
@@ -155,14 +155,14 @@ import{d as e,i as t,n,o as r,p as i,u as a,v as o,y as s}from"./index.esm-ESivp
       <button class="btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn-primary" id="btnSaveAdjust">조정</button>
     </div>
-  `),document.getElementById(`btnSaveAdjust`).addEventListener(`click`,async()=>{let t=document.getElementById(`m_adjustType`).value,r=parseInt(document.getElementById(`m_qty`).value),a=document.getElementById(`m_reason`).value.trim(),l=document.getElementById(`m_staff`).value;if(!r||!a||!l){alert(`조정량, 사유, 담당자는 필수입니다.`);return}let p=u();if(await f(p))return;let m=t===`plus`?r:-r,v=e.currentQty,y=v+m;if(y<0){alert(`조정 후 잔량이 ${y}개가 됩니다.\n수동조정으로 음수 재고를 만들 수 없습니다.\n현재 ${v}개에서 최대 ${v}개까지만 감소 가능합니다.`);return}await i(s(c,`eggStock`,`global`),{currentQty:y,minimumQty:e.minimumQty,updatedAt:new Date}),await n(o(c,`eggLogs`),{date:u(),timestamp:new Date,type:`adjust`,qty:m,before:v,after:y,staffName:l,reason:a}),await d({action:`egg`,subAction:`adjust`,date:p,staff:l,message:`계란 수동조정 — ${m>=0?`+`:``}${m}개 / 사유: ${a} / 담당: ${l}`,details:{delta:m,before:v,after:y,reason:a}}),closeModal(),_(await h(),await g()),alert(`조정 완료!`)})}function D(e){j(`
+  `),document.getElementById(`btnSaveAdjust`).addEventListener(`click`,async()=>{let n=document.getElementById(`m_adjustType`).value,i=parseInt(document.getElementById(`m_qty`).value),o=document.getElementById(`m_reason`).value.trim(),l=document.getElementById(`m_staff`).value;if(!i||!o||!l){alert(`조정량, 사유, 담당자는 필수입니다.`);return}let p=u();if(await f(p))return;let m=n===`plus`?i:-i,v=t.currentQty,y=v+m;if(y<0){alert(`조정 후 잔량이 ${y}개가 됩니다.\n수동조정으로 음수 재고를 만들 수 없습니다.\n현재 ${v}개에서 최대 ${v}개까지만 감소 가능합니다.`);return}await a(e(c,`eggStock`,`global`),{currentQty:y,minimumQty:t.minimumQty,updatedAt:new Date}),await r(s(c,`eggLogs`),{date:u(),timestamp:new Date,type:`adjust`,qty:m,before:v,after:y,staffName:l,reason:o}),await d({action:`egg`,subAction:`adjust`,date:p,staff:l,message:`계란 수동조정 — ${m>=0?`+`:``}${m}개 / 사유: ${o} / 담당: ${l}`,details:{delta:m,before:v,after:y,reason:o}}),closeModal(),_(await h(),await g()),alert(`조정 완료!`)})}function D(t){j(`
     <h3 class="modal-title">최소재고 설정</h3>
     <div class="form-group">
       <label>최소재고(개) *</label>
-      <input type="number" id="m_minQty" value="${e.minimumQty||0}" />
+      <input type="number" id="m_minQty" value="${t.minimumQty||0}" />
     </div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn-primary" id="btnSaveMin">저장</button>
     </div>
-  `),document.getElementById(`btnSaveMin`).addEventListener(`click`,async()=>{let t=parseInt(document.getElementById(`m_minQty`).value)||0;await i(s(c,`eggStock`,`global`),{currentQty:e.currentQty,minimumQty:t,updatedAt:new Date}),closeModal(),_(await h(),await g()),alert(`설정 완료!`)})}var O={};async function k(){Object.keys(O).length>0||await Promise.all([`senior`,`lead`,`office`].map(async e=>{let n=await t(s(c,`staffGroups`,e));n.exists()&&(O[e]=n.data().members||[])}))}function A(e){let t=``;for(let n of e)(O[n]||[]).forEach(e=>{t+=`<option value="${e.name}">${e.name}</option>`});return t}function j(e){let t=document.getElementById(`modalOverlay`);t&&t.remove();let n=document.createElement(`div`);n.id=`modalOverlay`,n.className=`modal-overlay`,n.innerHTML=`<div class="modal-box">${e}</div>`,document.body.appendChild(n),n.addEventListener(`click`,e=>{})}l(`egg`,function(){let e=document.getElementById(`modalOverlay`);e&&e.remove()});export{m as renderEgg};
+  `),document.getElementById(`btnSaveMin`).addEventListener(`click`,async()=>{let n=parseInt(document.getElementById(`m_minQty`).value)||0;await a(e(c,`eggStock`,`global`),{currentQty:t.currentQty,minimumQty:n,updatedAt:new Date}),closeModal(),_(await h(),await g()),alert(`설정 완료!`)})}var O={};async function k(){Object.keys(O).length>0||await Promise.all([`senior`,`lead`,`office`].map(async t=>{let r=await n(e(c,`staffGroups`,t));r.exists()&&(O[t]=r.data().members||[])}))}function A(e){let t=``;for(let n of e)(O[n]||[]).forEach(e=>{t+=`<option value="${e.name}">${e.name}</option>`});return t}function j(e){let t=document.getElementById(`modalOverlay`);t&&t.remove();let n=document.createElement(`div`);n.id=`modalOverlay`,n.className=`modal-overlay`,n.innerHTML=`<div class="modal-box">${e}</div>`,document.body.appendChild(n),n.addEventListener(`click`,e=>{})}l(`egg`,function(){let e=document.getElementById(`modalOverlay`);e&&e.remove()});export{m as renderEgg};
