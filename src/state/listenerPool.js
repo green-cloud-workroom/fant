@@ -10,6 +10,7 @@ export function createListenerPool({ store, registry, listen, graceMs = 30_000, 
     const error = Object.assign(new Error('읽기 세션이 종료되었습니다.'), { code: 'session-ended' });
     entry.waiters.splice(0).forEach(w => w.reject(error));
     entries.delete(entry.key);
+    registry.forget?.(entry.key);
     store.delete(entry.key);
     for (const owner of entry.owners) {
       const set = owners.get(owner); set?.delete(entry); if (!set?.size) owners.delete(owner);

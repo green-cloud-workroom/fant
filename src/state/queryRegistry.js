@@ -12,5 +12,7 @@ export function createQueryRegistry(equal) {
       return entry;
     },
     clear() { entries.length = 0; },
+    forget(key) { const index=entries.findIndex(entry=>entry.key===key);if(index>=0)entries.splice(index,1); },
+    inspect() { return entries.length; },
   };
 }

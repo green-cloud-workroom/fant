@@ -1,6 +1,7 @@
 import Sortable from 'sortablejs';
 import { registerPageCleanup } from './pageLifecycle.js';
 export default class ManagedSortable extends Sortable {
+  static create(...args) { return new this(...args); }
   constructor(...args) {
     super(...args);
     this._unregister = registerPageCleanup(() => this.destroy());

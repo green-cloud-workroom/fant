@@ -1,11 +1,12 @@
 import { registerModalDismiss } from './modalManager.js';
-function hasChanged(field) {
+export function hasChanged(field) {
   if (field.type === 'checkbox' || field.type === 'radio') return field.checked !== field.defaultChecked;
   if (field.tagName === 'SELECT') return field.value !== ([...field.options].find(option => option.defaultSelected) || field.options[0])?.value;
   return field.value !== field.defaultValue;
 }
+export function hasDirtyFields(root=document){return [...root.querySelectorAll('input,textarea,select')].some(hasChanged);}
 export async function canLeavePage() {
-  const fields = document.querySelectorAll('.modal-overlay input,.modal-overlay textarea,.modal-overlay select,.recipe-detail-panel input,.recipe-detail-panel textarea,.settings-section input,.settings-section select');
+  const fields = document.querySelectorAll('.modal-overlay input,.modal-overlay textarea,.modal-overlay select,.recipe-detail-panel input,.recipe-detail-panel textarea,.recipe-detail-panel select,.settings-section input,.settings-section textarea,.settings-section select');
   if (![...fields].some(field => hasChanged(field))) return true;
   // Keep the form and its values mounted until the user chooses to leave.
   return new Promise(resolve => {

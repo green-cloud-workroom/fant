@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { makeFirestore } from '../fixtures/firestore.mjs';
 
 export async function environment(options = {}) {
-  const fake = makeFirestore(options);
+  const fake = options.firestore || makeFirestore(options);
   const root = resolve('.');
   const nodes = { mainContent:{isConnected:true,innerHTML:''} };
   class TestDate extends Date {
@@ -37,6 +37,7 @@ export async function environment(options = {}) {
     if(options.baselineRef && id.startsWith(resolve('src'))) source=execFileSync('git',['show',options.baselineRef+':'+id.slice(root.length+1).replaceAll('\\','/')],{encoding:'utf8'});
     if(id===resolve('src/pages/main.js'))source+='\nexport { loadAllData, '+(source.includes('function installMainModel')?'installMainModel, ':'')+'renderMainLayout }; export function testState(){return {productions,nextProductions,recipes,meatStocks,eggStock,completionDoc,blockingData,overdueClosingDate,overdueClosingAlreadyClosed,overdueProductions,overdueNextProductions,overdueCompletionDoc,calendarSchedules,calendarProductions,calendarEvents,combinedLogs,equipmentAlerts};}';
     if(id===resolve('src/pages/production.js'))source+='\nexport { loadProductions };';
+    source += options.instrument?.[id.slice(root.length+1).replaceAll('\\','/')] || '';
     const module=new vm.SourceTextModule(source,{context,identifier:id,importModuleDynamically:async specifier=>{
       const child=await getModule(resolve(dirname(id),specifier));
       if(child.status==='unlinked')await child.link(linker);
