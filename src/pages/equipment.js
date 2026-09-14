@@ -1,3 +1,4 @@
+import {recordActivity as commandBatchActivity} from '../services/activityLogs.js';
 // 설비 부품 페이지
 // 왼쪽: 기계 목록(종류별 묶음, 별칭으로 개별 기계 구분) / 오른쪽: 선택 기계의 부품 표 + 이력.
 // 마스터(기계·부품) 추가/수정: admin·office. 교체/입고/조정 기록: production 포함 전 역할.
@@ -5,12 +6,22 @@
 
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, getDoc, addDoc, updateDoc, query, where, writeBatch,
+  collection, getDocsFromServer as getDocs, doc, getDocFromServer as getDoc, query, where, orderBy,
 } from 'firebase/firestore';
 import Sortable from '../utils/sortable.js';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { currentUserRole } from '../app.js';
-import { recordActivity } from '../services/activityLogs.js';
+import {pageResource} from '../state/pageResources.js';
+import {withReadCommand} from '../services/readCommand.js';
+import {commandBatch} from '../services/commandBatch.js';
+import {pageRefresh} from '../utils/pageRefresh.js';
+import {getPageContext} from '../utils/pageLifecycle.js';
+const equipmentResource=pageResource('equipment');
+async function runEquipmentCommand(callback,roles=['admin','office']) {
+  const page=getPageContext();
+  try{return await withReadCommand(equipmentResource,command=>{command.isCurrent=()=>!page||page.isCurrent();return callback(command);},{roles});}
+  catch(error){console.error('[설비 저장]',error);alert(error.message);}
+}
 import { showConfirmModal } from '../utils/modal.js';
 import {
   loadEquipments, loadEquipmentParts, addCycleToDate, formatCycle, getPartStatus, formatDday,
@@ -29,19 +40,27 @@ let sortables = [];
 
 // ─── 진입 ─────────────────────────────────────────────────────────
 
-export async function renderEquipment() {
+export async function renderEquipment(options={}) {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>설비 부품 로딩 중...</p></div>`;
-  await reloadAll();
+  await reloadAll(options);
   if (document.getElementById('mainContent') !== content) return;
   renderLayout();
 }
 
-async function reloadAll() {
-  const host = document.getElementById('mainContent');
-  const result = await Promise.all([loadEquipments(), loadEquipmentParts(), loadStaffCache()]);
-  if (document.getElementById('mainContent') !== host) return;
-  [equipments, parts] = result;
+async function loadEquipmentRows(scope={getDocs}) {
+  const snap=await scope.getDocs(query(collection(db,'equipments'),orderBy('sortOrder')));
+  return snap.docs.map(d=>({id:d.id,...d.data()}));
+}
+async function reloadAll({force=false}={}) {
+  const host=document.getElementById('mainContent');
+  const result=await equipmentResource.load(async scope=>{
+    const keys=['senior','lead','office'];
+    const [equipment,parts,...groups]=await Promise.all([loadEquipmentRows(scope),loadEquipmentParts(scope),...keys.map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
+    return {equipment,parts,staff:Object.fromEntries(keys.map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
+  },{force,onChange:pageRefresh(equipmentResource,renderEquipment)});
+  if(!result||document.getElementById('mainContent')!==host)return;
+  equipments=result.equipment;parts=result.parts;staffCache=result.staff;
 }
 
 function canManage() {
@@ -194,22 +213,29 @@ function initSortables() {
 }
 
 // 종류별 DOM 순서를 그대로 이어붙여 전체 sortOrder 재부여
-async function persistEquipmentOrder() {
+async function persistEquipmentOrder() {return runEquipmentCommand(command=>persistEquipmentOrderWithCommand(command));}
+async function persistEquipmentOrderWithCommand(command) {
+  const staged=commandBatch(command,db),{batch,recordActivity}=staged;
+  const {getDocs}=command;
   const orderedIds = Array.from(document.querySelectorAll('#equipmentList .eq-sortable .recipe-list-item'))
     .map(el => el.dataset.id).filter(Boolean);
   const now = new Date();
-  const batch = writeBatch(db);
+
   orderedIds.forEach((id, idx) => batch.update(doc(db, 'equipments', id), { sortOrder: idx, updatedAt: now }));
   try {
-    await batch.commit();
+    await staged.commit();
+    if(!command.isCurrent())return;
     const orderMap = new Map(orderedIds.map((id, idx) => [id, idx]));
     equipments = equipments
       .map(e => orderMap.has(e.id) ? { ...e, sortOrder: orderMap.get(e.id) } : e)
       .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    await reloadAll({force:true});
   } catch (err) {
     console.error('[equipment] reorder save failed:', err);
     alert('순번 저장 실패: ' + (err.message || err));
-    equipments = await loadEquipments();
+    const latest=await loadEquipmentRows();
+    if(!command.isCurrent())return;
+    equipments=latest;
     refreshList();
   }
 }
@@ -494,7 +520,8 @@ function showEquipmentModal(eq) {
   document.getElementById('btnModalCancel').addEventListener('click', closeModal);
   document.getElementById('btnDeleteEquipment')?.addEventListener('click', () => deleteEquipment(eq));
 
-  document.getElementById('btnSaveEquipment').addEventListener('click', async () => {
+  document.getElementById('btnSaveEquipment').addEventListener('click', () => runEquipmentCommand(async command => {
+    const staged=commandBatch(command,db),{batch,addDoc,updateDoc,recordActivity}=staged;
     let category = catSel.value;
     if (category === '__new__') category = document.getElementById('m_newCategory').value.trim();
     const alias = document.getElementById('m_alias').value.trim();
@@ -503,6 +530,7 @@ function showEquipmentModal(eq) {
     const dup = equipments.find(e => e.id !== eq?.id && e.category === category && e.alias === alias);
     if (dup) { alert('같은 종류에 같은 별칭의 기계가 이미 있습니다.'); return; }
 
+    let nextEquipmentId=selectedEquipmentId;
     const now = new Date();
     try {
       if (isNew) {
@@ -510,23 +538,23 @@ function showEquipmentModal(eq) {
           category, alias, memo, active: true, sortOrder: equipments.length, createdAt: now, updatedAt: now,
         });
         const copyFromId = document.getElementById('m_copyFrom')?.value || '';
-        if (copyFromId) await copyPartsFrom(copyFromId, { id: ref.id, category, alias });
+        if (copyFromId) await copyPartsFrom(copyFromId, { id: ref.id, category, alias },batch);
         await recordActivity({
           action: 'equipment', subAction: 'create', date: getToday(), staff: getRoleStaffLabel(),
           message: `기계 추가 — ${machineLabel(category, alias)}`,
           details: { equipmentId: ref.id, category, alias, copiedFrom: copyFromId || null },
         });
-        selectedEquipmentId = ref.id;
+        nextEquipmentId = ref.id;
       } else {
         const active = document.getElementById('m_active').checked;
         await updateDoc(doc(db, 'equipments', eq.id), { category, alias, memo, active, updatedAt: now });
         // 부품 스냅샷 동기화 (종류/별칭 변경 시)
         if (category !== eq.category || alias !== eq.alias) {
-          const batch = writeBatch(db);
+
           parts.filter(p => p.equipmentId === eq.id).forEach(p => {
             batch.update(doc(db, 'equipmentParts', p.id), { equipmentCategory: category, equipmentAlias: alias, updatedAt: now });
           });
-          await batch.commit();
+
         }
         await recordActivity({
           action: 'equipment', subAction: 'update', date: getToday(), staff: getRoleStaffLabel(),
@@ -534,21 +562,24 @@ function showEquipmentModal(eq) {
           details: { equipmentId: eq.id, category, alias, active },
         });
       }
+      await staged.commit();
+      if(!command.isCurrent())return;
+      selectedEquipmentId=nextEquipmentId;
       closeModal();
-      await reloadAll();
+      await reloadAll({force:true});
+      if(!command.isCurrent())return;
       renderLayout();
     } catch (err) {
       console.error('[equipment] save failed:', err);
       alert('저장 중 오류가 발생했습니다: ' + (err.message || err));
     }
-  });
+  }));
 }
 
-async function copyPartsFrom(sourceEquipmentId, target) {
+async function copyPartsFrom(sourceEquipmentId, target, batch) {
   const source = parts.filter(p => p.equipmentId === sourceEquipmentId && p.active !== false);
   if (source.length === 0) return;
   const now = new Date();
-  const batch = writeBatch(db);
   source.forEach((p, idx) => {
     const ref = doc(collection(db, 'equipmentParts'));
     batch.set(ref, {
@@ -570,10 +601,12 @@ async function copyPartsFrom(sourceEquipmentId, target) {
       updatedAt: now,
     });
   });
-  await batch.commit();
 }
 
-async function deleteEquipment(eq) {
+async function deleteEquipment(eq) {return runEquipmentCommand(command=>deleteEquipmentWithCommand(eq,command));}
+async function deleteEquipmentWithCommand(eq,command) {
+  const staged=commandBatch(command,db),{batch,recordActivity}=staged;
+  const {getDocs}=command;
   if (!canManage()) return;
   const linked = parts.filter(p => p.equipmentId === eq.id);
   if (linked.length > 0) {
@@ -583,21 +616,23 @@ async function deleteEquipment(eq) {
   const ok = await showConfirmModal({ title: '기계 삭제', message: `${machineLabel(eq.category, eq.alias)}을(를) 삭제하시겠습니까?`, confirmText: '삭제', danger: true });
   if (!ok) return;
   try {
-    const batch = writeBatch(db);
+
     batch.delete(doc(db, 'equipments', eq.id));
-    await batch.commit();
     await recordActivity({
       action: 'equipment', subAction: 'delete', date: getToday(), staff: getRoleStaffLabel(),
       message: `기계 삭제 — ${machineLabel(eq.category, eq.alias)}`,
       details: { equipmentId: eq.id, category: eq.category, alias: eq.alias },
     });
+    await staged.commit();
+    if(!command.isCurrent())return;
     closeModal();
     selectedEquipmentId = ALL_ID;
-    await reloadAll();
+    await reloadAll({force:true});
+    if(!command.isCurrent())return;
     renderLayout();
   } catch (err) {
     console.error('[equipment] delete failed:', err);
-    alert('삭제 중 오류가 발생했습니다.');
+    alert(err.message||'삭제 중 오류가 발생했습니다.');
   }
 }
 
@@ -620,7 +655,8 @@ function showCategoryManageModal() {
     </div>
   `);
   document.getElementById('btnModalCancel').addEventListener('click', closeModal);
-  document.getElementById('btnSaveCategories').addEventListener('click', async () => {
+  document.getElementById('btnSaveCategories').addEventListener('click', () => runEquipmentCommand(async command => {
+    const staged=commandBatch(command,db),{batch,addDoc,updateDoc,recordActivity}=staged;
     const changes = [];
     document.querySelectorAll('.m_catRename').forEach(input => {
       const from = input.dataset.original;
@@ -630,25 +666,28 @@ function showCategoryManageModal() {
     if (changes.length === 0) { closeModal(); return; }
     const now = new Date();
     try {
-      const batch = writeBatch(db);
+
       changes.forEach(({ from, to }) => {
         equipments.filter(e => e.category === from).forEach(e => batch.update(doc(db, 'equipments', e.id), { category: to, updatedAt: now }));
         parts.filter(p => p.equipmentCategory === from).forEach(p => batch.update(doc(db, 'equipmentParts', p.id), { equipmentCategory: to, updatedAt: now }));
       });
-      await batch.commit();
+
       await recordActivity({
         action: 'equipment', subAction: 'renameCategory', date: getToday(), staff: getRoleStaffLabel(),
         message: `기계 종류 이름 변경 — ${changes.map(c => `${c.from}→${c.to}`).join(', ')}`,
         details: { changes },
       });
+      await staged.commit();
+      if(!command.isCurrent())return;
       closeModal();
-      await reloadAll();
+      await reloadAll({force:true});
+      if(!command.isCurrent())return;
       renderLayout();
     } catch (err) {
       console.error('[equipment] rename category failed:', err);
-      alert('저장 중 오류가 발생했습니다.');
+      alert(err.message||'저장 중 오류가 발생했습니다.');
     }
-  });
+  }));
 }
 
 // ─── 부품 추가/수정 ───────────────────────────────────────────────
@@ -714,7 +753,8 @@ function showPartModal(part, eq) {
   document.getElementById('btnModalCancel').addEventListener('click', closeModal);
   document.getElementById('btnDeletePart')?.addEventListener('click', () => deletePart(part));
 
-  document.getElementById('btnSavePart').addEventListener('click', async () => {
+  document.getElementById('btnSavePart').addEventListener('click', () => runEquipmentCommand(async command => {
+    const staged=commandBatch(command,db),{batch,addDoc,updateDoc,recordActivity}=staged;
     const name = document.getElementById('m_name').value.trim();
     const spec = document.getElementById('m_spec').value.trim();
     const cycleValue = parseInt(document.getElementById('m_cycleValue').value) || 0;
@@ -758,25 +798,31 @@ function showPartModal(part, eq) {
           details: { partId: part.id, equipmentId: eq.id, name, cycleValue, cycleUnit, minimumQty, active: data.active },
         });
       }
+      await staged.commit();
+      if(!command.isCurrent())return;
       closeModal();
-      await reloadAll();
+      await reloadAll({force:true});
+      if(!command.isCurrent())return;
       refreshList();
       renderDetail();
     } catch (err) {
       console.error('[equipment] part save failed:', err);
       alert('저장 중 오류가 발생했습니다: ' + (err.message || err));
     }
-  });
+  }));
 }
 
-async function deletePart(part) {
+async function deletePart(part) {return runEquipmentCommand(command=>deletePartWithCommand(part,command));}
+async function deletePartWithCommand(part,command) {
+  const staged=commandBatch(command,db),{batch,recordActivity}=staged;
+  const {getDocs}=command;
   if (!canManage()) return;
   let logDocs = [];
   try {
     const snap = await getDocs(query(collection(db, 'equipmentPartLogs'), where('partId', '==', part.id)));
     logDocs = snap.docs;
   } catch (err) {
-    console.error('[equipment] log lookup failed:', err);
+    throw err;
   }
   const ok = await showConfirmModal({
     title: '부품 삭제',
@@ -786,23 +832,25 @@ async function deletePart(part) {
   });
   if (!ok) return;
   try {
-    const batch = writeBatch(db);
+
     batch.delete(doc(db, 'equipmentParts', part.id));
     logDocs.forEach(d => batch.delete(doc(db, 'equipmentPartLogs', d.id)));
-    await batch.commit();
     await recordActivity({
       action: 'equipment', subAction: 'partDelete', date: getToday(), staff: getRoleStaffLabel(),
       message: `부품 삭제 — ${partLabel(part)}`,
       details: { partId: part.id, equipmentId: part.equipmentId, name: part.name, logCount: logDocs.length },
     });
+    await staged.commit();
+    if(!command.isCurrent())return;
     closeModal();
     if (selectedPartId === part.id) selectedPartId = null;
-    await reloadAll();
+    await reloadAll({force:true});
+    if(!command.isCurrent())return;
     refreshList();
     renderDetail();
   } catch (err) {
     console.error('[equipment] part delete failed:', err);
-    alert('삭제 중 오류가 발생했습니다.');
+    alert(err.message||'삭제 중 오류가 발생했습니다.');
   }
 }
 
@@ -952,10 +1000,22 @@ function showAdjustModal(part) {
 /**
  * 부품 문서 갱신 + 이력 기록 + 사무 로그 발행을 한 번에.
  */
-async function applyPartChange(part, { type, qty, before, after, date, staff, note, partPatch, message }) {
-  try {
-    await updateDoc(doc(db, 'equipmentParts', part.id), { ...partPatch, updatedAt: new Date() });
-    await addDoc(collection(db, 'equipmentPartLogs'), {
+async function applyPartChange(part, change) {
+  const page=getPageContext();
+  const saved=await runEquipmentCommand(command=>commitPartChange(part,change,command),['admin','office','production']);
+  if(!saved || (page&&!page.isCurrent()))return;
+  closeModal();selectedPartId=part.id;
+  await reloadAll({force:true});
+  if(page&&!page.isCurrent())return;
+  refreshList();renderDetail();
+}
+async function commitPartChange(part, { type, qty, before, after, date, staff, note, partPatch, message },command) {
+  const target=doc(db,'equipmentParts',part.id),logRef=doc(collection(db,'equipmentPartLogs'));
+  await command.transaction(db,async transaction=>{
+    const snap=await transaction.get(target);
+    if(!snap.exists()||Number(snap.data().currentQty||0)!==Number(before))throw new Error('다른 작업으로 부품 재고가 변경되었습니다. 최신 자료를 다시 확인해주세요.');
+    transaction.update(target, { ...partPatch, updatedAt: new Date() });
+    transaction.set(logRef, {
       partId: part.id,
       partName: part.name,
       equipmentId: part.equipmentId,
@@ -966,32 +1026,17 @@ async function applyPartChange(part, { type, qty, before, after, date, staff, no
       note: note || '',
       timestamp: new Date(),
     });
-    await recordActivity({
+    await commandBatchActivity({
       action: 'equipment', subAction: type, date, staff, message,
       details: { partId: part.id, equipmentId: part.equipmentId, partName: part.name, qty, before, after, note: note || null },
-    });
-    closeModal();
-    selectedPartId = part.id;
-    await reloadAll();
-    refreshList();
-    renderDetail();
-  } catch (err) {
-    console.error('[equipment] change failed:', err);
-    alert('저장 중 오류가 발생했습니다: ' + (err.message || err));
-  }
+    },{batch:transaction});
+  },{targets:[target,logRef]});
+  return true;
 }
 
 // ─── 유틸 ─────────────────────────────────────────────────────────
 
 let staffCache = {};
-async function loadStaffCache() {
-  const host = document.getElementById('mainContent');
-  const keys = ['senior', 'lead', 'office'];
-  const rows = await Promise.all(keys.map(key => getDoc(doc(db, 'staffGroups', key))));
-  if (document.getElementById('mainContent') !== host) return {};
-  staffCache = Object.fromEntries(rows.map((snap,index) => [keys[index], snap.exists() ? snap.data().members || [] : []]));
-  return staffCache;
-}
 
 function getStaffOptions(groups) {
   const names = [];
