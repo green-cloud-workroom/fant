@@ -1,6 +1,7 @@
 import vm from 'node:vm';
-import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { makeFirestore } from '../fixtures/firestore.mjs';
 
 export async function environment(options = {}) {
@@ -25,11 +26,14 @@ export async function environment(options = {}) {
   synthetic(resolve('src/firebase.js'),{db:{},auth:{}});
   synthetic(resolve('src/app.js'),{currentUser:{uid:'fixture',email:'fixture@example.invalid'},currentUserRole:'office',currentMenu:'main',setCurrentMenu:()=>{},MENUS:[]});
   synthetic(resolve('src/layout.js'),{renderLayout:()=>{}});
+  synthetic(resolve('src/config/performanceFlags.js'),{useSessionReads:()=>!!options.session,flags:{shell:!!options.session,store:!!options.session}});
+  if (!options.session) synthetic(resolve('src/state/displayReads.js'),{createDisplayScope:()=>{},displayPool:{onChange:()=>{}}});
   const legacyRouterStub = { renderPage:()=>{} };
   if(!options.realRouter)synthetic(resolve('src/router.js'),legacyRouterStub);
   async function getModule(id) {
     if(cache.has(id))return cache.get(id);
-    let source=await readFile(id,'utf8');
+    let source=readFileSync(id,'utf8');
+    if(options.baselineRef && id.startsWith(resolve('src'))) source=execFileSync('git',['show',options.baselineRef+':'+id.slice(root.length+1).replaceAll('\\','/')],{encoding:'utf8'});
     if(id===resolve('src/pages/main.js'))source+='\nexport { loadAllData }; export function testState(){return {productions,nextProductions,recipes,meatStocks,eggStock,completionDoc,blockingData,overdueClosingDate,overdueClosingAlreadyClosed,overdueProductions,overdueNextProductions,overdueCompletionDoc,calendarSchedules,calendarProductions,calendarEvents,combinedLogs,equipmentAlerts};}';
     if(id===resolve('src/pages/production.js'))source+='\nexport { loadProductions };';
     const module=new vm.SourceTextModule(source,{context,identifier:id,importModuleDynamically:async specifier=>{

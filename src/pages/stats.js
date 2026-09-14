@@ -5,7 +5,8 @@ import { db } from '../firebase.js';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { formatKstDate, getTodayKST } from '../utils/date.js';
 import { Chart, registerables } from 'chart.js';
-import * as XLSX from 'xlsx';
+import { registerPageCleanup } from '../utils/pageLifecycle.js';
+let XLSX;
 
 Chart.register(...registerables);
 
@@ -74,6 +75,7 @@ export async function renderStats() {
   content.innerHTML = `<div style="padding:24px;"><p>통계 로딩 중...</p></div>`;
 
   destroyAllCharts();
+  registerPageCleanup(() => { clearTimeout(refreshTimer); queryToken++; destroyAllCharts(); });
   activeTab = 'production';
   periodMode = 'monthly';
   aggregation = 'daily';
@@ -929,7 +931,8 @@ function chartLineOptions(labelCallback) {
   };
 }
 
-function handleExcelDownload() {
+async function handleExcelDownload() {
+  XLSX ||= await import('../utils/spreadsheet.js');
   const tab = TABS.find(t => t.id === activeTab);
   if (!tab) return;
   let rows = null;
@@ -959,6 +962,7 @@ function handleExcelDownload() {
 }
 
 async function handleExcelDownloadAll() {
+  XLSX ||= await import('../utils/spreadsheet.js');
   const dlBtn = document.getElementById('statsDownloadAllBtn');
   if (!dlBtn) return;
   const originalText = dlBtn.textContent;

@@ -17,7 +17,7 @@ for(const variant of variants) {
   const sourceOverride={
     name:'local-performance-fixture',enforce:'pre',
     load(id) {
-      if(id.replaceAll('\\','/').endsWith('/src/firebase.js'))return 'export const db = {}; export const auth = {};';
+      if(id.replaceAll('\\','/').endsWith('/src/firebase.js'))return `import {fixtureAuth} from '${resolve('tests/fixtures/auth.mjs').replaceAll('\\','/')}';export const db = {}; export const auth = fixtureAuth;`;
     },
     transform(code,id) {
       const file=relative(root,id).replaceAll('\\','/');
@@ -30,15 +30,29 @@ for(const variant of variants) {
     transformIndexHtml: { order:'pre', handler(html) {
       // No remote fonts or other external resources in the fixture page.
       html=html.replace(/<link[^>]+href="https:[^>]+>/g,'');
-      return html.replace('<div id="app"></div>',`<aside style="padding:6px;background:#fff3cd;font:12px monospace">LOCAL FIXTURE — ${variant} — 합성 데이터 / DB 요청당 50ms / 운영 DB 연결 없음 <span id="fixtureTiming">로딩 중</span></aside><div id="app"></div>
+      return html.replace('<div id="app"></div>',`<aside style="padding:6px;background:#fff3cd;font:12px monospace">LOCAL FIXTURE — ${variant} — 합성 데이터 / DB 요청당 50ms / 운영 DB 연결 없음 <span id="fixtureTiming">로딩 중</span><button id="measureWarm">재방문 20회 측정</button><button id="changeEgg">외부 계란 변경</button><button id="denyReads">조회 오류 전환</button><pre id="warmResults"></pre></aside><div id="app"></div>
 <script type="module">
 import { fixture } from '${fixture.replaceAll('\\','/')}';
 let start=performance.now(),initialReads=0,measured=false;
+let measureResolve;
+document.getElementById('changeEgg').onclick=()=>{fixture.state.rows.eggStock[0].currentQty++;fixture.state.notify('eggStock/global');};
+document.getElementById('denyReads').onclick=()=>{fixture.state.failures.add('eggStock/global');fixture.state.notify('eggStock/global');};
+document.getElementById('measureWarm').onclick=async()=>{
+ const samples=[];const move=menu=>new Promise(resolve=>{measureResolve=resolve;document.querySelector('[data-menu="'+menu+'"]').click();});
+ for(let i=0;i<20;i++){await move('settings');samples.push(await move('main'));}
+ const sorted=samples.map(s=>s.ms).sort((a,b)=>a-b);
+ document.getElementById('warmResults').textContent=JSON.stringify({p50:sorted[9],p95:sorted[18],samples});
+};
 document.addEventListener('click',e=>{if(e.target.closest('.nav-btn')){start=performance.now();initialReads=fixture.state.reads.length;measured=false;}},true);
 new MutationObserver(()=>{
  const content=document.getElementById('mainContent');
  if(!measured && content && content.children.length && !content.textContent.includes('로딩 중') && !content.textContent.includes('불러오지 못했습니다')) {
-   measured=true;document.getElementById('fixtureTiming').textContent=JSON.stringify({ms:Math.round(performance.now()-start),reads:fixture.state.reads.length-initialReads,writes:fixture.state.writes.length});
+   measured=true;const began=start,reads=fixture.state.reads.length-initialReads;
+   requestAnimationFrame(()=>requestAnimationFrame(()=>{
+     const result={ms:Math.round(performance.now()-began),reads,writes:fixture.state.writes.length};
+     document.getElementById('fixtureTiming').textContent=JSON.stringify(result);
+     const done=measureResolve;measureResolve=null;done?.(result);
+   }));
  }
 }).observe(document.getElementById('app'),{childList:true,subtree:true});
 </script>`);

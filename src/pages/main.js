@@ -1,8 +1,21 @@
+import { registerCloseModal } from '../utils/modalManager.js';
 import { createReadScope } from '../services/readScope.js';
+import { createServerReadScope } from '../services/serverReadScope.js';
+import { buildMainViewModel, copyMainModel } from '../domain/mainViewModel.js';
+import { createAutoLogCoordinator } from '../services/autoLogCoordinator.js';
+import { openAction, fingerprint } from '../services/actionGateway.js';
+import { sessionStore } from '../state/sessionStore.js';
+import { createDisplayScope, displayPool } from '../state/displayReads.js';
+import { useSessionReads } from '../config/performanceFlags.js';
+import { registerPageCleanup } from '../utils/pageLifecycle.js';
+const autoLogCoordinator = createAutoLogCoordinator();
+let mainRefreshTimer;
+let mainModelDirty = true;
+sessionStore.onClear(() => { mainModelDirty = true; autoLogCoordinator.clear(); clearTimeout(mainRefreshTimer); });
 import { createAutoLogBatch } from '../services/autoLogs.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy, setDoc, where, deleteDoc, serverTimestamp, limit, startAfter, writeBatch
+  collection, getDocsFromServer as getDocs, doc, addDoc, updateDoc, getDocFromServer as getDoc, query, orderBy, setDoc, where, deleteDoc, serverTimestamp, limit, startAfter, writeBatch
 } from 'firebase/firestore';
 import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDayByType as getNextBusinessDay, loadHolidaysCache, ensureHolidaysCache, getHolidaysCache, getHolidayInfoCache, getHolidayDataNotice } from '../utils/date.js';
 import { findActionableClosingDate, getAllBlockingItems } from '../services/closingChecks.js';
@@ -59,12 +72,44 @@ let combinedLogs = [];
 let equipmentAlerts = [];  // 설비 부품 교체 임박·재고 부족 (services/equipmentParts.js)
 
 export async function renderMain({ scope = createReadScope() } = {}) {
+  const retained = useSessionReads('main');
+  if (retained) scope = createDisplayScope('main');
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>메인 로딩 중...</p></div>`;
   selectedProductionDate = null;
   selectedDateProductions = [];
   selectedDateBlockingData = null;
-  if (!await loadAllData(scope)) return;
+  const cached = retained && !mainModelDirty && sessionStore.peek('main:model');
+  if (cached) installMainModel(cached.model);
+  else if (!await loadAllData(scope)) return;
+  if (retained) {
+    const scheduleRefresh = ({ error } = {}) => {
+    mainModelDirty = true;
+    clearTimeout(mainRefreshTimer);
+    if (error) {
+      if (error.code === 'permission-denied') { sessionStore.clear(); content.innerHTML = '<p>접근 권한을 다시 확인하려면 새로고침해주세요.</p>'; }
+      else showRefreshError(content);
+      return;
+    }
+    mainRefreshTimer = setTimeout(async () => {
+      if (currentMenu !== 'main' || document.getElementById('mainContent') !== content) return;
+      if (document.querySelector('.modal-overlay') || selectedProductionDate) return;
+      try {
+        if (await loadAllData(createDisplayScope('main'))) renderMainLayout();
+      } catch (error) {
+        if (error.code === 'permission-denied') { sessionStore.clear(); content.replaceChildren(); }
+        else { console.error('[메인 갱신 실패]', error); showRefreshError(content); }
+      }
+    }, 120);
+    };
+    // Keep invalidation active while away; the main model stays in session memory.
+    displayPool.onChange('main', scheduleRefresh);
+    const observer = new MutationObserver(() => {
+      if (mainModelDirty && !document.querySelector('.modal-overlay')) scheduleRefresh();
+    });
+    observer.observe(document.body, { childList: true });
+    registerPageCleanup(() => { observer.disconnect(); clearTimeout(mainRefreshTimer); });
+  }
   // [Navigation guard] loadAllData 도중에 다른 메뉴로 이동했으면 main 덮어쓰지 않음.
   // currentMenu가 'main'이 아니라면 stale 호출이므로 mainContent 보존.
   if (currentMenu !== 'main' || document.getElementById('mainContent') !== content) return;
@@ -72,13 +117,40 @@ export async function renderMain({ scope = createReadScope() } = {}) {
   maybeShowEquipmentPopup();
 }
 
+function showRefreshError(content) {
+  if (!content.isConnected || content.querySelector('[data-refresh-error]')) return;
+  const status = document.createElement('div'); status.dataset.refreshError = 'true';
+  status.textContent = '최신 정보를 확인하지 못했습니다. 표시된 내용은 이전 자료입니다. ';
+  const button = document.createElement('button'); button.className = 'btn-secondary'; button.textContent = '다시 불러오기';
+  button.addEventListener('click', () => { mainModelDirty = true; renderLayout(); });
+  status.appendChild(button); content.prepend(status);
+}
+
 let mainLoadVersion = 0;
-async function loadAllData(scope = createReadScope()) {
+// Closing must not accept an incomplete automatic-alert evaluation as an empty list.
+// This check only reads; existing main visit semantics still own alert creation.
+export async function assertAutomaticAlertsReady() {
+  const scope = createServerReadScope(), today = getToday();
+  const [logs, egg, alerts] = await Promise.all([
+    scope.getDocs(query(collection(db, 'activityLogs'), where('date', '==', today))),
+    scope.getDoc(doc(db, 'eggStock', 'global')), loadPartAlerts(today, scope),
+  ]);
+  const batch = createAutoLogBatch(logs.docs.map(d => ({ id: d.id, ...d.data() })));
+  await triggerAutoLogs(today, batch, scope, { eggStock: egg.exists() ? egg.data() : {}, equipmentAlerts: alerts });
+  if (batch.pendingIds().length) throw new Error('새 자동 알림을 확인해야 합니다. 메인을 다시 불러온 후 처리해주세요.');
+}
+async function loadAllData(scope = createServerReadScope(), { autoLogsEnabled = true } = {}) {
   const version = ++mainLoadVersion;
   const content = document.getElementById('mainContent');
   const isCurrent = () => version === mainLoadVersion && content === document.getElementById('mainContent');
   const today = getToday();
-  await ensureHolidaysCache();
+  await ensureHolidaysCache(scope);
+  const prefetchedLogs = fetchCombinedLogs(scope);
+  prefetchedLogs.catch(() => {});
+  scope.getDocs(query(collection(db, 'events'), where('date', '==', today))).catch(() => {});
+  scope.getDocs(query(collection(db, 'schedules'), where('date', '==', today))).catch(() => {});
+  scope.getDocs(query(collection(db, 'supplementTypes'), where('active', '==', true))).catch(() => {});
+  scope.getDocs(collection(db, 'supplementStock')).catch(() => {});
   const nextBizDay = getNextBusinessDay(today);
 
   const [prodSnap, recipeSnap, meatTypeSnap, meatSnap, eggSnap, compSnap,
@@ -91,10 +163,7 @@ async function loadAllData(scope = createReadScope()) {
     scope.getDoc(doc(db, 'productionCompletion', today)),
     findActionableClosingDate(today, null, scope),
     fetchCalendarData(calendarWeekOffset, scope),
-    scope.once('equipmentAlerts:' + today, () => loadPartAlerts(today)).catch(err => {
-      console.error('[equipment] 알림 로드 실패:', err);
-      return [];
-    }),
+    scope.once('equipmentAlerts:' + today, () => loadPartAlerts(today, scope)),
   ]);
   if (!isCurrent()) return false;
   const allProds = prodSnap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -113,30 +182,41 @@ async function loadAllData(scope = createReadScope()) {
   };
   const todayLogs = await scope.getDocs(query(collection(db, 'activityLogs'), where('date', '==', today)));
   const autoLogs = createAutoLogBatch(todayLogs.docs.map(d => ({ id: d.id, ...d.data() })));
-  await triggerAutoLogs(today, autoLogs, scope, state);
   if (!isCurrent()) return false;
-  const needsFreshLogs = await autoLogs.flush();
-  const logs = await fetchCombinedLogs(needsFreshLogs ? createReadScope() : scope);
+  const outcome = autoLogsEnabled ? await autoLogCoordinator.run('main:' + today, async () => {
+    await triggerAutoLogs(today, autoLogs, scope, state);
+    if (!isCurrent()) return { createdIds: [], existingIds: [], failedIds: [] };
+    return autoLogs.flush();
+  }) : { createdIds: [], existingIds: [], failedIds: [] };
+  if (outcome.failedIds.length) throw new Error('일부 자동 알림을 저장하지 못했습니다. 다시 불러와주세요.');
+  let logs = await prefetchedLogs;
+  if (outcome.createdIds.length || outcome.existingIds.length) {
+    const fresh = await createServerReadScope().getDocs(query(collection(db, 'activityLogs'), where('date', '==', today)));
+    logs = [...fresh.docs.map(d => ({ id: d.id, ...d.data() })), ...logs.filter(log => log.date !== today)]
+      .sort((a,b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0));
+  }
   if (!isCurrent()) return false;
 
-  overdueClosingDate = overdueDate;
-  overdueClosingAlreadyClosed = Boolean(overdueClosing?.closed);
-  overdueProductions = overdueDate ? allProds.filter(p => p.date === overdueDate && p.status !== 'deleted') : [];
-  const overdueNextBizDay = overdueDate ? getNextBusinessDay(overdueDate) : null;
-  overdueNextProductions = overdueNextBizDay ? allProds.filter(p => p.date === overdueNextBizDay && p.status !== 'deleted') : [];
-  productions = allProds.filter(p => p.date === today && p.status !== 'deleted');
-  nextProductions = allProds.filter(p => p.date === nextBizDay && p.status !== 'deleted');
-  recipes = recipeSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-  meatTypeCategoryMap = new Map(meatTypeSnap.docs.map(d => [d.id, d.data().category === 'produce' ? 'produce' : 'meat']));
-  meatStocks = meatSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.closed);
-  eggStock = state.eggStock;
-  equipmentAlerts = alerts;
-  completionDoc = compSnap.exists() ? { id: compSnap.id, ...compSnap.data() } : null;
-  overdueCompletionDoc = overdueCompSnap?.exists() ? { id: overdueCompSnap.id, ...overdueCompSnap.data() } : null;
-  blockingData = blocks;
-  ({ calendarSchedules, calendarProductions, calendarEvents } = calendar);
-  combinedLogs = logs;
+  const rows = snap => snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const row = snap => snap?.exists() ? { id: snap.id, ...snap.data() } : null;
+  const model = buildMainViewModel({ today, nextBizDay,
+    overdueNextBizDay: overdueDate ? getNextBusinessDay(overdueDate) : null, allProds,
+    recipeRows: rows(recipeSnap), meatTypeRows: rows(meatTypeSnap), meatRows: rows(meatSnap),
+    eggStock: state.eggStock, equipmentAlerts: alerts, completionDoc: row(compSnap),
+    overdueCompletionDoc: row(overdueCompSnap), overdueClosing, blocks, calendar, logs });
+  installMainModel(model);
+  mainModelDirty = false;
+  if (useSessionReads('main')) sessionStore.publish('main:model', { model });
   return true;
+}
+
+function installMainModel(source) {
+  const model = copyMainModel(source);
+  ({ productions, nextProductions, recipes, meatStocks, eggStock, completionDoc, blockingData,
+    overdueClosingDate, overdueClosingAlreadyClosed, overdueProductions, overdueNextProductions,
+    overdueCompletionDoc, calendarSchedules, calendarProductions, calendarEvents, combinedLogs,
+    equipmentAlerts } = model);
+  meatTypeCategoryMap = new Map(model.meatTypeRows.map(r => [r.id, r.category === 'produce' ? 'produce' : 'meat']));
 }
 
 function renderMainLayout() {
@@ -671,9 +751,13 @@ function truncateMain(s, n) {
 // ============================================================
 
 // 이벤트 등록(eventId=null) 또는 수정(eventId 지정) 모달
-function showEventEditModal(date, eventId) {
+async function showEventEditModal(date, eventId) {
+  let action;
+  try { action = await openAction({ refs: eventId ? ['events/' + eventId] : ['holidays/' + date], roles: ['admin', 'office'] }); }
+  catch (error) { alert(error.message); return; }
   const isEdit = !!eventId;
-  const existing = isEdit ? calendarEvents.find(e => e.id === eventId) : null;
+  const existing = isEdit ? action.values[0] : null;
+  if (isEdit && !existing) { alert('삭제된 이벤트입니다. 다시 불러와주세요.'); return; }
   const title = existing?.title || '';
   const content = existing?.content || '';
 
@@ -713,7 +797,10 @@ function showEventEditModal(date, eventId) {
       alert('제목을 입력해주세요.');
       return;
     }
-    await saveEvent({ id: eventId, date, title: newTitle, content: newContent });
+    const button = document.getElementById('btnEvSave'); button.disabled = true;
+    try { await action.submit(() => saveEvent({ id: eventId, date, title: newTitle, content: newContent })); }
+    catch (error) { alert(error.message); }
+    finally { button.disabled = false; }
   });
 
   if (isEdit) {
@@ -760,7 +847,10 @@ async function saveEvent({ id, date, title, content }) {
 
 // 이벤트 삭제
 async function deleteEvent(eventId, date) {
-  const target = calendarEvents.find(e => e.id === eventId);
+  let action;
+  try { action = await openAction({ refs: ['events/' + eventId], roles: ['admin', 'office'] }); }
+  catch (error) { alert(error.message); return; }
+  const target = action.values[0];
   if (!target) return;
   const ok = await showConfirmModal({
     title: '이벤트 삭제',
@@ -770,6 +860,7 @@ async function deleteEvent(eventId, date) {
   });
   if (!ok) return;
   try {
+    await action.confirm();
     await deleteDoc(doc(db, 'events', eventId));
     closeModal();
     await loadCalendarData(calendarWeekOffset);
@@ -785,6 +876,8 @@ async function deleteEvent(eventId, date) {
 // 수동 휴일 토글 — holidays 컬렉션 doc id = 'YYYY-MM-DD' 패턴 (utils/date.js 캐시와 동일)
 async function toggleManualHoliday(date, makeHoliday) {
   try {
+    const action = await openAction({ refs: ['holidays/' + date], roles: ['admin', 'office'] });
+    await action.confirm();
     if (makeHoliday) {
       await setDoc(doc(db, 'holidays', date), {
         date,
@@ -885,11 +978,11 @@ async function fetchCombinedLogs(scope = createReadScope()) {
   const [todaySnap, olderSnap] = await Promise.all([
     scope.getDocs(query(collection(db, 'activityLogs'), where('date', '==', today))).catch(err => {
       console.error('[6C-1] 당일 로그 로드 실패:', err);
-      return null;
+      throw err;
     }),
     scope.getDocs(query(collection(db, 'activityLogs'), where('date', '>=', tenDaysAgo), where('date', '<', today))).catch(err => {
       console.error('[6C-1] 과거 로그 로드 실패:', err);
-      return null;
+      throw err;
     }),
   ]);
   const todayLogs = todaySnap ? todaySnap.docs.map(d => ({ id: d.id, ...d.data() })) : [];
@@ -1098,6 +1191,7 @@ function bindLogActions() {
 // [확인] 단건
 async function ackOneLog(logId) {
   try {
+    const action = await openAction({ refs: ['activityLogs/' + logId] });
     const logSnap = await getDoc(doc(db, 'activityLogs', logId));
     if (!logSnap.exists()) {
       alert('로그를 찾을 수 없습니다.');
@@ -1110,7 +1204,7 @@ async function ackOneLog(logId) {
       return;
     }
 
-    await acknowledgeLog(logId, getStaffLabelFromRole());
+    await action.submit(() => acknowledgeLog(logId, getStaffLabelFromRole()));
     await loadCombinedLogs();
     refreshLogPanels();
   } catch (err) {
@@ -1133,6 +1227,9 @@ async function getLeadStaffOptionNames() {
 }
 
 async function showAutoRepackConfirmModal(logId, log) {
+  const action = await openAction({ refs: ['activityLogs/' + logId, 'meatStocks/' + log.details?.repackedStockId], roles: ['admin', 'production'] });
+  log = action.values[0];
+  if (!log || log.acknowledged === true) { alert('이미 처리되었거나 삭제된 로그입니다.'); return; }
   if (currentUserRole === 'office') {
     alert('자동 재포장 확인은 생산실/대표 계정에서만 처리할 수 있습니다.');
     return;
@@ -1235,13 +1332,14 @@ async function showAutoRepackConfirmModal(logId, log) {
       if (!ok) return;
     }
 
-    closeModal();
+    const button = document.getElementById('ar-confirm'); button.disabled = true;
     try {
-      await processAutoRepackConfirm({ logId, log, actualCount, surplusG, processedUnitWeightG, staffName });
+      await action.submit(() => processAutoRepackConfirm({ logId, log, actualCount, surplusG, processedUnitWeightG, staffName }));
+      closeModal();
     } catch (err) {
       console.error('[묶음 9 #9] 자동 재포장 확인 처리 실패:', err);
       alert('확인 처리 중 오류가 발생했습니다: ' + (err.message || err));
-    }
+    } finally { button.disabled = false; }
   });
 }
 
@@ -1304,6 +1402,7 @@ async function processAutoRepackConfirm({ logId, log, actualCount, surplusG, pro
 
 // [모두 확인] 섹션 — 확인 필수 제외, 일반 미확인만 일괄
 async function ackAllInSection(category) {
+  try { await loadCombinedLogs(); } catch (error) { alert(error.message); return; }
   const targets = combinedLogs.filter(log =>
     classifyLog(log) === category &&
     log.acknowledged !== true &&
@@ -1320,8 +1419,9 @@ async function ackAllInSection(category) {
   if (!ok) return;
 
   try {
+    const action = await openAction({ refs: targets.map(log => 'activityLogs/' + log.id) });
     const staffLabel = getStaffLabelFromRole();
-    await Promise.all(targets.map(log => acknowledgeLog(log.id, staffLabel)));
+    await action.submit(latest => Promise.all(latest.filter(log => log && log.acknowledged !== true && !logRequiresAck(log)).map(log => acknowledgeLog(log.id, staffLabel))));
     await loadCombinedLogs();
     refreshLogPanels();
   } catch (err) {
@@ -1644,7 +1744,7 @@ async function triggerEventDueLogs(today, autoLogs, scope, state) {
     }
   } catch (err) {
     // events 컬렉션 빈 채로 시작했을 때 정상
-    console.warn('[6C-3] 이벤트 자동 발행 skip:', err.message);
+    console.warn('[6C-3] 이벤트 자동 발행 실패:', err.message); throw err;
   }
 }
 
@@ -1675,7 +1775,7 @@ async function triggerScheduleDueLogs(today, autoLogs, scope, state) {
       });
     }
   } catch (err) {
-    console.error('[6C-3] 입고 예정 자동 발행 실패:', err);
+    console.error('[6C-3] 입고 예정 자동 발행 실패:', err); throw err;
   }
 }
 
@@ -1766,7 +1866,7 @@ async function triggerMinStockLogs(today, autoLogs, scope, state) {
       });
     }
   } catch (err) {
-    console.error('[6C-3] 최소재고 자동 발행 실패:', err);
+    console.error('[6C-3] 최소재고 자동 발행 실패:', err); throw err;
   }
 }
 
@@ -1917,14 +2017,39 @@ function showReceiptSummaryModal(targetProductions, dateStr) {
   `);
 }
 
+async function prepareReceiptAction(productionId) {
+  try {
+    const initial = await createServerReadScope().getDoc(doc(db, 'productions', productionId));
+    if (!initial.exists()) throw new Error('생산 자료가 삭제되었습니다.');
+    const first = initial.data();
+    const action = await openAction({ refs: [
+      'productions/' + productionId, 'recipes/' + first.recipeId,
+      'settings/systemValues', 'closings/' + first.date,
+    ] });
+    const [p, recipe, sysVals] = action.values;
+    if (!p || p.status === 'deleted' || p.recipeId !== first.recipeId || p.date !== first.date) throw new Error('생산 정보가 변경되었습니다. 다시 열어주세요.');
+    return { action, p, recipe, sysVals: sysVals || {} };
+  } catch (error) { alert(error.message); return null; }
+}
+
+async function prepareMainCommand(roles) {
+  const action = await openAction({ roles });
+  if (!await loadAllData(createServerReadScope(), { autoLogsEnabled: false })) throw new Error('화면이 변경되었습니다.');
+  const modelFingerprint = () => fingerprint({ nextProductions, overdueNextProductions, recipes, completionDoc,
+    overdueCompletionDoc, blockingData, meatStocks, eggStock });
+  const original = modelFingerprint();
+  return async () => {
+    await action.confirm();
+    if (!await loadAllData(createServerReadScope(), { autoLogsEnabled: false })) throw new Error('화면이 변경되었습니다.');
+    if (modelFingerprint() !== original) throw new Error('생산·재고·마감 조건이 변경되었습니다. 입력을 확인하고 다시 시도해주세요.');
+  };
+}
+
 // [spec_v27 P2] 생식 제품 입고 모달 — 판수×판당팩수+낱개 → 박스/낱개 환산, productions 완료 + productTransferRequests outbox
 async function openProductReceiptModal(productionId) {
-  const p = [
-    ...selectedDateProductions,
-    ...overdueProductions,
-    ...productions,
-    ...nextProductions,
-  ].find(x => x.id === productionId);
+  const prepared = await prepareReceiptAction(productionId);
+  if (!prepared) return;
+  const { action, p, recipe, sysVals } = prepared;
   if (!p || p.category !== 'raw') return; // 동결건조 제품입고는 Phase 3
   if (p.date > getToday()) {
     alert('미래 날짜의 제품 입고는 입력할 수 없습니다.');
@@ -1943,16 +2068,8 @@ async function openProductReceiptModal(productionId) {
     if (!ok) return;
   }
 
-  const recipe = recipes.find(r => r.id === p.recipeId);
   const target = recipe?.target || p.target || '';
 
-  let sysVals = {};
-  try {
-    const snap = await getDoc(doc(db, 'settings', 'systemValues'));
-    if (snap.exists()) sysVals = snap.data();
-  } catch (err) {
-    console.error('[receipt] systemValues load failed:', err);
-  }
   // 판당 팩수: 레시피별 오버라이드 우선 (예: 램/래빗 55g = 180팩/판), 없으면 시스템 설정값
   const recipeOverride = Number(recipe?.packsPerPlate);
   const hasOverride = Number.isFinite(recipeOverride) && recipeOverride > 0;
@@ -2024,12 +2141,17 @@ async function openProductReceiptModal(productionId) {
   compute();
 
   document.getElementById('pr_cancel').addEventListener('click', cleanup);
-  document.getElementById('pr_confirm').addEventListener('click', async () => {
+  document.getElementById('pr_confirm').addEventListener('click', async (event) => {
     const r = compute();
     if (!r) { platesEl.focus(); return; }
     const method = document.getElementById('pr_method').value || null;
     const revision = (p.receivedRevision || 0) + 1;
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    button.disabled = true;
     try {
+      await action.confirm();
+      if (await blockIfClosed(p.date)) return;
       const batch = writeBatch(db);
       batch.update(doc(db, 'productions', p.id), {
         received: true,
@@ -2076,7 +2198,7 @@ async function openProductReceiptModal(productionId) {
     } catch (err) {
       console.error('[receipt] save failed:', err);
       alert('제품 입고 저장 중 오류가 발생했습니다: ' + (err.message || err));
-    }
+    } finally { button.disabled = false; }
   });
 }
 
@@ -2093,12 +2215,9 @@ async function loadReceiptStaffOptions(groups = ['senior', 'office']) {
 }
 
 async function openFreezeDryReceiptModal(productionId) {
-  const p = [
-    ...selectedDateProductions,
-    ...overdueProductions,
-    ...productions,
-    ...nextProductions,
-  ].find(x => x.id === productionId);
+  const prepared = await prepareReceiptAction(productionId);
+  if (!prepared) return;
+  const { action, p, recipe, sysVals } = prepared;
   if (!p || p.category !== 'freezeDry') return;
   if (p.date > getToday()) {
     alert('미래 날짜의 동결건조 입고는 입력할 수 없습니다.');
@@ -2106,7 +2225,6 @@ async function openFreezeDryReceiptModal(productionId) {
   }
   if (await blockIfClosed(p.date)) return;
 
-  const recipe = recipes.find(r => r.id === p.recipeId);
   const productName = recipe?.displayName || p.recipeName || recipe?.name || '동결건조';
   const isTender = p.received
     ? p.receivedFreezeType === 'frozenPan'
@@ -2175,7 +2293,11 @@ async function openFreezeDryReceiptModal(productionId) {
     }
     if (await blockIfClosed(p.date)) return;
 
+    const button = document.getElementById('fd_confirm');
+    if (button.disabled) return;
+    button.disabled = true;
     try {
+      await action.confirm();
       if (p.received && p.receivedLotId) {
         const saved = await adjustExistingFreezeDryReceipt({ p, productName, qty, staffName, isTender });
         if (!saved) return;
@@ -2194,7 +2316,7 @@ async function openFreezeDryReceiptModal(productionId) {
     } catch (err) {
       console.error('[freezeDryReceipt] save failed:', err);
       alert('동결건조 입고 저장 중 오류가 발생했습니다: ' + (err.message || err));
-    }
+    } finally { button.disabled = false; }
   });
 }
 
@@ -2592,6 +2714,8 @@ function renderQuickInfo(isCompleted) {
 }
 
 async function handleTomorrowLoad(runDate) {
+  let confirmCurrent;
+  try { confirmCurrent = await prepareMainCommand(); } catch (error) { alert(error.message); return; }
   const today = getToday();
   const baseDate = runDate || today;
   const isRetroactive = baseDate !== today;
@@ -2638,8 +2762,17 @@ async function handleTomorrowLoad(runDate) {
   document.getElementById('btnConfirmLoad').addEventListener('click', async () => {
     const staff = document.getElementById('m_staff').value;
     if (!staff) { alert('담당자를 선택해주세요.'); return; }
-    closeModal();
-    await executeProductionLoad(baseDate, staff, targetProductions);
+    const button = document.getElementById('btnConfirmLoad');
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+      await confirmCurrent();
+      const latestBlockers = await gatherTomorrowLoadBlockers(baseDate, targetProductions);
+      if (latestBlockers.length) { showTomorrowLoadBlockersModal(latestBlockers); return; }
+      closeModal();
+      await executeProductionLoad(baseDate, staff, targetProductions);
+    } catch (error) { alert(error.message); }
+    finally { button.disabled = false; }
   });
 }
 // ============================================================
@@ -3173,6 +3306,8 @@ async function executeProductionLoad(today, staffName, targetProductions = nextP
 }
 
 async function handleCancelCompletion() {
+  let confirmCurrent;
+  try { confirmCurrent = await prepareMainCommand(); } catch (error) { alert(error.message); return; }
   const __c = await showConfirmModal({ title:'내일생산불러오기 취소', message:'내일생산불러오기를 취소하시겠습니까?\n차감된 재고가 복원됩니다.', confirmText:'취소', danger:true }); if (!__c) return;
   const reason = await showPromptModal({
     title: '내일생산불러오기 취소',
@@ -3186,6 +3321,7 @@ async function handleCancelCompletion() {
   if (!reason) return;
 
   const today = getToday();
+  try { await confirmCurrent(); } catch (error) { alert(error.message); return; }
   const cancelStaffName = completionDoc?.staffName || 'unknown';
   const productionBatchId = `productionCompletion:${completionDoc?.runDate || today}`;
 
@@ -3272,6 +3408,8 @@ async function handleCancelCompletion() {
 //   권한: 모든 role (admin + office + production) — 운영자 결정
 //   차단 발견 시: 롤백 완료 상태로 두고 함수 종료. 사용자가 차단 처리 후 [내일생산불러오기]로 재마감.
 async function handleRefreshCompletion() {
+  let confirmCurrent;
+  try { confirmCurrent = await prepareMainCommand(['admin','office']); } catch (error) { alert(error.message); return; }
   // [권한 매트릭스 E3] production은 메인 새로고침(ledger 롤백+재차감) 불가
   if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
     alert('새로고침은 대표/사무실 계정만 가능합니다.');
@@ -3306,6 +3444,7 @@ async function handleRefreshCompletion() {
   if (reason === null || !reason) return;
 
   const today = getToday();
+  try { await confirmCurrent(); } catch (error) { alert(error.message); return; }
   const oldStaffName = completionDoc?.staffName || 'unknown';
   const productionBatchId = `productionCompletion:${completionDoc?.runDate || today}`;
 
@@ -3501,7 +3640,7 @@ function showModal(html) {
   // 외부 클릭 닫힘 비활성화 (묶음 1F: 모달 사라짐 이슈 우회)
 }
 
-window.closeModal = function() {
+registerCloseModal('main', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
-};
+});

@@ -1,3 +1,4 @@
+import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, writeBatch
@@ -1655,7 +1656,7 @@ function showModal(html) {
   // 명시적인 취소/저장 버튼으로만 닫힘
 }
 
-window.closeModal = function() {
+registerCloseModal('frozenPan', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
-};
+});

@@ -1,4 +1,10 @@
-import { MENUS, currentUser, currentUserRole, currentMenu, setCurrentMenu, handleLogout } from './app.js';
+import { flags, performanceDisabled } from './config/performanceFlags.js';
+import { createDisplayScope, displayPool } from './state/displayReads.js';
+import { sessionStore } from './state/sessionStore.js';
+import { disposePage } from './utils/pageLifecycle.js';
+import { dismissAllModals } from './utils/modalManager.js';
+import { canLeavePage } from './utils/formDraft.js';
+import { MENUS, currentUser, currentUserRole, currentMenu, setCurrentMenu, handleLogout, commitCurrentMenu, registerNavigationHandler } from './app.js';
 import { renderPage } from './router.js';
 import { formatKstDate, formatKstDateWithDay, getTodayKST } from './utils/date.js';
 import { db } from './firebase.js';
@@ -6,6 +12,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { showConfirmModal } from './utils/modal.js';
 import { loadPartAlerts } from './services/equipmentParts.js';
 import { createReadScope } from './services/readScope.js';
+import { openAction, fingerprint } from './services/actionGateway.js';
 
 // [Phase 3d] 모달 자동 오픈 1회 플래그 — 모듈 레벨에서 유지
 let blockingModalAutoShown = false;
@@ -44,10 +51,45 @@ function getUserBadgeText() {
   return `${localPart} (${roleLabel})`;
 }
 
-export function renderLayout() {
-  const scope = createReadScope();
-  const visibleMenus = MENUS.filter(m => m.roles.includes(currentUserRole));
+let navigationPending = false;
+let nextMenu = null;
+let shellIdentity = null;
+let shellRefreshTimer;
+registerNavigationHandler(navigate);
+sessionStore.onClear(() => {
+  shellIdentity = null; nextMenu = null; disposePage(); dismissAllModals(); clearTimeout(shellRefreshTimer);
+  window.__blockingItems = null; blockingModalAutoShown = false;
+});
+export async function navigate(menuId) {
+  const menu = MENUS.find(item => item.id === menuId);
+  if (!menu || !menu.roles.includes(currentUserRole)) return;
+  nextMenu = menuId;
+  if (navigationPending) return;
+  navigationPending = true;
+  const epoch = sessionStore.epoch;
+  const previous = currentMenu;
+  try {
+    const allowed = await canLeavePage();
+    if (epoch !== sessionStore.epoch || !currentUser) return;
+    if (!allowed) { history.replaceState(null, '', '#' + previous); return; }
+    const target = nextMenu;
+    disposePage(); dismissAllModals();
+    commitCurrentMenu(target);
+    navigationPending = false;
+    renderLayout();
+  } finally { navigationPending = false; nextMenu = null; }
+}
 
+export function renderLayout() {
+  if (navigationPending) return;
+  const retained = flags.shell && flags.store && !performanceDisabled();
+  const scope = retained ? createDisplayScope('shell') : createReadScope();
+  const visibleMenus = MENUS.filter(m => m.roles.includes(currentUserRole));
+  if (!visibleMenus.some(menu => menu.id === currentMenu)) commitCurrentMenu('main');
+
+  const identity = currentUser?.uid + ':' + currentUserRole;
+  const reuse = retained && shellIdentity === identity && document.querySelector('.app-wrapper');
+  if (!reuse) {
   document.getElementById('app').innerHTML = `
     <div class="app-wrapper">
       <div class="block-banner" id="blockBanner" style="display:none"></div>
@@ -102,10 +144,32 @@ export function renderLayout() {
     banner.addEventListener('click', handleBannerClick);
   }
 
+  shellIdentity = identity;
+  } else {
+    const previous = document.getElementById('mainContent');
+    const host = document.createElement('main'); host.id = 'mainContent'; host.className = 'main-content';
+    previous.replaceWith(host);
+    document.querySelectorAll('.nav-btn').forEach(button => button.classList.toggle('active', button.dataset.menu === currentMenu));
+  }
   updateSubbar(scope);
   updateEquipmentBadge(scope);
   updateBlockingBanner(scope);
   updateClosingButton(scope);
+  if (retained) displayPool.onChange('shell', ({ error } = {}) => {
+    clearTimeout(shellRefreshTimer);
+    if (error) {
+      const button = document.getElementById('closingBtn'); if (button) button.disabled = true;
+      if (error.code === 'permission-denied') {
+        sessionStore.clear(); document.getElementById('app').innerHTML = '<p>접근 권한을 다시 확인하려면 새로고침해주세요.</p>';
+      }
+      return;
+    }
+    shellRefreshTimer = setTimeout(() => {
+      if (!currentUser || !document.getElementById('mainContent')) return;
+      const fresh = createDisplayScope('shell');
+      updateSubbar(fresh); updateEquipmentBadge(fresh); updateBlockingBanner(fresh); updateClosingButton(fresh);
+    }, 150);
+  });
   registerHashListener();
   // 현재 메뉴를 주소에 반영 (직접 접속/새로고침 시)
   if ((window.location.hash || '').replace('#', '') !== currentMenu) {
@@ -120,7 +184,7 @@ async function updateEquipmentBadge(scope = createReadScope()) {
   if (!btn) return;
   try {
     const today = getTodayKST();
-    const alerts = await scope.once('equipmentAlerts:' + today, () => loadPartAlerts(today));
+    const alerts = await scope.once('equipmentAlerts:' + today, () => loadPartAlerts(today, scope));
     if (!btn.isConnected) return;
     const stillThere = document.querySelector('.nav-btn[data-menu="equipment"]');
     if (!stillThere) return;
@@ -455,7 +519,7 @@ async function updateClosingButton(scope = createReadScope()) {
       return;
     }
 
-    const earliest = await scope.once('earliestUnclosed', () => getEarliestUnclosedWorkday());
+    const earliest = await scope.once('earliestUnclosed', () => getEarliestUnclosedWorkday(null, scope));
     if (!btn.isConnected) return;
 
     if (earliest === null) {
@@ -563,6 +627,7 @@ async function handleLogoutClick() {
  * 전체 담당자(senior+lead+office) 선택 가능.
  */
 async function showCloseConfirmModal(targetDate) {
+  const action = await openAction({ refs: ['closings/' + targetDate] });
   // 기존 모달 제거
   const existing = document.getElementById('closeConfirmOverlay');
   if (existing) existing.remove();
@@ -624,6 +689,18 @@ async function showCloseConfirmModal(targetDate) {
     okBtn.textContent = '처리 중...';
 
     try {
+      await action.confirm();
+      const { assertAutomaticAlertsReady } = await import('./pages/main.js');
+      await assertAutomaticAlertsReady();
+      const { getAllBlockingItems } = await import('./services/closingChecks.js');
+      const latest = await getAllBlockingItems(targetDate);
+      if (latest.totalBlocked > 0) throw new Error('처리하지 않은 항목이 생겼습니다. 메인에서 확인해주세요.');
+      if (latest.totalWarnings > 0 && !await showBlockingModal({ variant: 'warning', data: latest })) {
+        okBtn.disabled = false; okBtn.textContent = '마감'; return;
+      }
+      await action.confirm();
+      const finalBlocks = await getAllBlockingItems(targetDate);
+      if (fingerprint(finalBlocks) !== fingerprint(latest)) throw new Error('마감 확인 중 처리 항목이 변경되었습니다. 다시 확인해주세요.');
       const { closeDate } = await import('./closing.js');
       await closeDate(targetDate, staffName);
       overlay.remove();
@@ -645,6 +722,7 @@ async function showCloseConfirmModal(targetDate) {
  * 전체 담당자(senior+lead+office) 선택 가능.
  */
 async function showReleaseConfirmModal(targetDate) {
+  const action = await openAction({ refs: ['closings/' + targetDate] });
   // 기존 모달 제거
   const existing = document.getElementById('releaseConfirmOverlay');
   if (existing) existing.remove();
@@ -716,6 +794,7 @@ async function showReleaseConfirmModal(targetDate) {
     okBtn.textContent = '처리 중...';
 
     try {
+      await action.confirm();
       const { releaseClosing } = await import('./closing.js');
       await releaseClosing(targetDate, staffName, reason);
       overlay.remove();

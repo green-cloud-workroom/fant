@@ -1,3 +1,4 @@
+import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, where, writeBatch
@@ -7,7 +8,7 @@ import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { showConfirmModal } from '../utils/modal.js';
-import Sortable from 'sortablejs';
+import Sortable from '../utils/sortable.js';
 
 let bagTypes = [];
 
@@ -716,7 +717,7 @@ function getRoleStaffLabel() {
   return '시스템';
 }
 
-window.closeModal = function() {
+registerCloseModal('bag', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
-};
+});

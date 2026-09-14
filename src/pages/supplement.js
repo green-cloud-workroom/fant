@@ -1,9 +1,10 @@
+import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
   collection, doc, getDoc, getDocs, limit, orderBy, query, where, runTransaction,
   serverTimestamp,
 } from 'firebase/firestore';
-import * as XLSX from 'xlsx';
+
 import { currentUser, currentUserRole } from '../app.js';
 import { getTodayKST } from '../utils/date.js';
 import { loadMenuStaffGroups, STAFF_GROUP_LABELS } from '../services/menuStaffGroups.js';
@@ -43,12 +44,15 @@ export async function renderSupplement() {
 }
 
 async function loadSupplementThresholds() {
+  const host = document.getElementById('mainContent');
   const values = await loadSystemValues();
+  if (document.getElementById('mainContent') !== host) return;
   supplementThresholdYellow = Number(values.supplementThresholdYellow) || 10;
   supplementThresholdRed = Number(values.supplementThresholdRed) || 5;
 }
 
 async function loadSupplementData() {
+  const host = document.getElementById('mainContent');
   const dateColumns = getSupplementDateColumns();
   const rangeStart = dateColumns[dateColumns.length - 1]; // 가장 과거 일자
 
@@ -59,6 +63,7 @@ async function loadSupplementData() {
     getDocs(query(collection(db, 'supplementLogs'), where('date', '>=', rangeStart))),
   ]);
 
+  if (document.getElementById('mainContent') !== host) return;
   supplementTypes = typeSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   supplementStocks = stockSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   supplementLogs = logSnap.docs
@@ -137,7 +142,8 @@ function getFilteredSupplementTypes() {
   });
 }
 
-function downloadSupplementStockExcel() {
+async function downloadSupplementStockExcel() {
+  const XLSX = await import('../utils/spreadsheet.js');
   const filtered = getFilteredSupplementTypes();
   if (filtered.length === 0) {
     alert('다운로드할 영양제 SKU가 없습니다.');
@@ -895,9 +901,9 @@ function showModal(html, extraClass = '') {
   });
 }
 
-window.closeModal = function() {
+registerCloseModal('supplement', function() {
   document.querySelector('.modal-overlay')?.remove();
-};
+});
 
 async function loadSupplementMenuStaffGroups() {
   supplementMenuStaffGroups = await loadMenuStaffGroups();

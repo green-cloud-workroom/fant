@@ -8,8 +8,8 @@ test('closing: shared refresh performs one read per query, preserves all 14 date
   const result=await Promise.all(Array.from({length:3},()=>api.findActionableClosingDate(env.today,null,scope)));
   assert.deepEqual(result,[null,null,null]);
   assert.equal(env.state.reads.filter(r=>r.kind==='query'&&r.path==='productions').length,1);
-  assert.equal(env.state.reads.filter(r=>r.kind==='query'&&r.path==='activityLogs').length,14);
-  assert.ok(env.state.reads.length<=41,`reads: ${env.state.reads.length}`);
+  assert.equal(env.state.reads.filter(r=>r.kind==='query'&&r.path==='activityLogs').length,1);
+  assert.ok(env.state.reads.length<=15,`reads: ${env.state.reads.length}`);
 });
 
 for(const scenario of ['schedule','receipt','egg','productionLog','officeLog','autoRepack','frozenOrder','unclosed'])test('closing preserves '+scenario,async()=>{
@@ -53,7 +53,7 @@ test('existing 80 alerts require no individual document reads or writes',async()
   const env=await environment();const {createAutoLogBatch}=await env.load('src/services/autoLogs.js');
   const batch=createAutoLogBatch(env.state.rows.activityLogs);
   for(let i=0;i<80;i++)batch.enqueue({action:'minStock',subAction:'alert',date:env.today,dedupKey:'supplementMin:alert:s'+i});
-  assert.equal(await batch.flush(),false);assert.equal(env.state.reads.length,0);assert.equal(env.state.writes.length,0);
+  assert.equal((await batch.flush()).createdIds.length,0);assert.equal(env.state.reads.length,0);assert.equal(env.state.writes.length,0);
 });
 
 test('new alerts are deduplicated, bounded to 4 concurrent transactions, and never overwrite acknowledgement',async()=>{
@@ -61,7 +61,7 @@ test('new alerts are deduplicated, bounded to 4 concurrent transactions, and nev
   const batch=createAutoLogBatch([]);
   for(let i=0;i<12;i++){const log={action:'minStock',subAction:'alert',date:env.today,dedupKey:'new'+i,message:'test'};batch.enqueue(log);batch.enqueue(log);}
   env.state.rows.activityLogs.push({id:`auto_minStock_alert_${env.today}_new0`,date:env.today,acknowledged:true,acknowledgedBy:'other-tab'});
-  assert.equal(await batch.flush(),true);assert.equal(env.state.transactions,12);assert.equal(env.state.writes.length,11);
+  const result=await batch.flush();assert.equal(result.createdIds.length,11);assert.equal(result.existingIds.length,1);assert.equal(result.failedIds.length,0);assert.equal(env.state.transactions,12);assert.equal(env.state.writes.length,11);
   assert.ok(env.state.peakTransactions<=4);assert.equal(env.state.rows.activityLogs.find(r=>r.id.endsWith('_new0')).acknowledgedBy,'other-tab');
 });
 

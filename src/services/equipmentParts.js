@@ -19,8 +19,8 @@ export async function loadEquipments() {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-export async function loadEquipmentParts() {
-  const snap = await getDocs(query(collection(db, 'equipmentParts'), orderBy('sortOrder')));
+export async function loadEquipmentParts(scope = { getDocs }) {
+  const snap = await scope.getDocs(query(collection(db, 'equipmentParts'), orderBy('sortOrder')));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
@@ -107,8 +107,8 @@ export function collectPartAlerts(parts, today = getTodayKST()) {
   return alerts;
 }
 
-export async function loadPartAlerts(today = getTodayKST()) {
-  const parts = await loadEquipmentParts();
+export async function loadPartAlerts(today = getTodayKST(), scope) {
+  const parts = await loadEquipmentParts(scope);
   return collectPartAlerts(parts, today);
 }
 

@@ -1,3 +1,4 @@
+import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, updateDoc, query, orderBy, getDoc, where, writeBatch,
@@ -10,7 +11,7 @@ import { showConfirmModal } from '../utils/modal.js';
 import { makeSupplementId } from '../utils/supplement.js';
 import { formatIngredientQtyValue, round2 } from '../utils/number.js';
 import { buildChickenOrderText } from '../utils/orderCopy.js';
-import Sortable from 'sortablejs';
+import Sortable from '../utils/sortable.js';
 
 let recipes = [];
 let productions = [];
@@ -1354,7 +1355,7 @@ function showModal(html) {
   });
 }
 
-window.closeModal = function() {
+registerCloseModal('production', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
-};
+});

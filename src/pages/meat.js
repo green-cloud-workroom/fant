@@ -1,3 +1,4 @@
+import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, where, writeBatch, setDoc
@@ -7,7 +8,7 @@ import { currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { recordMeatLog } from '../services/meatLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
-import Sortable from 'sortablejs';
+import Sortable from '../utils/sortable.js';
 
 let meatTypes = [];
 let meatStockCategories = [];
@@ -2015,12 +2016,7 @@ function showMeatTypesModal(options = {}) {
   `);
 
   initMeatTypeSortable();
-  const baseCloseModal = window.closeModal;
-  window.closeModal = function() {
-    destroyMeatTypeSortable();
-    baseCloseModal?.();
-    window.closeModal = baseCloseModal;
-  };
+
 
   document.querySelectorAll('.m-unit-weight').forEach(input => {
     input.addEventListener('change', async (e) => {
@@ -2243,7 +2239,8 @@ function showModal(html) {
   });
 }
 
-window.closeModal = function() {
+registerCloseModal('meat', function() {
+  destroyMeatTypeSortable();
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
-};
+});

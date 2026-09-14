@@ -1,3 +1,4 @@
+import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc
@@ -872,7 +873,7 @@ function showModal(html) {
   });
 }
 
-window.closeModal = function() {
+registerCloseModal('schedule', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
-};
+});

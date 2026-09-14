@@ -6,11 +6,19 @@ export let currentUser = null;
 export let currentUserRole = null;
 
 // 사용자 정보 로드
-export async function loadUserInfo(user) {
+let userInfoVersion = 0;
+export async function loadUserInfo(user, forceRefresh = true) {
+  const version = ++userInfoVersion;
+  const tokenResult = await user.getIdTokenResult(forceRefresh);
+  if (version !== userInfoVersion || auth.currentUser?.uid !== user.uid) return false;
   currentUser = user;
-  const tokenResult = await user.getIdTokenResult(true);
   currentUserRole = tokenResult.claims.roles?.production || null;
+  if (!['admin', 'office', 'production'].includes(currentUserRole)) {
+    clearUserInfo(); throw new Error('생산관리 앱 접근 권한이 없습니다.');
+  }
+  return true;
 }
+export function clearUserInfo() { userInfoVersion++; currentUser = null; currentUserRole = null; }
 
 // 메뉴 목록
 export const MENUS = [
@@ -39,7 +47,13 @@ function getMenuFromHash() {
 
 export let currentMenu = getMenuFromHash() || sessionStorage.getItem('lastMenu') || 'main';
 
+let navigationHandler = null;
+export function registerNavigationHandler(handler) { navigationHandler = handler; }
 export function setCurrentMenu(menuId) {
+  if (navigationHandler) return navigationHandler(menuId);
+  return commitCurrentMenu(menuId);
+}
+export function commitCurrentMenu(menuId) {
   currentMenu = menuId;
   sessionStorage.setItem('lastMenu', menuId);
   if ((window.location.hash || '').replace('#', '') !== menuId) {

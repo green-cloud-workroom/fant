@@ -7,7 +7,7 @@ import { recordActivity } from '../services/activityLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { makeSupplementId, makeSupplementName, makeSupplementSortOrder } from '../utils/supplement.js';
 import { showConfirmModal } from '../utils/modal.js';
-import Sortable from 'sortablejs';
+import Sortable from '../utils/sortable.js';
 
 let recipes = [];
 let selectedRecipeId = null;

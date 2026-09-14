@@ -6,8 +6,9 @@
 // 각 함수 시그니처: (dateStr) => Promise<{ blocked: boolean, reason: string, count: number }>
 //
 import { createReadScope } from './readScope.js';
+import { createServerReadScope } from './serverReadScope.js';
 import { db } from '../firebase.js';
-import { collection, doc, query, where } from 'firebase/firestore';
+import { collection, doc, query, where, documentId } from 'firebase/firestore';
 import { getNextBusinessDayByType, ensureHolidaysCache } from '../utils/date.js';
 import { getEarliestUnclosedWorkday, isDateClosed } from '../closing.js';
 import {
@@ -138,11 +139,13 @@ async function loadNextDayProductions(dateStr, scope = createReadScope()) {
 }
 
 async function loadActivityLogsByDate(dateStr, scope = createReadScope()) {
-  const snap = await scope.getDocs(query(
+  return scope.once('activityLogsForDate:' + dateStr, async () => {
+    const snap = await scope.getDocs(query(
     collection(db, 'activityLogs'),
     where('date', '==', dateStr)
   ));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  });
 }
 
 async function loadClosingFlags(scope = createReadScope()) {
@@ -151,6 +154,7 @@ async function loadClosingFlags(scope = createReadScope()) {
     if (!snap.exists()) return DEFAULT_CLOSING_FLAGS;
     return { ...DEFAULT_CLOSING_FLAGS, ...snap.data() };
   } catch (err) {
+    if (scope.serverOnly) throw err;
     console.warn('[closingChecks] closingFlags 로드 실패, 기본값 ON 사용:', err);
     return DEFAULT_CLOSING_FLAGS;
   }
@@ -176,8 +180,8 @@ async function loadClosingFlags(scope = createReadScope()) {
  *   items: Array<{ id: number, label: string, reason: string, count: number, jumpMenu: string }>
  * }>}
  */
-export async function getAllBlockingItems(dateStr, scope = createReadScope()) {
-  await scope.once('holidaysReady', () => ensureHolidaysCache());
+export async function getAllBlockingItems(dateStr, scope = createServerReadScope()) {
+  await scope.once('holidaysReady', () => ensureHolidaysCache(scope));
   const [
     item1,
     item2,
@@ -242,14 +246,14 @@ export async function getAllBlockingItems(dateStr, scope = createReadScope()) {
  * @param {Array|null} productions - 이미 로드한 productions 배열(선택)
  * @returns {Promise<{date:string, closed:boolean, blockingData:Object}|null>}
  */
-export function findActionableClosingDate(today, productions = null, scope = createReadScope()) {
+export function findActionableClosingDate(today, productions = null, scope = createServerReadScope()) {
   return scope.once('actionable:' + today, () => findActionableWithScope(today, productions, scope));
 }
 
 async function findActionableWithScope(today, productions, scope) {
-  await scope.once('holidaysReady', () => ensureHolidaysCache());
+  await scope.once('holidaysReady', () => ensureHolidaysCache(scope));
   const [earliestUnclosed, allProductions] = await Promise.all([
-    scope.once('earliestUnclosed', () => getEarliestUnclosedWorkday()),
+    scope.once('earliestUnclosed', () => getEarliestUnclosedWorkday([], scope)),
     productions || loadAllProductions(scope),
   ]);
   const productionDates = [...new Set((allProductions || [])
@@ -261,11 +265,30 @@ async function findActionableWithScope(today, productions, scope) {
   const candidates = new Set(productionDates);
   if (earliestUnclosed && earliestUnclosed < today) candidates.add(earliestUnclosed);
 
+  // At most 14 distinct production days plus the earliest unclosed day.
+  // A failed batch falls back per day so a later failure cannot hide an earlier blocker.
+  const dates = [...candidates].sort();
+  if (!dates.length) return null;
+  const closings = scope.getDocs(query(collection(db, 'closings'), where(documentId(), 'in', dates))).catch(() => null);
+  const logs = scope.getDocs(query(collection(db, 'activityLogs'), where('date', 'in', dates))).catch(() => null);
+  for (const date of dates) {
+    scope.once('closed:' + date, async () => {
+      const batch = await closings;
+      if (!batch) return isDateClosed(date, scope);
+      return batch.docs.find(d => d.id === date)?.data().status === 'closed';
+    });
+    scope.once('activityLogsForDate:' + date, async () => {
+      const batch = await logs;
+      const snapshot = batch || await scope.getDocs(query(collection(db, 'activityLogs'), where('date', '==', date)));
+      return snapshot.docs.map(d => ({ id: d.id, ...d.data() })).filter(row => row.date === date);
+    });
+  }
+
   // Fetch concurrently, but preserve the original earliest-date/error order.
   // Every candidate reuses the same refresh-scoped production/stock/log reads.
   const results = await Promise.allSettled([...candidates].sort().map(async date => {
     const [closed, blockingData] = await Promise.all([
-      scope.once('closed:' + date, () => isDateClosed(date)),
+      scope.once('closed:' + date, () => isDateClosed(date, scope)),
       getAllBlockingItems(date, scope),
     ]);
     return { date, closed, blockingData };

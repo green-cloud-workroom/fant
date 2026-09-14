@@ -13,7 +13,7 @@ import {
 } from '../services/menuStaffGroups.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { getKoreanPublicHolidaysForYears, PUBLIC_HOLIDAY_SOURCE } from '../services/holidayMaster.js';
-import Sortable from 'sortablejs';
+import Sortable from '../utils/sortable.js';
 
 const COPY_SHEET_ORDER_DEFAULT = ['rawCat', 'rawDog', 'freezeCat', 'freezeDog', 'freezeCommon'];
 
@@ -47,48 +47,41 @@ const CLOSING_FLAG_WARNS = [
 ];
 
 export async function renderSettings() {
-  if (false && currentUserRole === 'production') {
-    alert('설정은 대표/사무 계정만 가능합니다.');
-    return;
-  }
-
+  if (!['admin','office'].includes(currentUserRole)) return;
   const content = document.getElementById('mainContent');
-  content.innerHTML = `<div style="padding:24px;"><p>설정 로딩 중...</p></div>`;
+  const isWriter = true;
+  const canEditMeatPrice = true;
+  const titles = ["담당자 관리","메뉴별 담당자 그룹","마감 차단/경고 설정","공휴일 관리","생산지시서 카테고리 순서","원료 명칭 통합","시스템 설정값","원료 단가 관리"];
+  content.innerHTML = '<div class="settings-wrap"><h2 class="settings-title">설정</h2>' + titles.map(title =>
+    '<details class="settings-section"><summary class="settings-section-summary"><span class="settings-section-title">' + title + '</span><span class="settings-section-toggle">펼치기</span></summary><div class="settings-section-body"></div></details>'
+  ).join('') + '</div>';
+  content.querySelectorAll('.settings-section').forEach((section,index) => {
+    let pending = false, loaded = false;
+    const body = section.querySelector('.settings-section-body');
+    async function fill() {
+      if (!section.open || pending || loaded) return;
+      pending = true;
+      body.textContent = '불러오는 중…';
+      try {
+        switch(index) { case 0: {
+      const staffGroups = await loadStaffGroups();
 
-  const [staffGroups, holidays, closingFlags, systemValues, menuStaffGroups,
-    copySheetOrder, meatPriceRows, ingredientNameRows] = await Promise.all([
-    loadStaffGroups(), loadHolidays(), loadClosingFlags(), loadSystemValues(),
-    loadMenuStaffGroups(), loadCopySheetOrder(), loadMeatPriceRows(getTodayKST()),
-    loadIngredientNameRows(),
-  ]);
-  if (!content.isConnected) return;
-  const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
-  const canEditMeatPrice = isWriter;
-
-  content.innerHTML = `
-    <div class="settings-wrap">
-      <h2 class="settings-title">설정</h2>
-
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">담당자 관리</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+      if (!section.isConnected) return;
+      body.innerHTML = `
         <div class="staff-groups">
           ${renderStaffGroup('senior', '선임', staffGroups.senior, isWriter)}
           ${renderStaffGroup('lead', '주임', staffGroups.lead, isWriter)}
           ${renderStaffGroup('office', '사무', staffGroups.office, isWriter)}
         </div>
-        </div>
-      </details>
+        `;
+      if(isWriter) bindStaffEvents(staffGroups);
+      break;
+    }
+case 1: {
+      const menuStaffGroups = await loadMenuStaffGroups();
 
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">메뉴별 담당자 그룹</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+      if (!section.isConnected) return;
+      body.innerHTML = `
         <p class="settings-section-desc">
           각 메뉴의 담당자 선택에 어떤 그룹을 노출할지 설정합니다. 최소 1개 그룹을 선택해야 합니다.
         </p>
@@ -97,15 +90,15 @@ export async function renderSettings() {
             renderMenuStaffGroupRow(field, menuStaffGroups[field.key], isWriter)
           ).join('')}
         </div>
-        </div>
-      </details>
+        `;
+      if(isWriter) bindMenuStaffGroupEvents(menuStaffGroups);
+      break;
+    }
+case 2: {
+      const closingFlags = await loadClosingFlags();
 
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">마감 차단/경고 설정</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+      if (!section.isConnected) return;
+      body.innerHTML = `
         <p class="settings-section-desc">
           ON인 항목만 마감 시 차단/경고로 동작합니다. OFF로 두면 해당 항목을 무시하고 마감 가능합니다.
         </p>
@@ -119,78 +112,80 @@ export async function renderSettings() {
         <div class="closing-flag-list">
           ${CLOSING_FLAG_WARNS.map(flag => renderFlagRow(flag, closingFlags[flag.key], isWriter)).join('')}
         </div>
-        </div>
-      </details>
+        `;
+      if(isWriter) bindClosingFlagEvents(closingFlags);
+      break;
+    }
+case 3: {
+      const holidays = await loadHolidays();
 
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">공휴일 관리</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+      if (!section.isConnected) return;
+      body.innerHTML = `
         <p class="settings-section-desc">토/일은 자동 처리됩니다. 추가 공휴일만 등록하세요.</p>
         ${renderHolidaysSection(holidays)}
-        </div>
-      </details>
+        `;
+      bindHolidayEvents();
+      break;
+    }
+case 4: {
+      const copySheetOrder = await loadCopySheetOrder();
 
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">생산지시서 카테고리 순서</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+      if (!section.isConnected) return;
+      body.innerHTML = `
           <p class="settings-section-desc">생산지시서 복사 시 카테고리 출력 순서입니다.</p>
           ${renderCopySheetOrderSection(copySheetOrder, isWriter)}
-        </div>
-      </details>
-
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">원료 명칭 통합</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+        `;
+      bindCopySheetOrderEvents(isWriter);
+      break;
+    }
+case 5: {
+      const ingredientNameRows = await loadIngredientNameRows();
+      const staffGroups = await loadStaffGroups();
+      if (!section.isConnected) return;
+      body.innerHTML = `
           <p class="settings-section-desc">레시피에 적힌 원료명을 실제로 통합합니다. 오늘 이후 생산 카드의 원료명도 함께 갱신되고, 과거 기록은 보존됩니다.</p>
           ${renderIngredientNameMergeSection(ingredientNameRows, isWriter)}
-        </div>
-      </details>
+        `;
+      bindIngredientNameMergeEvents(ingredientNameRows, staffGroups, isWriter);
+      break;
+    }
+case 6: {
+      const systemValues = await loadSystemValues();
 
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">시스템 설정값</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+      if (!section.isConnected) return;
+      body.innerHTML = `
         <p class="settings-section-desc">
           생산/재고 계산에 쓰이는 기준값입니다. 변경 시 이후 계산부터 적용됩니다.
         </p>
         <div class="system-value-list">
           ${SYSTEM_VALUE_FIELDS.map(field => renderSystemValueRow(field, systemValues[field.key], isWriter)).join('')}
         </div>
-        </div>
-      </details>
+        `;
+      if(isWriter) bindSystemValueEvents(systemValues);
+      break;
+    }
+case 7: {
+      const meatPriceRows = await loadMeatPriceRows(getTodayKST());
 
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">원료 단가 관리</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+      if (!section.isConnected) return;
+      body.innerHTML = `
           <p class="settings-section-desc">원육 단가를 원/kg 기준 effectiveDate 이력으로 관리합니다.</p>
           ${renderMeatPriceSection(meatPriceRows, canEditMeatPrice)}
-        </div>
-      </details>
-    </div>
-  `;
-
-  if (isWriter) bindStaffEvents(staffGroups);
-  if (isWriter) bindClosingFlagEvents(closingFlags);
-  if (isWriter) bindSystemValueEvents(systemValues);
-  if (isWriter) bindMenuStaffGroupEvents(menuStaffGroups);
-  bindCopySheetOrderEvents(isWriter);
-  bindIngredientNameMergeEvents(ingredientNameRows, staffGroups, isWriter);
-  bindHolidayEvents();
-  bindMeatPriceEvents(meatPriceRows, canEditMeatPrice);
+        `;
+      bindMeatPriceEvents(meatPriceRows, canEditMeatPrice);
+      break;
+    } }
+        loaded = true;
+      } catch (error) {
+        if (section.isConnected) {
+          body.innerHTML = '<p>자료를 불러오지 못했습니다.</p><button class="btn-secondary">다시 시도</button>';
+          body.querySelector('button').addEventListener('click',fill);
+        }
+        console.error('[설정 영역 로드]', error);
+      } finally { pending = false; }
+    }
+    section.addEventListener('toggle',fill);
+  });
 }
 
 function normalizeCopySheetOrder(order) {

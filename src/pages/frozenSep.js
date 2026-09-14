@@ -1,8 +1,9 @@
+import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, setDoc, writeBatch
 } from 'firebase/firestore';
-import Sortable from 'sortablejs';
+import Sortable from '../utils/sortable.js';
 import { currentUserRole } from '../app.js';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
@@ -1129,7 +1130,7 @@ function showModal(html) {
   });
 }
 
-window.closeModal = function() {
+registerCloseModal('frozenSep', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
-};
+});

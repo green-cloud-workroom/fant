@@ -1,4 +1,7 @@
 import { currentMenu } from './app.js';
+import { startNavigation, finishNavigation } from './perf/metrics.js';
+import { beginPage } from './utils/pageLifecycle.js';
+import { setModalOwner } from './utils/modalManager.js';
 
 const pages = {
   settings: () => import('./pages/settings.js').then(module => module.renderSettings),
@@ -21,6 +24,9 @@ const pages = {
 export async function renderPage(menuId, options = {}) {
   const content = document.getElementById('mainContent');
   if (!content) return;
+  const context = beginPage(content, menuId);
+  setModalOwner(menuId);
+  const measurement = startNavigation(menuId);
   const load = pages[menuId];
   if (!load) {
     content.innerHTML = '<div class="page-placeholder"><h2>' + getMenuLabel(menuId) + '</h2><p>준비 중</p></div>';
@@ -31,6 +37,7 @@ export async function renderPage(menuId, options = {}) {
     const render = await load();
     if (document.getElementById('mainContent') !== content || currentMenu !== menuId) return;
     await render(options);
+    finishNavigation(measurement, context.isCurrent);
   } catch (err) {
     console.error('[페이지 로딩 실패]', menuId, err);
     if (document.getElementById('mainContent') !== content || currentMenu !== menuId) return;

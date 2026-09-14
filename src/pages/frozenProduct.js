@@ -1,3 +1,4 @@
+import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, writeBatch,
@@ -9,7 +10,7 @@ import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
 import { recordActivity } from '../services/activityLogs.js';
-import Sortable from 'sortablejs';
+import Sortable from '../utils/sortable.js';
 
 let frozenProducts = [];
 let selectedProductId = null;
@@ -1174,7 +1175,7 @@ function showModal(html) {
   });
 }
 
-window.closeModal = function() {
+registerCloseModal('frozenProduct', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
-};
+});

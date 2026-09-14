@@ -24,21 +24,23 @@ export function makeFirestore({ latencyMs = 0, alertCount = 80 } = {}) {
   };
   const reference = (...parts) => ({ path:parts.filter(p=>typeof p === 'string').join('/'), conditions:[] });
   const delay = () => state.latencyMs ? new Promise(resolve=>setTimeout(resolve,state.latencyMs)) : Promise.resolve();
-  const snapshot = row => ({ id:row?.id, exists:()=>Boolean(row), data:()=>row && {...row} });
+  const snapshot = row => ({ id:row?.id, exists:()=>Boolean(row), data:()=>row && {...row}, metadata:{fromCache:false,hasPendingWrites:false} });
   const getRow = ref => { const parts=ref.path.split('/');const id=parts.pop();return (state.rows[parts.join('/')]||[]).find(row=>row.id===id); };
   const setRow = (ref,data) => {const parts=ref.path.split('/');const id=parts.pop();const key=parts.join('/');const rows=state.rows[key]||=[];const i=rows.findIndex(r=>r.id===id);const row={id,...data};if(i<0)rows.push(row);else rows[i]=row;state.writes.push(ref.path);};
   const api = {
-    collection:(_,...parts)=>reference(...parts), doc:(_,...parts)=>reference(...parts),
+    collection:(_,...parts)=>reference(...parts), doc:(_,...parts)=>reference(...parts), documentId:()=> '__name__',
     where:(field,op,value)=>({type:'where',field,op,value}), orderBy:(field,direction='asc')=>({type:'order',field,direction}), limit:n=>({type:'limit',n}), startAfter:()=>({type:'cursor'}),
     query:(ref,...conditions)=>({...ref,conditions:[...(ref.conditions||[]),...conditions]}),
     queryEqual:(a,b)=>JSON.stringify(a)===JSON.stringify(b),
     async getDoc(ref) {state.reads.push({kind:'doc',...ref});await delay();if(state.failures.has(ref.path))throw Error('fixture read failed: '+ref.path);return snapshot(getRow(ref));},
     async getDocs(ref) {
       state.reads.push({kind:'query',...ref});await delay();if(state.failures.has(ref.path))throw Error('fixture read failed: '+ref.path);
+      const ids = ref.conditions?.find(c=>c.type==='where'&&c.field==='__name__'&&c.op==='in');
+      if(ids && ids.value.some(id=>state.failures.has(ref.path+'/'+id))) throw Error('fixture batch read failed: '+ref.path);
       let rows=[...(state.rows[ref.path]||[])].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
       for(const c of ref.conditions||[]) {
         const fieldValue=r=>c.field==='__name__'?r.id:r[c.field];
-        if(c.type==='where')rows=rows.filter(r=>{const v=fieldValue(r);return c.op==='=='?v===c.value:c.op==='>='?v>=c.value:c.op==='<='?v<=c.value:c.op==='<'?v<c.value:c.op==='>'?v>c.value:false;});
+        if(c.type==='where')rows=rows.filter(r=>{const v=fieldValue(r);return c.op==='in'?c.value.includes(v):c.op==='=='?v===c.value:c.op==='>='?v>=c.value:c.op==='<='?v<=c.value:c.op==='<'?v<c.value:c.op==='>'?v>c.value:false;});
         if(c.type==='order')rows=rows.filter(r=>fieldValue(r)!==undefined).sort((a,b)=>{const av=fieldValue(a),bv=fieldValue(b);return (av<bv?-1:av>bv?1:0)*(c.direction==='desc'?-1:1);});
         if(c.type==='limit')rows=rows.slice(0,c.n);
       }
@@ -59,9 +61,26 @@ export function makeFirestore({ latencyMs = 0, alertCount = 80 } = {}) {
     addDoc:async()=>{throw Error('fixture forbids addDoc');}, updateDoc:async()=>{throw Error('fixture forbids updateDoc');},
     deleteDoc:async()=>{throw Error('fixture forbids deleteDoc');}, writeBatch:()=>{throw Error('fixture forbids writeBatch');},
   };
+  api.getDocFromServer = api.getDoc;
+  api.getDocsFromServer = api.getDocs;
+  const listeners = new Set();
+  api.onSnapshot = (ref, options, next, error) => {
+    const entry = { ref, next, error, active: true };
+    listeners.add(entry);
+    const read = ref.path.split('/').length % 2 === 0 ? api.getDoc : api.getDocs;
+    read(ref).then(snap => { if(entry.active)next({...snap,metadata:{fromCache:false,hasPendingWrites:false}}); }, error);
+    return () => { entry.active=false;listeners.delete(entry); };
+  };
+  state.notify = async path => {
+    for(const entry of listeners)if(entry.ref.path===path || entry.ref.path.startsWith(path+'/')) {
+      const read=entry.ref.path.split('/').length%2===0?api.getDoc:api.getDocs;
+      try { entry.next({...await read(entry.ref),metadata:{fromCache:false,hasPendingWrites:false}}); }
+      catch(error) { entry.error(error); }
+    }
+  };
   return { state, api, dates, today };
 }
 
 export const fixture = makeFirestore({latencyMs:50});
 export const increment = value => ({increment:value});
-export const { collection,doc,where,orderBy,limit,startAfter,query,queryEqual,getDoc,getDocs,serverTimestamp,runTransaction,setDoc,addDoc,updateDoc,deleteDoc,writeBatch } = fixture.api;
+export const { collection,doc,documentId,where,orderBy,limit,startAfter,query,queryEqual,getDoc,getDocs,getDocFromServer,getDocsFromServer,onSnapshot,serverTimestamp,runTransaction,setDoc,addDoc,updateDoc,deleteDoc,writeBatch } = fixture.api;

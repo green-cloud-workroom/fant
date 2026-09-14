@@ -1,3 +1,4 @@
+import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, setDoc, addDoc, updateDoc, getDoc, query, orderBy
@@ -531,7 +532,7 @@ function showModal(html) {
   });
 }
 
-window.closeModal = function() {
+registerCloseModal('egg', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
-};
+});

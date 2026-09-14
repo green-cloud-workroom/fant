@@ -7,7 +7,7 @@ import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, getDoc, addDoc, updateDoc, query, where, writeBatch,
 } from 'firebase/firestore';
-import Sortable from 'sortablejs';
+import Sortable from '../utils/sortable.js';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
@@ -38,7 +38,10 @@ export async function renderEquipment() {
 }
 
 async function reloadAll() {
-  [equipments, parts] = await Promise.all([loadEquipments(), loadEquipmentParts(), loadStaffCache()]);
+  const host = document.getElementById('mainContent');
+  const result = await Promise.all([loadEquipments(), loadEquipmentParts(), loadStaffCache()]);
+  if (document.getElementById('mainContent') !== host) return;
+  [equipments, parts] = result;
 }
 
 function canManage() {
@@ -982,11 +985,11 @@ async function applyPartChange(part, { type, qty, before, after, date, staff, no
 
 let staffCache = {};
 async function loadStaffCache() {
-  if (Object.keys(staffCache).length > 0) return staffCache;
-  for (const key of ['senior', 'lead', 'office']) {
-    const snap = await getDoc(doc(db, 'staffGroups', key));
-    if (snap.exists()) staffCache[key] = snap.data().members || [];
-  }
+  const host = document.getElementById('mainContent');
+  const keys = ['senior', 'lead', 'office'];
+  const rows = await Promise.all(keys.map(key => getDoc(doc(db, 'staffGroups', key))));
+  if (document.getElementById('mainContent') !== host) return {};
+  staffCache = Object.fromEntries(rows.map((snap,index) => [keys[index], snap.exists() ? snap.data().members || [] : []]));
   return staffCache;
 }
 

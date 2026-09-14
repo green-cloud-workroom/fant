@@ -2,7 +2,7 @@ import { getDoc, getDocs, queryEqual } from 'firebase/firestore';
 
 // A single screen refresh owns this scope. Never retain it across saves or
 // navigations: stock/closing actions must create a fresh scope when validating.
-export function createReadScope() {
+export function createReadScope(reader = { getDoc, getDocs }) {
   const documents = new Map();
   const queries = [];
   const tasks = new Map();
@@ -17,10 +17,11 @@ export function createReadScope() {
   }
 
   return {
+    serverOnly: reader.serverOnly === true,
     once,
     getDoc(ref) {
       if (!documents.has(ref.path)) {
-        const pending = getDoc(ref);
+        const pending = reader.getDoc(ref);
         documents.set(ref.path, pending);
         pending.catch(() => documents.delete(ref.path));
       }
@@ -29,7 +30,7 @@ export function createReadScope() {
     getDocs(ref) {
       const existing = queries.find(entry => queryEqual(entry.ref, ref));
       if (existing) return existing.pending;
-      const entry = { ref, pending: getDocs(ref) };
+      const entry = { ref, pending: reader.getDocs(ref) };
       queries.push(entry);
       entry.pending.catch(() => {
         const index = queries.indexOf(entry);

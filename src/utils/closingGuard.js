@@ -16,7 +16,10 @@ import { isDateClosed } from '../closing.js';
  * @returns {Promise<boolean>} true=차단됨(호출 측 중단해야 함), false=통과
  */
 export async function blockIfClosed(dateStr) {
-  if (!dateStr) return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr || '')) {
+    alert('처리 날짜를 확인할 수 없습니다. 화면을 다시 불러온 뒤 시도해주세요.');
+    return true;
+  }
   try {
     const closed = await isDateClosed(dateStr);
     if (closed) {
@@ -26,7 +29,7 @@ export async function blockIfClosed(dateStr) {
     return false;
   } catch (err) {
     console.error('blockIfClosed error:', err);
-    // 에러 시 안전 fallback: 차단하지 않음 (운영자 작업 막히는 것 방지)
-    return false;
+    alert('마감 상태를 서버에서 확인하지 못했습니다. 연결을 확인한 뒤 다시 시도해주세요.');
+    return true;
   }
 }

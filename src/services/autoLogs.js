@@ -8,6 +8,7 @@ export function createAutoLogBatch(existingLogs) {
   const existingIds = new Set(existingLogs.map(log => log.id));
   const pending = new Map();
   return {
+    pendingIds: () => [...pending.keys()],
     enqueue({ action, subAction, date, message, details, dedupKey }) {
       const safeKey = `${action}_${subAction}_${date}_${dedupKey}`.replace(/[^\w-]/g, '_');
       const id = `auto_${safeKey}`;
@@ -21,23 +22,27 @@ export function createAutoLogBatch(existingLogs) {
     },
     async flush() {
       const entries = [...pending.entries()];
+      const result = { createdIds: [], existingIds: [], failedIds: [] };
       let index = 0;
       await Promise.all(Array.from({ length: Math.min(4, entries.length) }, async () => {
         while (index < entries.length) {
           const [id, data] = entries[index++];
           try {
             const ref = doc(db, 'activityLogs', id);
-            await runTransaction(db, async transaction => {
+            const created = await runTransaction(db, async transaction => {
               const existing = await transaction.get(ref);
               if (!existing.exists()) transaction.set(ref, { ...data, timestamp: serverTimestamp() });
+              return !existing.exists();
             });
+            result[created ? 'createdIds' : 'existingIds'].push(id);
           } catch (err) {
+            result.failedIds.push(id);
             console.error('[자동 알림 생성 실패]', id, err);
           }
         }
       }));
       // Even a transaction no-op may have found a log created by another tab.
-      return entries.length > 0;
+      return result;
     },
   };
 }
