@@ -29,3 +29,17 @@ export function publicMainModel(model) {
     combinedLogs:model.combinedLogs.map(row => ({...pick(row,'log'),...(row.details?{details:pick(row.details,'logDetail')}:{})})),
   };
 }
+export function serializePublicModel(value) {
+  if(value == null || typeof value !== 'object') return value;
+  if(typeof value.toMillis === 'function') return {$timestampMillis:value.toMillis()};
+  if(value instanceof Date) return {$timestampMillis:value.getTime()};
+  if(Array.isArray(value)) return value.map(serializePublicModel);
+  return Object.fromEntries(Object.keys(value).sort().map(key=>[key,serializePublicModel(value[key])]));
+}
+export const canonicalPublicJson = value => JSON.stringify(serializePublicModel(value));
+export function revivePublicModel(value, timestamp) {
+  if(value == null || typeof value !== 'object')return value;
+  if(Object.keys(value).length===1 && Number.isFinite(value.$timestampMillis))return timestamp(value.$timestampMillis);
+  if(Array.isArray(value))return value.map(row=>revivePublicModel(row,timestamp));
+  return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,revivePublicModel(item,timestamp)]));
+}
