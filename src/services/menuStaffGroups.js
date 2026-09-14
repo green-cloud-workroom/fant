@@ -1,4 +1,4 @@
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDocFromServer as getDoc } from 'firebase/firestore';
 import { db } from '../firebase.js';
 
 export const DEFAULT_MENU_STAFF_GROUPS = {

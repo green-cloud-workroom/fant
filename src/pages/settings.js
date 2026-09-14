@@ -1,19 +1,27 @@
 import { showPromptModal, showConfirmModal } from '../utils/modal.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, getDoc, setDoc, addDoc, serverTimestamp, writeBatch
+  collection, getDocsFromServer as getDocs, doc, getDocFromServer as getDoc, setDoc, addDoc, serverTimestamp, writeBatch
 } from 'firebase/firestore';
 import { currentUser, currentUserRole } from '../app.js';
 import { getTodayKST, loadHolidaysCache } from '../utils/date.js';
 import { DEFAULT_CLOSING_FLAGS } from '../services/closingChecksLogic.js';
-import { loadSystemValues, SYSTEM_VALUE_FIELDS } from '../services/systemValues.js';
+import { loadSystemValues, SYSTEM_VALUE_FIELDS, DEFAULT_SYSTEM_VALUES } from '../services/systemValues.js';
 import { addMeatPriceHistory, loadMeatPriceRows, pickLatestMeatPrice } from '../services/meatPrices.js';
 import {
-  loadMenuStaffGroups, MENU_STAFF_GROUP_FIELDS, STAFF_GROUP_KEYS, STAFF_GROUP_LABELS
+  loadMenuStaffGroups, MENU_STAFF_GROUP_FIELDS, STAFF_GROUP_KEYS, STAFF_GROUP_LABELS, DEFAULT_MENU_STAFF_GROUPS
 } from '../services/menuStaffGroups.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { getKoreanPublicHolidaysForYears, PUBLIC_HOLIDAY_SOURCE } from '../services/holidayMaster.js';
 import Sortable from '../utils/sortable.js';
+import {fingerprint} from '../services/actionGateway.js';
+import {getPageContext} from '../utils/pageLifecycle.js';
+
+async function assertSettingUnchanged(command,path,key,before,defaults={}) {
+  const snapshot=await command.getDoc(doc(db,path));
+  const value={...defaults,...(snapshot.exists()?snapshot.data():{})}[key];
+  if(fingerprint(value)!==fingerprint(before))throw new Error('다른 작업으로 설정이 변경되었습니다. 입력을 보존하고 최신 자료를 다시 확인해주세요.');
+}
 
 const COPY_SHEET_ORDER_DEFAULT = ['rawCat', 'rawDog', 'freezeCat', 'freezeDog', 'freezeCommon'];
 
@@ -48,6 +56,8 @@ const CLOSING_FLAG_WARNS = [
 
 export async function renderSettings() {
   if (!['admin','office'].includes(currentUserRole)) return;
+  const ready=await settingsResource.load(async()=>({}),{force:true});
+  if(!ready)return;
   const content = document.getElementById('mainContent');
   const isWriter = true;
   const canEditMeatPrice = true;
@@ -139,8 +149,7 @@ case 4: {
       break;
     }
 case 5: {
-      const ingredientNameRows = await loadIngredientNameRows();
-      const staffGroups = await loadStaffGroups();
+      const [ingredientNameRows,staffGroups]=await Promise.all([loadIngredientNameRows(),loadStaffGroups()]);
       if (!section.isConnected) return;
       body.innerHTML = `
           <p class="settings-section-desc">레시피에 적힌 원료명을 실제로 통합합니다. 오늘 이후 생산 카드의 원료명도 함께 갱신되고, 과거 기록은 보존됩니다.</p>
@@ -388,6 +397,9 @@ function showIngredientNameMergeModal(fromNames, rows, staffGroups) {
 }
 
 async function mergeIngredientNames(fromNames, toName, staffName, onDone) {
+ return runPageCommand(settingsResource,async command=>{
+  const {getDocs,writeBatch,recordActivity}=commandWrites(command);
+
   const selected = new Set(fromNames);
   try {
     const snap = await getDocs(collection(db, 'recipes'));
@@ -488,6 +500,8 @@ async function mergeIngredientNames(fromNames, toName, staffName, onDone) {
     console.error('[settings] ingredient name merge failed:', err);
     alert('원료 명칭 통합 실패: ' + err.message);
   }
+
+ },{roles:['admin','office']});
 }
 
 function formatUnitPrice(value) {
@@ -573,6 +587,9 @@ function openMeatPriceModal(row) {
   });
 
   overlay.querySelector('#meatPriceSave').addEventListener('click', async () => {
+ return runPageCommand(settingsResource,async command=>{
+  const {getDocs,addDoc}=commandWrites(command);
+
     const unitPrice = Number(overlay.querySelector('#meatPriceUnitPrice').value);
     const effectiveDate = overlay.querySelector('#meatPriceEffectiveDate').value;
     const reason = overlay.querySelector('#meatPriceReason').value.trim() || 'manual';
@@ -596,7 +613,7 @@ function openMeatPriceModal(row) {
         prevUnitPrice: prev?.unitPrice ?? null,
         reason,
         createdBy: currentUser?.email || currentUser?.uid || '',
-      });
+      }, commandWrites(command));
       await addDoc(collection(db, 'activityLogs'), {
         date: getTodayKST(),
         timestamp: serverTimestamp(),
@@ -618,7 +635,9 @@ function openMeatPriceModal(row) {
       console.error('[settings] meat price save failed:', err);
       alert('원료 단가 저장 실패: ' + err.message);
     }
-  });
+
+ },{roles:['admin','office']});
+});
 }
 
 function bindCopySheetOrderEvents(isWriter) {
@@ -644,6 +663,9 @@ function bindCopySheetOrderEvents(isWriter) {
 }
 
 async function persistCopySheetOrder() {
+ return runPageCommand(settingsResource,async command=>{
+  const {setDoc}=commandWrites(command);
+
   const listEl = document.getElementById('copySheetOrderList');
   if (!listEl) return;
 
@@ -662,6 +684,8 @@ async function persistCopySheetOrder() {
     alert('카테고리 순서 저장 실패: ' + err.message);
     await renderSettings();
   }
+
+ },{roles:['admin','office']});
 }
 
 async function loadClosingFlags() {
@@ -696,11 +720,15 @@ function renderFlagRow(flag, value, isWriter) {
 function bindClosingFlagEvents(initialFlags) {
   document.querySelectorAll('.closing-flag-list input[type="checkbox"]').forEach(cb => {
     cb.addEventListener('change', async (e) => {
+ return runPageCommand(settingsResource,async command=>{
+  const {addDoc,setDoc}=commandWrites(command);
+
       const flagKey = e.target.dataset.flagKey;
       const before = initialFlags[flagKey] !== false;
       const after = e.target.checked;
 
       try {
+        await assertSettingUnchanged(command,'settings/closingFlags',flagKey,before,DEFAULT_CLOSING_FLAGS);
         await setDoc(
           doc(db, 'settings', 'closingFlags'),
           { [flagKey]: after },
@@ -722,7 +750,9 @@ function bindClosingFlagEvents(initialFlags) {
         alert('저장 실패: ' + err.message);
         e.target.checked = before;
       }
-    });
+
+ },{roles:['admin','office']});
+});
   });
 }
 
@@ -783,6 +813,9 @@ function bindSystemValueEvents(initialValues) {
 }
 
 async function handleNumberBlur(input, field, initialValues) {
+ return runPageCommand(settingsResource,async command=>{
+  const {setDoc}=commandWrites(command);
+
   const valueKey = field.key;
   const before = initialValues[valueKey];
   const after = field.type === 'decimal'
@@ -797,21 +830,26 @@ async function handleNumberBlur(input, field, initialValues) {
   if (after === before) return;
 
   try {
+    await assertSettingUnchanged(command,'settings/systemValues',valueKey,before,DEFAULT_SYSTEM_VALUES);
     await setDoc(
       doc(db, 'settings', 'systemValues'),
       { [valueKey]: after },
       { merge: true }
     );
     initialValues[valueKey] = after;
-    await logSystemValueChange(valueKey, before, after);
+    await logSystemValueChange(valueKey, before, after, command);
   } catch (err) {
     console.error('[settings] systemValue save failed:', err);
     alert('저장 실패: ' + err.message);
-    input.value = before;
   }
+
+ },{roles:['admin','office']});
 }
 
 async function handleFractionBlur(input, field, initialValues) {
+ return runPageCommand(settingsResource,async command=>{
+  const {setDoc}=commandWrites(command);
+
   const valueKey = field.key;
   const before = initialValues[valueKey] || { numerator: 0, denominator: 1 };
 
@@ -840,22 +878,24 @@ async function handleFractionBlur(input, field, initialValues) {
   if (after.numerator === before.numerator && after.denominator === before.denominator) return;
 
   try {
+    await assertSettingUnchanged(command,'settings/systemValues',valueKey,before,DEFAULT_SYSTEM_VALUES);
     await setDoc(
       doc(db, 'settings', 'systemValues'),
       { [valueKey]: after },
       { merge: true }
     );
     initialValues[valueKey] = after;
-    await logSystemValueChange(valueKey, before, after);
+    await logSystemValueChange(valueKey, before, after, command);
   } catch (err) {
     console.error('[settings] systemValue save failed:', err);
     alert('저장 실패: ' + err.message);
-    numInput.value = before.numerator;
-    denInput.value = before.denominator;
   }
+
+ },{roles:['admin','office']});
 }
 
-async function logSystemValueChange(valueKey, before, after) {
+async function logSystemValueChange(valueKey, before, after, command) {
+  const {addDoc}=commandWrites(command);
   await addDoc(collection(db, 'activityLogs'), {
     date: getTodayKST(),
     timestamp: serverTimestamp(),
@@ -899,6 +939,9 @@ function renderMenuStaffGroupRow(field, groupKeys = [], isWriter) {
 function bindMenuStaffGroupEvents(initialGroups) {
   document.querySelectorAll('.menu-staff-group-checkbox').forEach(cb => {
     cb.addEventListener('change', async (e) => {
+ return runPageCommand(settingsResource,async command=>{
+  const {addDoc,setDoc}=commandWrites(command);
+
       const menuKey = e.target.dataset.menuKey;
       const groupKey = e.target.dataset.groupKey;
       const before = Array.isArray(initialGroups[menuKey]) ? [...initialGroups[menuKey]] : [];
@@ -919,6 +962,7 @@ function bindMenuStaffGroupEvents(initialGroups) {
       if (arraysEqual(before, after)) return;
 
       try {
+        await assertSettingUnchanged(command,'settings/menuStaffGroups',menuKey,before,DEFAULT_MENU_STAFF_GROUPS);
         await setDoc(
           doc(db, 'settings', 'menuStaffGroups'),
           { [menuKey]: after },
@@ -940,7 +984,9 @@ function bindMenuStaffGroupEvents(initialGroups) {
         alert('저장 실패: ' + err.message);
         e.target.checked = before.includes(groupKey);
       }
-    });
+
+ },{roles:['admin','office']});
+});
   });
 }
 
@@ -992,13 +1038,14 @@ function bindStaffEvents(staffGroups) {
       if (name === null) return;
       if (!name || !name.trim()) return;
 
-      staffGroups[group].push({
+      const nextMembers=[...staffGroups[group],{
         id: Date.now().toString(),
         name: name.trim(),
         active: true,
         sortOrder: staffGroups[group].length,
-      });
-      await saveStaffGroup(group, staffGroups[group]);
+      }];
+      if(!await saveStaffGroup(group,nextMembers,staffGroups[group]))return;
+      staffGroups[group]=nextMembers;
       renderSettingsRefresh(staffGroups);
     });
   });
@@ -1015,14 +1062,20 @@ function bindStaffEvents(staffGroups) {
       });
       if (!confirmed) return;
 
-      staffGroups[group].splice(index, 1);
-      await saveStaffGroup(group, staffGroups[group]);
+      const nextMembers=staffGroups[group].filter((_,i)=>i!==index);
+      if(!await saveStaffGroup(group,nextMembers,staffGroups[group]))return;
+      staffGroups[group]=nextMembers;
       renderSettingsRefresh(staffGroups);
     });
   });
 }
 
-async function saveStaffGroup(groupKey, members) {
+async function saveStaffGroup(groupKey, members, before) {
+ return runPageCommand(settingsResource,async command=>{
+  const {getDoc,setDoc}=commandWrites(command);
+
+  const fresh=await command.getDoc(doc(db,'staffGroups',groupKey));
+  if(fingerprint(fresh.exists()?fresh.data().members||[]:[])!==fingerprint(before))throw new Error('담당자 목록이 변경되었습니다. 다시 불러와주세요.');
   const groupNames = { senior: '선임', lead: '주임', office: '사무' };
   await setDoc(doc(db, 'staffGroups', groupKey), {
     name: groupNames[groupKey],
@@ -1030,6 +1083,9 @@ async function saveStaffGroup(groupKey, members) {
     members,
     updatedAt: new Date(),
   });
+  return command.isCurrent();
+
+ },{roles:['admin','office']});
 }
 
 function renderSettingsRefresh(staffGroups) {
@@ -1158,6 +1214,9 @@ function bindHolidayEvents() {
 }
 
 async function handleAddHoliday() {
+ return runPageCommand(settingsResource,async command=>{
+  const {getDoc,setDoc}=commandWrites(command);
+
   const startInput = document.getElementById('hd_start');
   const endInput = document.getElementById('hd_end');
   const labelInput = document.getElementById('hd_label');
@@ -1227,7 +1286,7 @@ async function handleAddHoliday() {
       created,
       skipped,
       total: dates.length,
-    });
+    }, command);
     await loadHolidaysCache();
     if (created === 0 && skipped > 0) {
       alert(`등록된 날짜가 없습니다. 선택한 ${skipped}개 날짜가 이미 등록되어 있습니다.`);
@@ -1239,9 +1298,14 @@ async function handleAddHoliday() {
     console.error(err);
     alert('등록 실패: ' + err.message);
   }
+
+ },{roles:['admin','office']});
 }
 
 async function handleImportPublicHolidays() {
+ return runPageCommand(settingsResource,async command=>{
+  const {getDoc,setDoc}=commandWrites(command);
+
   const holidays = getKoreanPublicHolidaysForYears();
   const confirmed = await showConfirmModal({
     title: '한국 공휴일 자동 등록',
@@ -1280,7 +1344,7 @@ async function handleImportPublicHolidays() {
       created,
       skipped,
       total: holidays.length,
-    });
+    }, command);
     await loadHolidaysCache();
     alert(`한국 공휴일 자동 등록 완료: 신규 ${created}건 / 기존 유지 ${skipped}건`);
     await renderSettings();
@@ -1288,9 +1352,14 @@ async function handleImportPublicHolidays() {
     console.error(err);
     alert('자동 등록 실패: ' + err.message);
   }
+
+ },{roles:['admin','office']});
 }
 
 async function handleEditHoliday(holidayId) {
+ return runPageCommand(settingsResource,async command=>{
+  const {getDoc,setDoc}=commandWrites(command);
+
   const snap = await getDoc(doc(db, 'holidays', holidayId));
   if (!snap.exists()) {
     alert('휴일 정보를 찾을 수 없습니다.');
@@ -1357,7 +1426,7 @@ async function handleEditHoliday(holidayId) {
         affectsShipping,
         shippingClosedFromEnabled: !shippingAvailablePrev,
       },
-    });
+    }, command);
     await loadHolidaysCache();
     alert('휴일 수정 완료!');
     await renderSettings();
@@ -1365,9 +1434,14 @@ async function handleEditHoliday(holidayId) {
     console.error(err);
     alert('수정 실패: ' + err.message);
   }
+
+ },{roles:['admin','office']});
 }
 
 async function handleDeleteHoliday(holidayId) {
+ return runPageCommand(settingsResource,async command=>{
+  const {getDoc,setDoc}=commandWrites(command);
+
   const snap = await getDoc(doc(db, 'holidays', holidayId));
   const holiday = snap.exists() ? normalizeHolidayForSettings(holidayId, snap.data()) : { id: holidayId };
   const confirmed = await showConfirmModal({
@@ -1391,7 +1465,7 @@ async function handleDeleteHoliday(holidayId) {
       date: holidayId,
       holiday: pickHolidayLogDetails(holiday),
       mode: holiday.isAutoGenerated ? 'disableAutoGenerated' : 'softDelete',
-    });
+    }, command);
     await loadHolidaysCache();
     alert(holiday.isAutoGenerated ? '자동 공휴일 비활성 완료!' : '회사 휴무일 삭제 완료!');
     await renderSettings();
@@ -1399,6 +1473,8 @@ async function handleDeleteHoliday(holidayId) {
     console.error(err);
     alert('삭제 실패: ' + err.message);
   }
+
+ },{roles:['admin','office']});
 }
 
 function getDateRangeInclusive(startDate, endDate) {
@@ -1426,7 +1502,8 @@ function pickHolidayLogDetails(holiday) {
   };
 }
 
-async function logHolidayChange(subAction, details) {
+async function logHolidayChange(subAction, details, command) {
+  const {addDoc}=commandWrites(command);
   await addDoc(collection(db, 'activityLogs'), {
     date: getTodayKST(),
     timestamp: serverTimestamp(),
@@ -1437,3 +1514,9 @@ async function logHolidayChange(subAction, details) {
     acknowledged: false,
   });
 }
+
+import {runPageCommand} from '../services/pageCommand.js';
+import {commandWrites} from '../services/commandWrites.js';
+
+import {pageResource} from '../state/pageResources.js';
+const settingsResource=pageResource('settings');
