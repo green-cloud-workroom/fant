@@ -42,6 +42,13 @@ export async function buildRelease(commit,flags) {
   }
   validateFlags(flags,{summaryVerified});Object.assign(process.env,flags);
   const {build}=await import('vite');await build({build:{emptyOutDir:true}});
+  // Public SVGs are copied verbatim by Vite. Normalize Windows checkout line
+  // endings before hashing so GitHub Pages' Git text normalization cannot
+  // change the verified bytes during publication.
+  for(const path of Object.keys(await artifacts()))if(path.endsWith('.svg')){
+    const file=resolve('dist',path),text=await readFile(file,'utf8');
+    if(text.includes('\r\n'))await writeFile(file,text.replaceAll('\r\n','\n'));
+  }
   const hashes=await artifacts();
   await writeFile('dist/release.json',JSON.stringify({schemaVersion:1,source:commit,flags,assets:hashes},null,2));
   return artifacts();
