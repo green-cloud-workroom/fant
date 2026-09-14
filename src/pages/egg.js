@@ -1,33 +1,55 @@
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, setDoc, addDoc, updateDoc, getDoc, query, orderBy
+  collection, getDocsFromServer as getDocs, doc, getDocFromServer as getDoc, query, orderBy
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { recordActivity } from '../services/activityLogs.js';
 
+import {pageResource} from '../state/pageResources.js';
+import {withReadCommand} from '../services/readCommand.js';
+import {pageRefresh} from '../utils/pageRefresh.js';
+import {getPageContext} from '../utils/pageLifecycle.js';
+const eggResource=pageResource('egg');
+
+async function saveEggChange(previous,patch,log=null,activity=null,date=null) {
+  return withReadCommand(eggResource,async command=>{
+    if(date && await blockIfClosed(date,command))return false;
+    const stockRef=doc(db,'eggStock','global'),logRef=log?doc(collection(db,'eggLogs')):null;
+    await command.transaction(db,async transaction=>{
+      const snap=await transaction.get(stockRef),fresh=snap.exists()?snap.data():{currentQty:0,minimumQty:0};
+      if(Number(fresh.currentQty||0)!==Number(previous.currentQty||0) || Number(fresh.minimumQty||0)!==Number(previous.minimumQty||0))throw new Error('다른 작업으로 계란 재고가 변경되었습니다. 최신 자료를 다시 확인해주세요.');
+      transaction.set(stockRef,patch);
+      if(log)transaction.set(logRef,log);
+      if(activity)await recordActivity(activity,{batch:transaction});
+    },{targets:[stockRef,...(logRef?[logRef]:[])]});
+    return true;
+  },{roles:['admin','office','production']});
+}
+async function runEggSave(callback) {
+  try{return await callback();}catch(error){console.error('[계란 저장]',error);alert(error.message);}
+}
+
 let eggFifoExpanded = false;
 
-export async function renderEgg() {
-  const content = document.getElementById('mainContent');
-  content.innerHTML = `<div style="padding:24px;"><p>계란 로딩 중...</p></div>`;
-
-  const [eggStock, logs] = await Promise.all([loadEggStock(), loadEggLogs(), loadStaffCache()]);
-  if (!content.isConnected) return;
-  renderEggLayout(eggStock, logs);
+export async function renderEgg({force=false}={}) {
+  const content=document.getElementById('mainContent');
+  content.innerHTML='<div style="padding:24px;"><p>계란 로딩 중...</p></div>';
+  const data=await eggResource.load(async scope=>{
+    const [stock,logs,...groups]=await Promise.all([loadEggStock(scope),loadEggLogs(scope),...['senior','lead','office'].map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
+    return {stock,logs,staff:Object.fromEntries(['senior','lead','office'].map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
+  },{force,onChange:pageRefresh(eggResource,renderEgg)});
+  if(!data||!content.isConnected)return;
+  staffCache=data.staff;renderEggLayout(data.stock,data.logs);
 }
-
-async function loadEggStock() {
-  const snap = await getDoc(doc(db, 'eggStock', 'global'));
-  if (snap.exists()) return snap.data();
-  return { currentQty: 0, minimumQty: 0 };
+async function loadEggStock(scope={getDoc}) {
+  const snap=await scope.getDoc(doc(db,'eggStock','global'));
+  return snap.exists()?snap.data():{currentQty:0,minimumQty:0};
 }
-
-async function loadEggLogs() {
-  const q = query(collection(db, 'eggLogs'), orderBy('timestamp', 'desc'));
-  const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+async function loadEggLogs(scope={getDocs}) {
+  const snap=await scope.getDocs(query(collection(db,'eggLogs'),orderBy('timestamp','desc')));
+  return snap.docs.map(d=>({id:d.id,...d.data()}));
 }
 
 function renderEggLayout(eggStock, logs) {
@@ -308,7 +330,8 @@ function showEggModal(type, eggStock) {
     });
   }
 
-  document.getElementById('btnSaveEgg').addEventListener('click', async () => {
+  document.getElementById('btnSaveEgg').addEventListener('click', () => runEggSave(async () => {
+    const page=getPageContext();
     let qty;
     if (isIn) {
       qty = parseInt(document.getElementById('m_qty').value);
@@ -327,18 +350,19 @@ function showEggModal(type, eggStock) {
     if (!date) { alert('날짜는 필수입니다.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (await blockIfClosed(date)) return;
+    if(page&&!page.isCurrent())return;
 
     const delta = isIn ? qty : -qty;
     const before = eggStock.currentQty;
     const after = before + delta;
 
-    await setDoc(doc(db, 'eggStock', 'global'), {
+    const patch = {
       currentQty: after,
       minimumQty: eggStock.minimumQty,
       updatedAt: new Date(),
-    });
+    };
 
-    await addDoc(collection(db, 'eggLogs'), {
+    const log = {
       date,
       timestamp: new Date(),
       type: isIn ? 'in' : 'out',
@@ -347,11 +371,11 @@ function showEggModal(type, eggStock) {
       after,
       staffName: staff,
       note,
-    });
+    };
 
     // [묶음 5A] 사무 로그 발행 — 계란 입고/출고 (운영자가 메인 화면에서 변동 추적 가능하게)
     const sign = isIn ? '+' : '-';
-    await recordActivity({
+    const activity = {
       action: 'egg',
       subAction: isIn ? 'in' : 'out',
       date,
@@ -363,14 +387,14 @@ function showEggModal(type, eggStock) {
         after,
         note: note || null,
       },
-    });
+    };
 
+    if(!await saveEggChange(eggStock,patch,log,activity,date))return;
+    if(page&&!page.isCurrent())return;
     closeModal();
-    const newStock = await loadEggStock();
-    const logs = await loadEggLogs();
-    renderEggLayout(newStock, logs);
+    await renderEgg({force:true});
     alert(`${isIn ? '입고' : '출고'} 완료!`);
-  });
+  }));
 }
 
 
@@ -408,7 +432,8 @@ function showEggAdjustModal(eggStock) {
     </div>
   `);
 
-  document.getElementById('btnSaveAdjust').addEventListener('click', async () => {
+  document.getElementById('btnSaveAdjust').addEventListener('click', () => runEggSave(async () => {
+    const page=getPageContext();
     const type = document.getElementById('m_adjustType').value;
     const qty = parseInt(document.getElementById('m_qty').value);
     const reason = document.getElementById('m_reason').value.trim();
@@ -428,13 +453,13 @@ function showEggAdjustModal(eggStock) {
       return;
     }
 
-    await setDoc(doc(db, 'eggStock', 'global'), {
+    const patch = {
       currentQty: after,
       minimumQty: eggStock.minimumQty,
       updatedAt: new Date(),
-    });
+    };
 
-    await addDoc(collection(db, 'eggLogs'), {
+    const log = {
       date: getToday(),
       timestamp: new Date(),
       type: 'adjust',
@@ -443,9 +468,9 @@ function showEggAdjustModal(eggStock) {
       after,
       staffName: staff,
       reason,
-    });
+    };
     const sign = delta >= 0 ? '+' : '';
-    await recordActivity({
+    const activity = {
       action: 'egg',
       subAction: 'adjust',
       date: today,
@@ -457,14 +482,14 @@ function showEggAdjustModal(eggStock) {
         after,
         reason,
       },
-    });
+    };
 
+    if(!await saveEggChange(eggStock,patch,log,activity,today))return;
+    if(page&&!page.isCurrent())return;
     closeModal();
-    const newStock = await loadEggStock();
-    const logs = await loadEggLogs();
-    renderEggLayout(newStock, logs);
+    await renderEgg({force:true});
     alert('조정 완료!');
-  });
+  }));
 }
 
 function showSetMinModal(eggStock) {
@@ -480,31 +505,25 @@ function showSetMinModal(eggStock) {
     </div>
   `);
 
-  document.getElementById('btnSaveMin').addEventListener('click', async () => {
+  document.getElementById('btnSaveMin').addEventListener('click', () => runEggSave(async () => {
+    const page=getPageContext();
     const minQty = parseInt(document.getElementById('m_minQty').value) || 0;
-    await setDoc(doc(db, 'eggStock', 'global'), {
+    const patch = {
       currentQty: eggStock.currentQty,
       minimumQty: minQty,
       updatedAt: new Date(),
-    });
+    };
+    if(!await saveEggChange(eggStock,patch))return;
+    if(page&&!page.isCurrent())return;
     closeModal();
-    const newStock = await loadEggStock();
-    const logs = await loadEggLogs();
-    renderEggLayout(newStock, logs);
+    await renderEgg({force:true});
     alert('설정 완료!');
-  });
+  }));
 }
 
 // 유틸
 
 let staffCache = {};
-async function loadStaffCache() {
-  if (Object.keys(staffCache).length > 0) return;
-  await Promise.all(['senior', 'lead', 'office'].map(async key => {
-    const snap = await getDoc(doc(db, 'staffGroups', key));
-    if (snap.exists()) staffCache[key] = snap.data().members || [];
-  }));
-}
 
 function getStaffOptions(groups) {
   let options = '';
