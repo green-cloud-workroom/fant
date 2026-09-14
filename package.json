@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test:performance": "node --experimental-vm-modules --test tests/performance.test.mjs",
     "preview:performance": "node scripts/previewPerformance.mjs",
-    "test:readpath": "node --experimental-vm-modules --test tests/readpath.test.mjs tests/performance.test.mjs tests/readpathRelease.test.mjs tests/summaryContract.test.mjs",
+    "test:readpath": "node --experimental-vm-modules --test tests/readpath.test.mjs tests/performance.test.mjs tests/readpathRelease.test.mjs tests/summaryContract.test.mjs tests/pageResources.test.mjs tests/recipeCommands.test.mjs tests/statsReadpath.test.mjs tests/supplementCommands.test.mjs tests/eggCommands.test.mjs tests/stockMenuCommands.test.mjs tests/formDraft.test.mjs tests/remainingMenus.test.mjs tests/menuGolden.test.mjs tests/menuFailure.test.mjs",
     "perf:measure": "node --experimental-vm-modules scripts/measureReadpath.mjs",
     "test:readpath:integration": "node scripts/runReadpathEmulator.mjs",
     "release:prepare": "node scripts/deployReadpathRelease.mjs --prepare",
@@ -31,11 +31,13 @@
     "claims:restore": "node scripts/claimsBackupRestore.mjs --restore --execute",
     "fetch:holidays": "node scripts/fetchKoreanPublicHolidays.mjs",
     "fix:supplement-names:dry": "node scripts/fixSupplementNames.mjs",
-    "fix:supplement-names:execute": "node scripts/fixSupplementNames.mjs --execute"
+    "fix:supplement-names:execute": "node scripts/fixSupplementNames.mjs --execute",
+    "perf:menus": "node --experimental-vm-modules scripts/measureMenus.mjs"
   },
   "devDependencies": {
     "firebase-admin": "^13.10.0",
     "gh-pages": "^6.3.0",
+    "linkedom": "^0.18.13",
     "vite": "^8.0.10"
   },
   "dependencies": {
