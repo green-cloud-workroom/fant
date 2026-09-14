@@ -12,9 +12,8 @@ export async function renderEgg() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>계란 로딩 중...</p></div>`;
 
-  await loadStaffCache();
-  const eggStock = await loadEggStock();
-  const logs = await loadEggLogs();
+  const [eggStock, logs] = await Promise.all([loadEggStock(), loadEggLogs(), loadStaffCache()]);
+  if (!content.isConnected) return;
   renderEggLayout(eggStock, logs);
 }
 
@@ -500,10 +499,10 @@ function showSetMinModal(eggStock) {
 let staffCache = {};
 async function loadStaffCache() {
   if (Object.keys(staffCache).length > 0) return;
-  for (const key of ['senior', 'lead', 'office']) {
+  await Promise.all(['senior', 'lead', 'office'].map(async key => {
     const snap = await getDoc(doc(db, 'staffGroups', key));
     if (snap.exists()) staffCache[key] = snap.data().members || [];
-  }
+  }));
 }
 
 function getStaffOptions(groups) {

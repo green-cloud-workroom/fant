@@ -28,8 +28,9 @@ const FROZEN_PRODUCT_CATEGORIES = [
 export async function renderFrozenProduct() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>동결제품 입고 로딩 중...</p></div>`;
-  await loadStaffCache();
-  frozenProducts = await loadFrozenProducts();
+  const [products] = await Promise.all([loadFrozenProducts(), loadStaffCache()]);
+  if (!content.isConnected) return;
+  frozenProducts = products;
   renderFrozenProductLayout();
 }
 
@@ -1134,10 +1135,10 @@ async function showIncomingModal(product) {
 let staffCache = {};
 async function loadStaffCache() {
   if (Object.keys(staffCache).length > 0) return;
-  for (const key of ['senior', 'lead', 'office']) {
+  await Promise.all(['senior', 'lead', 'office'].map(async key => {
     const snap = await getDoc(doc(db, 'staffGroups', key));
     if (snap.exists()) staffCache[key] = snap.data().members || [];
-  }
+  }));
 }
 
 function getStaffOptions(groups) {

@@ -21,11 +21,13 @@ let expandedMeatLogTypeIds = new Set();
 export async function renderMeat() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>원료 재고 로딩 중...</p></div>`;
-  await loadStaffCache();
-  [meatTypes, meatStockCategories] = await Promise.all([
+  const data = await Promise.all([
     loadMeatTypes(),
     loadMeatStockCategories(),
+    loadStaffCache(),
   ]);
+  if (!content.isConnected) return;
+  [meatTypes, meatStockCategories] = data;
   renderMeatLayout();
 }
 
@@ -800,6 +802,7 @@ async function renderTab(tab) {
     loadMeatStocks(dataStage),
     loadMeatLogs(dataStage),
   ]);
+  if (!tabContent.isConnected || tab !== currentTab) return;
 
   if (tab === 'frozen') {
     renderFrozenTab(stocks, logs);
@@ -2200,10 +2203,10 @@ function getRandomColor() {
 let staffCache = {};
 async function loadStaffCache() {
   if (Object.keys(staffCache).length > 0) return;
-  for (const key of ['senior', 'lead', 'office']) {
+  await Promise.all(['senior', 'lead', 'office'].map(async key => {
     const snap = await getDoc(doc(db, 'staffGroups', key));
     if (snap.exists()) staffCache[key] = snap.data().members || [];
-  }
+  }));
 }
 
 function getRoleStaffLabel() {

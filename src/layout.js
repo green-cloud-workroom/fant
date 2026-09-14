@@ -5,6 +5,7 @@ import { db } from './firebase.js';
 import { doc, getDoc } from 'firebase/firestore';
 import { showConfirmModal } from './utils/modal.js';
 import { loadPartAlerts } from './services/equipmentParts.js';
+import { createReadScope } from './services/readScope.js';
 
 // [Phase 3d] 모달 자동 오픈 1회 플래그 — 모듈 레벨에서 유지
 let blockingModalAutoShown = false;
@@ -27,7 +28,7 @@ function registerHashListener() {
     }
     setCurrentMenu(menuId);
     renderLayout();
-    renderPage(menuId);
+
   });
 }
 
@@ -44,6 +45,7 @@ function getUserBadgeText() {
 }
 
 export function renderLayout() {
+  const scope = createReadScope();
   const visibleMenus = MENUS.filter(m => m.roles.includes(currentUserRole));
 
   document.getElementById('app').innerHTML = `
@@ -87,7 +89,7 @@ export function renderLayout() {
       }
       setCurrentMenu(menuId);
       renderLayout();
-      renderPage(menuId);
+
     });
   });
 
@@ -100,24 +102,26 @@ export function renderLayout() {
     banner.addEventListener('click', handleBannerClick);
   }
 
-  updateSubbar();
-  updateEquipmentBadge();
-  updateBlockingBanner();
-  updateClosingButton();
+  updateSubbar(scope);
+  updateEquipmentBadge(scope);
+  updateBlockingBanner(scope);
+  updateClosingButton(scope);
   registerHashListener();
   // 현재 메뉴를 주소에 반영 (직접 접속/새로고침 시)
   if ((window.location.hash || '').replace('#', '') !== currentMenu) {
     window.location.hash = currentMenu;
   }
-  renderPage(currentMenu);
+  renderPage(currentMenu, { scope });
 }
 
 // 설비 부품 메뉴 버튼 배지 — 교체 임박·지남 + 재고 부족 건수
-async function updateEquipmentBadge() {
+async function updateEquipmentBadge(scope = createReadScope()) {
   const btn = document.querySelector('.nav-btn[data-menu="equipment"]');
   if (!btn) return;
   try {
-    const alerts = await loadPartAlerts(getTodayKST());
+    const today = getTodayKST();
+    const alerts = await scope.once('equipmentAlerts:' + today, () => loadPartAlerts(today));
+    if (!btn.isConnected) return;
     const stillThere = document.querySelector('.nav-btn[data-menu="equipment"]');
     if (!stillThere) return;
     stillThere.querySelector('.nav-count-badge')?.remove();
@@ -131,7 +135,8 @@ async function updateEquipmentBadge() {
   }
 }
 
-async function updateSubbar() {
+async function updateSubbar(scope = createReadScope()) {
+  const content = document.getElementById('mainContent');
   // KST 정확한 오늘 + 18개월 후 표시
   const todayKst = getTodayKST();
   const today = formatKstDateWithDay(todayKst);
@@ -149,13 +154,18 @@ async function updateSubbar() {
     const { db } = await import('./firebase.js');
     const { getDoc, getDocs, doc, collection } = await import('firebase/firestore');
 
-    const eggSnap = await getDoc(doc(db, 'eggStock', 'global'));
+    const [eggSnap, meatTypesSnap, meatStocksSnap, bagSnap, scheduleSnap] = await Promise.all([
+      scope.getDoc(doc(db, 'eggStock', 'global')),
+      scope.getDocs(collection(db, 'meatTypes')),
+      scope.getDocs(collection(db, 'meatStocks')),
+      scope.getDocs(collection(db, 'bagTypes')),
+      scope.getDocs(collection(db, 'schedules')),
+    ]);
+    if (document.getElementById('mainContent') !== content) return;
     const eggQty = eggSnap.exists() ? eggSnap.data().currentQty : 0;
     document.getElementById('subEgg').textContent = `🥚 ${eggQty}개`;
 
-    const meatTypesSnap = await getDocs(collection(db, 'meatTypes'));
     const meatTypes = meatTypesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const meatStocksSnap = await getDocs(collection(db, 'meatStocks'));
     const meatStocks = meatStocksSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.closed);
 
     let lowCount = 0;
@@ -167,14 +177,12 @@ async function updateSubbar() {
       if (total < mt.minimumQtyG) lowCount++;
     });
 
-    const bagSnap = await getDocs(collection(db, 'bagTypes'));
     bagSnap.docs.forEach(d => {
       const b = d.data();
       if (b.minimumQty && (b.currentQty || 0) < b.minimumQty) lowCount++;
     });
     document.getElementById('subLowStock').textContent = `⚠️ 부족재고 ${lowCount}개`;
 
-    const scheduleSnap = await getDocs(collection(db, 'schedules'));
     const pendingSchedules = scheduleSnap.docs
       .map(d => d.data())
       .filter(s => s.status === 'scheduled' && s.date <= todayKst);
@@ -201,14 +209,15 @@ async function updateSubbar() {
  *   - updateMenuWarnings() 호출 (Phase 3c)
  *   - 첫 호출이면 모달 자동 오픈 (Phase 3d)
  */
-async function updateBlockingBanner() {
+async function updateBlockingBanner(scope = createReadScope()) {
   const banner = document.getElementById('blockBanner');
   if (!banner) return;
 
   try {
     const { findActionableClosingDate } = await import('./services/closingChecks.js');
     const today = getTodayKST();
-    const actionable = await findActionableClosingDate(today);
+    const actionable = await findActionableClosingDate(today, null, scope);
+    if (!banner.isConnected) return;
 
     if (!actionable || actionable.date >= today) {
       banner.style.display = 'none';
@@ -232,6 +241,7 @@ async function updateBlockingBanner() {
       showBlockingModal();
     }
   } catch (err) {
+    if (!banner.isConnected) return;
     console.error('배너 업데이트 오류:', err);
     banner.style.display = 'none';
     window.__blockingItems = null;
@@ -403,7 +413,7 @@ function showBlockingModal(options = {}) {
           overlay.remove();
           setCurrentMenu(menuId);
           renderLayout();
-          renderPage(menuId);
+
           resolve(false);
         });
       });
@@ -426,7 +436,7 @@ window.openBlockingModal = showBlockingModal;
  * earliest === today → "오늘 마감"
  * earliest < today → "어제 마감" (실제로는 가장 빠른 미마감 영업일)
  */
-async function updateClosingButton() {
+async function updateClosingButton(scope = createReadScope()) {
   const btn = document.getElementById('closingBtn');
   if (!btn) return;
 
@@ -434,7 +444,8 @@ async function updateClosingButton() {
     const { getEarliestUnclosedWorkday } = await import('./closing.js');
     const { findActionableClosingDate } = await import('./services/closingChecks.js');
     const today = getTodayKST();
-    const actionable = await findActionableClosingDate(today);
+    const actionable = await findActionableClosingDate(today, null, scope);
+    if (!btn.isConnected) return;
 
     if (actionable?.date < today) {
       btn.textContent = actionable.closed ? '미처리 마감해제' : '이전 날짜 마감';
@@ -444,7 +455,8 @@ async function updateClosingButton() {
       return;
     }
 
-    const earliest = await getEarliestUnclosedWorkday();
+    const earliest = await scope.once('earliestUnclosed', () => getEarliestUnclosedWorkday());
+    if (!btn.isConnected) return;
 
     if (earliest === null) {
       btn.textContent = '마감해제';

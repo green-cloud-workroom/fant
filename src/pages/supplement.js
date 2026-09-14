@@ -38,6 +38,7 @@ export async function renderSupplement() {
     loadSupplementThresholds(),
   ]);
   await loadSupplementStaffCache();
+  if (!content.isConnected) return;
   renderSupplementLayout();
 }
 

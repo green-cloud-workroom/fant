@@ -16,6 +16,8 @@ const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 let holidaysCache = [];
 let holidayInfoCache = buildStaticHolidayMap();
 let holidaysCacheLoaded = false;
+let holidaysCacheLoadedAt = 0;
+let holidaysLoadPending = null;
 let holidayDataExpiryWarned = false;
 
 /**
@@ -309,7 +311,20 @@ export async function loadHolidaysCache() {
   holidayInfoCache = merged;
   holidaysCache = Object.keys(merged).sort();
   holidaysCacheLoaded = true;
+  holidaysCacheLoadedAt = Date.now();
   return holidaysCache;
+}
+
+// Avoid the duplicate startup read; recheck shared holiday changes after 30s.
+// Explicit holiday saves keep calling loadHolidaysCache() to force a refresh.
+export function ensureHolidaysCache() {
+  if (holidaysCacheLoaded && Date.now() - holidaysCacheLoadedAt < 30_000) {
+    return Promise.resolve(holidaysCache);
+  }
+  if (!holidaysLoadPending) {
+    holidaysLoadPending = loadHolidaysCache().finally(() => { holidaysLoadPending = null; });
+  }
+  return holidaysLoadPending;
 }
 
 /**

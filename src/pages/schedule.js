@@ -12,8 +12,8 @@ import { showConfirmModal } from '../utils/modal.js';
 export async function renderSchedule() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>입고 예정관리 로딩 중...</p></div>`;
-  await loadStaffCache();
-  const schedules = await loadSchedules();
+  const [schedules] = await Promise.all([loadSchedules(), loadStaffCache()]);
+  if (!content.isConnected) return;
   renderScheduleLayout(schedules);
 }
 
@@ -840,10 +840,10 @@ function escapeAttr(value) {
 let staffCache = {};
 async function loadStaffCache() {
   if (Object.keys(staffCache).length > 0) return;
-  for (const key of ['senior', 'lead', 'office']) {
+  await Promise.all(['senior', 'lead', 'office'].map(async key => {
     const snap = await getDoc(doc(db, 'staffGroups', key));
     if (snap.exists()) staffCache[key] = snap.data().members || [];
-  }
+  }));
 }
 
 function getStaffOptions(groups) {

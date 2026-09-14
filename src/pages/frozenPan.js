@@ -18,8 +18,9 @@ let activeTab = 'breadPan';  // 'breadPan' | 'frozenPan' — 묶음 3D 추가
 export async function renderFrozenPan() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>동결판 재고 로딩 중...</p></div>`;
-  freezeDryRecipes = await getActiveFreezeDryRecipes();
-  await loadStaffCache();
+  const [loadedRecipes] = await Promise.all([getActiveFreezeDryRecipes(), loadStaffCache()]);
+  if (!content.isConnected) return;
+  freezeDryRecipes = loadedRecipes;
   activeTab = 'breadPan';  // 진입 시 default 탭 리셋
   await refreshFrozenPanLayout();
 }
@@ -54,11 +55,11 @@ async function loadFrozenPanLogs() {
 }
 
 async function refreshFrozenPanLayout() {
-  const rows = await loadFrozenPanRows();
-  const lots = await loadFrozenPanLots();
-  const breadPanLots = await loadBreadPanLots();
-  const breadPanLogs = await loadBreadPanLogs();
-  const frozenPanLogs = await loadFrozenPanLogs();
+  const content = document.getElementById('mainContent');
+  const [rows, lots, breadPanLots, breadPanLogs, frozenPanLogs] = await Promise.all([
+    loadFrozenPanRows(), loadFrozenPanLots(), loadBreadPanLots(), loadBreadPanLogs(), loadFrozenPanLogs(),
+  ]);
+  if (!content?.isConnected) return;
   renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPanLogs);
 }
 
@@ -1623,10 +1624,10 @@ async function showStaffPickerModal({ title, message, groups }) {
 let staffCache = {};
 async function loadStaffCache() {
   if (Object.keys(staffCache).length > 0) return;
-  for (const key of ['senior', 'lead', 'office']) {
+  await Promise.all(['senior', 'lead', 'office'].map(async key => {
     const snap = await getDoc(doc(db, 'staffGroups', key));
     if (snap.exists()) staffCache[key] = snap.data().members || [];
-  }
+  }));
 }
 
 function getStaffOptions(groups) {

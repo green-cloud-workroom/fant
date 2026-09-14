@@ -1,12 +1,14 @@
+import { createReadScope } from '../services/readScope.js';
+import { createAutoLogBatch } from '../services/autoLogs.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocs, doc, addDoc, updateDoc, getDoc, query, orderBy, setDoc, where, deleteDoc, serverTimestamp, limit, startAfter, writeBatch
 } from 'firebase/firestore';
-import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDayByType as getNextBusinessDay, loadHolidaysCache, getHolidaysCache, getHolidayInfoCache, getHolidayDataNotice } from '../utils/date.js';
+import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDayByType as getNextBusinessDay, loadHolidaysCache, ensureHolidaysCache, getHolidaysCache, getHolidayInfoCache, getHolidayDataNotice } from '../utils/date.js';
 import { findActionableClosingDate, getAllBlockingItems } from '../services/closingChecks.js';
 import { setCurrentMenu, currentUserRole, currentMenu } from '../app.js';
 import { renderLayout } from '../layout.js';
-import { renderPage } from '../router.js';
+
 import { recordMeatLog } from '../services/meatLogs.js';
 import { showPromptModal, showConfirmModal } from '../utils/modal.js';
 import { acknowledgeLog, recordActivity } from '../services/activityLogs.js';
@@ -56,90 +58,89 @@ function renderFreezeDryProductionMeta(item) {
 let combinedLogs = [];
 let equipmentAlerts = [];  // 설비 부품 교체 임박·재고 부족 (services/equipmentParts.js)
 
-export async function renderMain() {
+export async function renderMain({ scope = createReadScope() } = {}) {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>메인 로딩 중...</p></div>`;
   selectedProductionDate = null;
   selectedDateProductions = [];
   selectedDateBlockingData = null;
-  await loadAllData();
+  if (!await loadAllData(scope)) return;
   // [Navigation guard] loadAllData 도중에 다른 메뉴로 이동했으면 main 덮어쓰지 않음.
   // currentMenu가 'main'이 아니라면 stale 호출이므로 mainContent 보존.
-  if (currentMenu !== 'main') return;
+  if (currentMenu !== 'main' || document.getElementById('mainContent') !== content) return;
   renderMainLayout();
   maybeShowEquipmentPopup();
 }
 
-async function loadAllData() {
+let mainLoadVersion = 0;
+async function loadAllData(scope = createReadScope()) {
+  const version = ++mainLoadVersion;
+  const content = document.getElementById('mainContent');
+  const isCurrent = () => version === mainLoadVersion && content === document.getElementById('mainContent');
   const today = getToday();
-
-  // [묶음 6B-1] 휴일 캐시 먼저 로드해야 다음 영업일 계산이 휴일 반영
-  await loadHolidaysCache();
-
+  await ensureHolidaysCache();
   const nextBizDay = getNextBusinessDay(today);
 
-  const prodSnap = await getDocs(query(collection(db, 'productions'), orderBy('sortOrder')));
+  const [prodSnap, recipeSnap, meatTypeSnap, meatSnap, eggSnap, compSnap,
+    overdueClosing, calendar, alerts] = await Promise.all([
+    scope.getDocs(query(collection(db, 'productions'), orderBy('sortOrder'))),
+    scope.getDocs(collection(db, 'recipes')),
+    scope.getDocs(collection(db, 'meatTypes')),
+    scope.getDocs(collection(db, 'meatStocks')),
+    scope.getDoc(doc(db, 'eggStock', 'global')),
+    scope.getDoc(doc(db, 'productionCompletion', today)),
+    findActionableClosingDate(today, null, scope),
+    fetchCalendarData(calendarWeekOffset, scope),
+    scope.once('equipmentAlerts:' + today, () => loadPartAlerts(today)).catch(err => {
+      console.error('[equipment] 알림 로드 실패:', err);
+      return [];
+    }),
+  ]);
+  if (!isCurrent()) return false;
   const allProds = prodSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-  const overdueClosing = await findActionableClosingDate(today, allProds);
-  overdueClosingDate = overdueClosing?.date || null;
+  const overdueDate = overdueClosing?.date || null;
+  const [overdueCompSnap, blocks] = await Promise.all([
+    overdueDate ? scope.getDoc(doc(db, 'productionCompletion', overdueDate)) : null,
+    overdueClosing?.blockingData || getAllBlockingItems(today, scope),
+  ]);
+  if (!isCurrent()) return false;
+
+  // Build alerts with a refresh-local snapshot; no mutable page state is read
+  // while awaiting their creation. Only install the page state once complete.
+  const state = {
+    eggStock: eggSnap.exists() ? eggSnap.data() : { currentQty: 0, minimumQty: 0 },
+    equipmentAlerts: alerts,
+  };
+  const todayLogs = await scope.getDocs(query(collection(db, 'activityLogs'), where('date', '==', today)));
+  const autoLogs = createAutoLogBatch(todayLogs.docs.map(d => ({ id: d.id, ...d.data() })));
+  await triggerAutoLogs(today, autoLogs, scope, state);
+  if (!isCurrent()) return false;
+  const needsFreshLogs = await autoLogs.flush();
+  const logs = await fetchCombinedLogs(needsFreshLogs ? createReadScope() : scope);
+  if (!isCurrent()) return false;
+
+  overdueClosingDate = overdueDate;
   overdueClosingAlreadyClosed = Boolean(overdueClosing?.closed);
-  overdueProductions = overdueClosingDate
-    ? allProds.filter(p => p.date === overdueClosingDate && p.status !== 'deleted')
-    : [];
-  const overdueNextBizDay = overdueClosingDate ? getNextBusinessDay(overdueClosingDate) : null;
-  overdueNextProductions = overdueNextBizDay
-    ? allProds.filter(p => p.date === overdueNextBizDay && p.status !== 'deleted')
-    : [];
+  overdueProductions = overdueDate ? allProds.filter(p => p.date === overdueDate && p.status !== 'deleted') : [];
+  const overdueNextBizDay = overdueDate ? getNextBusinessDay(overdueDate) : null;
+  overdueNextProductions = overdueNextBizDay ? allProds.filter(p => p.date === overdueNextBizDay && p.status !== 'deleted') : [];
   productions = allProds.filter(p => p.date === today && p.status !== 'deleted');
   nextProductions = allProds.filter(p => p.date === nextBizDay && p.status !== 'deleted');
-
-  const recipeSnap = await getDocs(collection(db, 'recipes'));
   recipes = recipeSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-  const meatTypeSnap = await getDocs(collection(db, 'meatTypes'));
-  meatTypeCategoryMap = new Map(meatTypeSnap.docs.map(d => [
-    d.id,
-    d.data().category === 'produce' ? 'produce' : 'meat',
-  ]));
-
-  const meatSnap = await getDocs(collection(db, 'meatStocks'));
+  meatTypeCategoryMap = new Map(meatTypeSnap.docs.map(d => [d.id, d.data().category === 'produce' ? 'produce' : 'meat']));
   meatStocks = meatSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.closed);
-
-  const eggSnap = await getDoc(doc(db, 'eggStock', 'global'));
-  if (eggSnap.exists()) eggStock = eggSnap.data();
-
-  const compSnap = await getDoc(doc(db, 'productionCompletion', today));
+  eggStock = state.eggStock;
+  equipmentAlerts = alerts;
   completionDoc = compSnap.exists() ? { id: compSnap.id, ...compSnap.data() } : null;
-  if (overdueClosingDate) {
-    const overdueCompSnap = await getDoc(doc(db, 'productionCompletion', overdueClosingDate));
-    overdueCompletionDoc = overdueCompSnap.exists() ? { id: overdueCompSnap.id, ...overdueCompSnap.data() } : null;
-  } else {
-    overdueCompletionDoc = null;
-  }
-
-  blockingData = overdueClosing?.blockingData || await getAllBlockingItems(today);
-
-  // [묶음 6B-1] 캘린더 14일치 데이터 (현재 weekOffset 기준)
-  await loadCalendarData(calendarWeekOffset);
-
-  // [묶음 6C-3] 자동 발행 — 이벤트 당일/입고예정 도래/최소재고 미달
-  // dedup으로 같은 사유 중복 발행 방지. date=today로 매일 새로 발행 (= 매일 반복).
-  // ★ loadCombinedLogs 이전에 호출해야 신규 발행도 화면에 즉시 표시됨.
-  // 설비 부품 알림 (교체 임박·재고 부족) — 알림 카드 + 팝업 + 자동 로그 공용
-  try {
-    equipmentAlerts = await loadPartAlerts(today);
-  } catch (err) {
-    console.error('[equipment] 알림 로드 실패:', err);
-    equipmentAlerts = [];
-  }
-
-  await triggerAutoLogs(today);
-
-  // [묶음 6C-1] 로그 패널 데이터 (당일 전체 + 어제~10일 전 미확인 확인필수)
-  await loadCombinedLogs();
+  overdueCompletionDoc = overdueCompSnap?.exists() ? { id: overdueCompSnap.id, ...overdueCompSnap.data() } : null;
+  blockingData = blocks;
+  ({ calendarSchedules, calendarProductions, calendarEvents } = calendar);
+  combinedLogs = logs;
+  return true;
 }
 
 function renderMainLayout() {
+  if (currentMenu !== 'main') return;
   const content = document.getElementById('mainContent');
   const today = getToday();
   const nextBizDay = getNextBusinessDay(today);
@@ -287,7 +288,7 @@ function renderMainLayout() {
       const menuId = btn.dataset.jump;
       setCurrentMenu(menuId);
       renderLayout();
-      renderPage(menuId);
+
     });
   });
 
@@ -334,40 +335,26 @@ function getCalendarRange(weekOffset = 0) {
 
 // 14일치 schedules / productions / events 한 번에 로드
 async function loadCalendarData(weekOffset = 0) {
+  const data = await fetchCalendarData(weekOffset);
+  ({ calendarSchedules, calendarProductions, calendarEvents } = data);
+}
+
+async function fetchCalendarData(weekOffset = 0, scope = createReadScope()) {
   const { startDate, endDate } = getCalendarRange(weekOffset);
-
-  // schedules — status='scheduled'만 표시
-  const schedSnap = await getDocs(query(
-    collection(db, 'schedules'),
-    where('date', '>=', startDate),
-    where('date', '<=', endDate),
-  ));
-  calendarSchedules = schedSnap.docs
-    .map(d => ({ id: d.id, ...d.data() }))
-    .filter(s => s.status === 'scheduled');
-
-  // productions — deleted 제외
-  const prodSnap = await getDocs(query(
-    collection(db, 'productions'),
-    where('date', '>=', startDate),
-    where('date', '<=', endDate),
-  ));
-  calendarProductions = prodSnap.docs
-    .map(d => ({ id: d.id, ...d.data() }))
-    .filter(p => p.status !== 'deleted');
-
-  // events — 컬렉션 없을 수도 있어 안전 가드
-  try {
-    const evSnap = await getDocs(query(
-      collection(db, 'events'),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate),
-    ));
-    calendarEvents = evSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-  } catch (err) {
-    console.warn('[캘린더] events 컬렉션 로드 실패 (정상 — 6B-2 전):', err.message);
-    calendarEvents = [];
-  }
+  const rangeQuery = name => query(collection(db, name), where('date', '>=', startDate), where('date', '<=', endDate));
+  const [schedSnap, prodSnap, evSnap] = await Promise.all([
+    scope.getDocs(rangeQuery('schedules')),
+    scope.getDocs(rangeQuery('productions')),
+    scope.getDocs(rangeQuery('events')).catch(err => {
+      console.warn('[캘린더] events 컬렉션 로드 실패:', err.message);
+      return null;
+    }),
+  ]);
+  return {
+    calendarSchedules: schedSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.status === 'scheduled'),
+    calendarProductions: prodSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => p.status !== 'deleted'),
+    calendarEvents: evSnap ? evSnap.docs.map(d => ({ id: d.id, ...d.data() })) : [],
+  };
 }
 
 // 캘린더 HTML 생성. main-calendar-body 안에 들어감.
@@ -889,38 +876,25 @@ function getDateNDaysAgoKST(n) {
 
 // 당일 전체 + 어제~10일 전 미확인(확인 필수)만 합쳐 시간순 정렬
 async function loadCombinedLogs() {
+  combinedLogs = await fetchCombinedLogs();
+}
+
+async function fetchCombinedLogs(scope = createReadScope()) {
   const today = getToday();
   const tenDaysAgo = getDateNDaysAgoKST(10);
-
-  // 당일 전체
-  let todayLogs = [];
-  try {
-    const todaySnap = await getDocs(query(
-      collection(db, 'activityLogs'),
-      where('date', '==', today),
-    ));
-    todayLogs = todaySnap.docs.map(d => ({ id: d.id, ...d.data() }));
-  } catch (err) {
-    console.error('[6C-1] 당일 로그 로드 실패:', err);
-  }
-
-  // 어제 이전 ~ 10일 전 (date 범위)
-  let olderLogs = [];
-  try {
-    const olderSnap = await getDocs(query(
-      collection(db, 'activityLogs'),
-      where('date', '>=', tenDaysAgo),
-      where('date', '<', today),
-    ));
-    olderLogs = olderSnap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      .filter(log => log.acknowledged !== true && logRequiresAck(log));
-  } catch (err) {
-    console.error('[6C-1] 과거 로그 로드 실패:', err);
-  }
-
-  // timestamp 기준 내림차순 (서버 timestamp가 null인 신규 로그는 맨 위)
-  combinedLogs = [...todayLogs, ...olderLogs].sort((a, b) => {
+  const [todaySnap, olderSnap] = await Promise.all([
+    scope.getDocs(query(collection(db, 'activityLogs'), where('date', '==', today))).catch(err => {
+      console.error('[6C-1] 당일 로그 로드 실패:', err);
+      return null;
+    }),
+    scope.getDocs(query(collection(db, 'activityLogs'), where('date', '>=', tenDaysAgo), where('date', '<', today))).catch(err => {
+      console.error('[6C-1] 과거 로그 로드 실패:', err);
+      return null;
+    }),
+  ]);
+  const todayLogs = todaySnap ? todaySnap.docs.map(d => ({ id: d.id, ...d.data() })) : [];
+  const olderLogs = olderSnap ? olderSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(log => log.acknowledged !== true && logRequiresAck(log)) : [];
+  return [...todayLogs, ...olderLogs].sort((a, b) => {
     const ta = a.timestamp?.toMillis ? a.timestamp.toMillis() : 0;
     const tb = b.timestamp?.toMillis ? b.timestamp.toMillis() : 0;
     return tb - ta;
@@ -1371,7 +1345,7 @@ function refreshLogPanels() {
       const menuId = btn.dataset.jump;
       setCurrentMenu(menuId);
       renderLayout();
-      renderPage(menuId);
+
     });
   });
   bindLogActions();
@@ -1649,51 +1623,17 @@ function bindModalAckButtons() {
 // [묶음 6C-3] 자동 발행 — 메인 진입 시 점검 후 신규 로그 발행
 // ============================================================
 
-// 자동 발행 dedup — 같은 (action, subAction, date, dedupKey) 이미 있으면 skip.
-// [묶음 6F] race condition 방지 — deterministic 문서 ID + setDoc 사용.
-//   같은 사유면 항상 같은 문서 ID → 두 호출이 거의 동시에 발생해도 setDoc 덮어쓰기로 1건만 남음.
-//   addDoc 시절엔 매번 랜덤 ID 생성돼서 race condition으로 중복 발행 가능했음.
-// recordActivity 직접 호출하지 않고 setDoc 사용 — staff='시스템'은 currentUser 검증 우회 필요.
-async function ensureAutoLog({ action, subAction, date, message, details, dedupKey }) {
-  try {
-    // 문서 ID — Firestore 허용 문자(영숫자/언더스코어/하이픈)만 남김
-    const safeKey = `${action}_${subAction}_${date}_${dedupKey}`.replace(/[^\w-]/g, '_');
-    const docId = `auto_${safeKey}`;
-    const ref = doc(db, 'activityLogs', docId);
-
-    // 1차 체크: 같은 ID 문서 존재 여부 (deterministic이라 단일 doc 조회로 빠름)
-    const existing = await getDoc(ref);
-    if (existing.exists()) return;
-
-    // setDoc — 두 번 호출돼도 같은 ID에 덮어쓰기 → 1건만 존재
-    await setDoc(ref, {
-      action, subAction, date,
-      staff: '시스템',
-      uid: null,
-      timestamp: serverTimestamp(),
-      message,
-      details: { ...(details || {}), dedupKey, autoTriggered: true },
-      read: false,
-      acknowledged: false,
-      acknowledgedAt: null,
-      acknowledgedBy: null,
-      acknowledgedByUid: null,
-    });
-  } catch (err) {
-    console.error('[6C-3] 자동 발행 실패:', err);
-  }
-}
-
+// 기존 알림은 오늘 로그 스냅샷으로 확인하고, 신규 알림만 트랜잭션으로 생성한다.
 // 1. 📅 이벤트 당일 — events 컬렉션에서 date=today인 이벤트 1건당 1로그 (운영자 결정 ④ A)
-async function triggerEventDueLogs(today) {
+async function triggerEventDueLogs(today, autoLogs, scope, state) {
   try {
-    const snap = await getDocs(query(
+    const snap = await scope.getDocs(query(
       collection(db, 'events'),
       where('date', '==', today),
     ));
     for (const evDoc of snap.docs) {
       const ev = { id: evDoc.id, ...evDoc.data() };
-      await ensureAutoLog({
+      autoLogs.enqueue({
         action: 'event',
         subAction: 'dueToday',
         date: today,
@@ -1709,9 +1649,9 @@ async function triggerEventDueLogs(today) {
 }
 
 // 2. 📦 입고 예정일 도래 — schedules에서 date=today && status=scheduled (확인 필수)
-async function triggerScheduleDueLogs(today) {
+async function triggerScheduleDueLogs(today, autoLogs, scope, state) {
   try {
-    const snap = await getDocs(query(
+    const snap = await scope.getDocs(query(
       collection(db, 'schedules'),
       where('date', '==', today),
     ));
@@ -1719,7 +1659,7 @@ async function triggerScheduleDueLogs(today) {
       const s = { id: sDoc.id, ...sDoc.data() };
       if (s.status !== 'scheduled') continue;
       const itemLabel = s.type === 'egg' ? '계란' : (s.itemNameSnapshot || '(품목)');
-      await ensureAutoLog({
+      autoLogs.enqueue({
         action: 'scheduleDue',
         subAction: 'trigger',
         date: today,
@@ -1740,23 +1680,23 @@ async function triggerScheduleDueLogs(today) {
 }
 
 // 3. ⚠️ 최소재고 미달 — 계란 + 원육 + 봉투 (확인 필수, date=today로 dedup하니 매일 자동 반복)
-async function triggerMinStockLogs(today) {
+async function triggerMinStockLogs(today, autoLogs, scope, state) {
   try {
     // 계란
-    if (eggStock.minimumQty > 0 && eggStock.currentQty < eggStock.minimumQty) {
-      await ensureAutoLog({
+    if (state.eggStock.minimumQty > 0 && state.eggStock.currentQty < state.eggStock.minimumQty) {
+      autoLogs.enqueue({
         action: 'minStock',
         subAction: 'alert',
         date: today,
-        message: `⚠️ 계란 부족 — 현재 ${eggStock.currentQty}개 / 최소 ${eggStock.minimumQty}개`,
-        details: { kind: 'egg', current: eggStock.currentQty, minimum: eggStock.minimumQty },
+        message: `⚠️ 계란 부족 — 현재 ${state.eggStock.currentQty}개 / 최소 ${state.eggStock.minimumQty}개`,
+        details: { kind: 'egg', current: state.eggStock.currentQty, minimum: state.eggStock.minimumQty },
         dedupKey: `minStock:egg`,
       });
     }
 
     // 원육 — meatTypes의 minimumQtyG 미달 (해당 type의 모든 stock remaining 합산)
-    const mtSnap = await getDocs(collection(db, 'meatTypes'));
-    const msSnap = await getDocs(collection(db, 'meatStocks'));
+    const mtSnap = await scope.getDocs(collection(db, 'meatTypes'));
+    const msSnap = await scope.getDocs(collection(db, 'meatStocks'));
     const meatStocksData = msSnap.docs
       .map(d => ({ id: d.id, ...d.data() }))
       .filter(s => !s.closed);
@@ -1768,7 +1708,7 @@ async function triggerMinStockLogs(today) {
         .filter(s => s.meatTypeId === mt.id)
         .reduce((sum, s) => sum + (s.remaining || 0), 0);
       if (total < mt.minimumQtyG) {
-        await ensureAutoLog({
+        autoLogs.enqueue({
           action: 'minStock',
           subAction: 'alert',
           date: today,
@@ -1780,11 +1720,11 @@ async function triggerMinStockLogs(today) {
     }
 
     // 봉투
-    const bagSnap = await getDocs(collection(db, 'bagTypes'));
+    const bagSnap = await scope.getDocs(collection(db, 'bagTypes'));
     for (const bDoc of bagSnap.docs) {
       const b = { id: bDoc.id, ...bDoc.data() };
       if (b.minimumQty && (b.currentQty || 0) < b.minimumQty) {
-        await ensureAutoLog({
+        autoLogs.enqueue({
           action: 'minStock',
           subAction: 'alert',
           date: today,
@@ -1795,11 +1735,11 @@ async function triggerMinStockLogs(today) {
       }
     }
 
-    const supplementTypesSnap = await getDocs(query(
+    const supplementTypesSnap = await scope.getDocs(query(
       collection(db, 'supplementTypes'),
       where('active', '==', true),
     ));
-    const supplementStockSnap = await getDocs(collection(db, 'supplementStock'));
+    const supplementStockSnap = await scope.getDocs(collection(db, 'supplementStock'));
     const supplementStockMap = new Map(
       supplementStockSnap.docs.map(d => [d.id, { id: d.id, ...d.data() }])
     );
@@ -1810,7 +1750,7 @@ async function triggerMinStockLogs(today) {
       const stock = supplementStockMap.get(type.id);
       const currentQty = stock ? Number(stock.currentQty || 0) : 0;
       if (currentQty >= supplementMinQty) continue;
-      await ensureAutoLog({
+      autoLogs.enqueue({
         action: 'minStock',
         subAction: 'alert',
         date: today,
@@ -1833,19 +1773,21 @@ async function triggerMinStockLogs(today) {
 // 자동 발행 통합 — loadAllData에서 호출
 // [묶음 9 예정] 냉동창고 잔량 부족 (closingChecks 신규 체크 함수 필요)
 // [묶음 9 예정] 생산 자동 재포장 (자동 재포장 모달 자체 미구현)
-async function triggerAutoLogs(today) {
-  await triggerEventDueLogs(today);
-  await triggerScheduleDueLogs(today);
-  await triggerMinStockLogs(today);
-  await triggerEquipmentLogs(today);
+async function triggerAutoLogs(today, autoLogs, scope, state) {
+  await Promise.all([
+    triggerEventDueLogs(today, autoLogs, scope, state),
+    triggerScheduleDueLogs(today, autoLogs, scope, state),
+    triggerMinStockLogs(today, autoLogs, scope, state),
+    triggerEquipmentLogs(today, autoLogs, scope, state),
+  ]);
 }
 
 // 4. 🔧 설비 부품 — 교체 임박/지남(partDue) + 재고 부족(minStock kind:part). equipmentAlerts는 loadAllData에서 채움.
-async function triggerEquipmentLogs(today) {
-  for (const a of equipmentAlerts) {
+async function triggerEquipmentLogs(today, autoLogs, scope, state) {
+  for (const a of state.equipmentAlerts) {
     const p = a.part;
     if (a.kind === 'due') {
-      await ensureAutoLog({
+      autoLogs.enqueue({
         action: 'partDue',
         subAction: 'alert',
         date: today,
@@ -1854,7 +1796,7 @@ async function triggerEquipmentLogs(today) {
         dedupKey: `partDue:${p.id}`,
       });
     } else if (a.kind === 'low') {
-      await ensureAutoLog({
+      autoLogs.enqueue({
         action: 'minStock',
         subAction: 'alert',
         date: today,
@@ -2602,7 +2544,7 @@ function maybeShowEquipmentPopup() {
     popup.remove();
     setCurrentMenu('equipment');
     renderLayout();
-    renderPage('equipment');
+
   });
 }
 
@@ -2874,7 +2816,7 @@ function showTomorrowLoadBlockersModal(blockers) {
       closeModal();
       setCurrentMenu(menuId);
       renderLayout();
-      renderPage(menuId);
+
     });
   });
 }

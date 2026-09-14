@@ -16,9 +16,12 @@ const QTY_EPSILON = 0.000001;
 export async function renderFrozenSep() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>동결 분리작업 로딩 중...</p></div>`;
-  await loadStaffCache();
-  freezeDryRecipes = await getActiveFreezeDryRecipes();
-  const [stocks, logs] = await Promise.all([loadFrozenSepStocks(), loadFrozenSepLogs(), loadSepProductOrder()]);
+  const [loadedRecipes, stocks, logs] = await Promise.all([
+    getActiveFreezeDryRecipes(), loadFrozenSepStocks(), loadFrozenSepLogs(),
+    loadStaffCache(), loadSepProductOrder(),
+  ]);
+  if (!content.isConnected) return;
+  freezeDryRecipes = loadedRecipes;
   renderFrozenSepLayout(stocks, logs);
 }
 
@@ -1094,10 +1097,10 @@ function showAdjustModal(stocks) {
 let staffCache = {};
 async function loadStaffCache() {
   if (Object.keys(staffCache).length > 0) return;
-  for (const key of ['senior', 'lead', 'office']) {
+  await Promise.all(['senior', 'lead', 'office'].map(async key => {
     const snap = await getDoc(doc(db, 'staffGroups', key));
     if (snap.exists()) staffCache[key] = snap.data().members || [];
-  }
+  }));
 }
 
 function getStaffOptions(groups) {

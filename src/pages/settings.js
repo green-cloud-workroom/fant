@@ -55,14 +55,13 @@ export async function renderSettings() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>설정 로딩 중...</p></div>`;
 
-  const staffGroups = await loadStaffGroups();
-  const holidays = await loadHolidays();
-  const closingFlags = await loadClosingFlags();
-  const systemValues = await loadSystemValues();
-  const menuStaffGroups = await loadMenuStaffGroups();
-  const copySheetOrder = await loadCopySheetOrder();
-  const meatPriceRows = await loadMeatPriceRows(getTodayKST());
-  const ingredientNameRows = await loadIngredientNameRows();
+  const [staffGroups, holidays, closingFlags, systemValues, menuStaffGroups,
+    copySheetOrder, meatPriceRows, ingredientNameRows] = await Promise.all([
+    loadStaffGroups(), loadHolidays(), loadClosingFlags(), loadSystemValues(),
+    loadMenuStaffGroups(), loadCopySheetOrder(), loadMeatPriceRows(getTodayKST()),
+    loadIngredientNameRows(),
+  ]);
+  if (!content.isConnected) return;
   const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
   const canEditMeatPrice = isWriter;
 
@@ -956,12 +955,12 @@ function arraysEqual(a, b) {
 
 async function loadStaffGroups() {
   const groups = { senior: [], lead: [], office: [] };
-  for (const key of Object.keys(groups)) {
+  await Promise.all(Object.keys(groups).map(async key => {
     const snap = await getDoc(doc(db, 'staffGroups', key));
     if (snap.exists()) {
       groups[key] = snap.data().members || [];
     }
-  }
+  }));
   return groups;
 }
 

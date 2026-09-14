@@ -39,9 +39,9 @@ export async function renderRecipe() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>레시피 로딩 중...</p></div>`;
 
-  recipes = await loadRecipes();
-  meatTypes = await loadMeatTypes();
-  bagTypes = await loadBagTypes();  // [봉투 연동] raw 카테고리 봉투 선택용
+  const data = await Promise.all([loadRecipes(), loadMeatTypes(), loadBagTypes()]);
+  if (!content.isConnected) return;
+  [recipes, meatTypes, bagTypes] = data;
   renderRecipeLayout();
 }
 

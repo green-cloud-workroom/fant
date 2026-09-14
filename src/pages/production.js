@@ -167,9 +167,12 @@ async function calculateSupplementRefunds(productionId) {
 export async function renderProduction() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>생산 입력 로딩 중...</p></div>`;
-  await loadStaffCache();
-  recipes = await loadRecipes();
-  productions = await loadProductions(selectedDate);
+  const [loadedRecipes, loadedProductions] = await Promise.all([
+    loadRecipes(), loadProductions(selectedDate), loadStaffCache(),
+  ]);
+  if (!content.isConnected) return;
+  recipes = loadedRecipes;
+  productions = loadedProductions;
   renderProductionLayout();
 }
 
@@ -180,11 +183,19 @@ async function loadRecipes() {
 }
 
 async function loadProductions(date) {
-  const q = query(collection(db, 'productions'), orderBy('sortOrder'));
+  // Date equality needs no new composite index. Keep the former orderBy's
+  // exclusion of missing sortOrder fields and sort only this day's cards.
+  const q = query(collection(db, 'productions'), where('date', '==', date));
   const snap = await getDocs(q);
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
-    .filter(p => p.date === date && p.status !== 'deleted');
+    .filter(p => p.status !== 'deleted' && p.sortOrder !== undefined)
+    .sort((a, b) => {
+      if (a.sortOrder === b.sortOrder) return 0;
+      if (a.sortOrder === null) return -1;
+      if (b.sortOrder === null) return 1;
+      return a.sortOrder - b.sortOrder;
+    });
 }
 
 // [묶음 4A] 회차/차수 재계산 (B안: round + batchNo 둘 다 DB 저장)
@@ -1311,10 +1322,10 @@ function showBigViewModal() {
 let staffCache = {};
 async function loadStaffCache() {
   if (Object.keys(staffCache).length > 0) return;
-  for (const key of ['senior', 'lead', 'office']) {
+  await Promise.all(['senior', 'lead', 'office'].map(async key => {
     const snap = await getDoc(doc(db, 'staffGroups', key));
     if (snap.exists()) staffCache[key] = snap.data().members || [];
-  }
+  }));
 }
 
 function getStaffOptions(groups) {

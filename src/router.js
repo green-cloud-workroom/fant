@@ -1,76 +1,41 @@
-import { renderSettings } from './pages/settings.js';
-import { renderRecipe } from './pages/recipe.js';
-import { renderMeat } from './pages/meat.js';
-import { renderBag } from './pages/bag.js';
-import { renderSupplement } from './pages/supplement.js';
-import { renderEgg } from './pages/egg.js';
-import { renderFrozenProduct } from './pages/frozenProduct.js';
-import { renderFrozenPan } from './pages/frozenPan.js';
-import { renderFrozenSep } from './pages/frozenSep.js';
-import { renderFreezeOp } from './pages/freezeOp.js';
-import { renderSchedule } from './pages/schedule.js';
-import { renderProduction } from './pages/production.js';
-import { renderMain } from './pages/main.js';
-import { renderStats } from './pages/stats.js'; // [묶음 7A] 통계 페이지
-import { renderEquipment } from './pages/equipment.js';
+import { currentMenu } from './app.js';
 
-export async function renderPage(menuId) {
+const pages = {
+  settings: () => import('./pages/settings.js').then(module => module.renderSettings),
+  recipe: () => import('./pages/recipe.js').then(module => module.renderRecipe),
+  meat: () => import('./pages/meat.js').then(module => module.renderMeat),
+  bag: () => import('./pages/bag.js').then(module => module.renderBag),
+  supplement: () => import('./pages/supplement.js').then(module => module.renderSupplement),
+  egg: () => import('./pages/egg.js').then(module => module.renderEgg),
+  frozenProduct: () => import('./pages/frozenProduct.js').then(module => module.renderFrozenProduct),
+  frozenPan: () => import('./pages/frozenPan.js').then(module => module.renderFrozenPan),
+  frozenSep: () => import('./pages/frozenSep.js').then(module => module.renderFrozenSep),
+  freezeOp: () => import('./pages/freezeOp.js').then(module => module.renderFreezeOp),
+  schedule: () => import('./pages/schedule.js').then(module => module.renderSchedule),
+  production: () => import('./pages/production.js').then(module => module.renderProduction),
+  main: () => import('./pages/main.js').then(module => module.renderMain),
+  stats: () => import('./pages/stats.js').then(module => module.renderStats),
+  equipment: () => import('./pages/equipment.js').then(module => module.renderEquipment),
+};
+
+export async function renderPage(menuId, options = {}) {
   const content = document.getElementById('mainContent');
   if (!content) return;
-
-  switch(menuId) {
-    case 'main':
-      await renderMain();
-      break;
-    case 'settings':
-      await renderSettings();
-      break;
-    case 'recipe':
-      await renderRecipe();
-      break;
-    case 'meat':
-      await renderMeat();
-      break;
-    case 'bag':
-      await renderBag();
-      break;
-    case 'supplement':
-      await renderSupplement();
-      break;
-    case 'egg':
-      await renderEgg();
-      break;
-    case 'frozenProduct':
-      await renderFrozenProduct();
-      break;
-    case 'frozenPan':
-      await renderFrozenPan();
-      break;
-    case 'freezeOp':
-      await renderFreezeOp();
-      break;
-    case 'frozenSep':
-      await renderFrozenSep();
-      break;
-    case 'schedule':
-      await renderSchedule();
-      break;
-    case 'production':
-      await renderProduction();
-      break;
-    case 'stats': // [묶음 7A] 통계
-      await renderStats();
-      break;
-    case 'equipment':
-      await renderEquipment();
-      break;
-    default:
-      content.innerHTML = `
-        <div class="page-placeholder">
-          <h2>${getMenuLabel(menuId)}</h2>
-          <p>준비 중</p>
-        </div>
-      `;
+  const load = pages[menuId];
+  if (!load) {
+    content.innerHTML = '<div class="page-placeholder"><h2>' + getMenuLabel(menuId) + '</h2><p>준비 중</p></div>';
+    return;
+  }
+  content.innerHTML = '<div style="padding:24px;"><p>' + getMenuLabel(menuId) + ' 로딩 중...</p></div>';
+  try {
+    const render = await load();
+    if (document.getElementById('mainContent') !== content || currentMenu !== menuId) return;
+    await render(options);
+  } catch (err) {
+    console.error('[페이지 로딩 실패]', menuId, err);
+    if (document.getElementById('mainContent') !== content || currentMenu !== menuId) return;
+    content.innerHTML = '<div style="padding:24px;"><p>화면을 불러오지 못했습니다. 다시 시도해주세요.</p><button class="btn-secondary" id="retryPageLoad">다시 불러오기</button></div>';
+    document.getElementById('retryPageLoad').addEventListener('click', () => renderPage(menuId));
   }
 }
 

@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "test:performance": "node --experimental-vm-modules --test tests/performance.test.mjs",
+    "preview:performance": "node scripts/previewPerformance.mjs",
     "deploy": "vite build && gh-pages -d dist",
     "backup:prewipe": "node scripts/backupFirestorePreWipe.mjs",
     "wipe:dry-run": "node scripts/wipeFirestoreOperationalData.mjs --dry-run",
