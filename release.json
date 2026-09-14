@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "source": "f581597b4ba10e7ceb7654434a12319982a202cc",
+  "source": "61af19a2d1e48f81877ab2f28fbe07774ebeca84",
   "flags": {
     "VITE_PERF_SHELL": "true",
     "VITE_PERF_STORE": "true",
@@ -41,8 +41,8 @@
     "assets/stats-BJ3yGYFQ.js": "008dc85975f05556fb4c3e482aa567dd08e4e6d14712bfa55c013295753b1db0",
     "assets/supplement-2uJ3k7UC.js": "174aa99749e59d60c989b8eae51a4e06401b2893809adc048269f49fcb42a854",
     "assets/supplement-ImEXygnG.js": "3325e3c06101b99f9596fbf9052595613ef49a980a994a0ff75697642fb9804c",
-    "favicon.svg": "88f61f4a9f735874c362a6b2c2c780d735998bb8e5d219741de63c604d203991",
-    "icons.svg": "7ca2d67c9c3aebf50cdc8709ee8aacf8cdb8cc7ea6325ea94939caef5da1c53d",
+    "favicon.svg": "ceeac38434be7a3b4d0f68b8cd8aa2b9ae78c260d6343087c6e095f8031ce4ff",
+    "icons.svg": "b45fa506195cfcdef406ba9f0c77b36ddc1a7c224040926ec70abc2fdea7b93a",
     "index.html": "f4ca1fc0ebe8ad5af8478f749c7123ae0ef6df736393ac1deffb7c4ba199ebee"
   }
 }
