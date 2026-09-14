@@ -1215,3 +1215,8 @@ spec_v22 note:
 - Main card click should open a production-input modal split into raw, raw-frozen, and tender-frozen branches.
 - Plan this together with the inventory-app linkage bundle.
 - Start after 1-2 weeks of stable operations.
+
+
+## 2026-09-14 조회 구조 후속 릴리스
+
+전 메뉴 세션 조회·수명 관리와 서버 재검증 저장 경계를 적용했다. 서버 요약은 inventory 저장소의 projection 전용 Functions가 소유한다. 현재 구조/검증/한계는 [전 메뉴 릴리스](MENU_READPATH_RELEASE_20260914.md), 저장 경로는 [ACTION_PATHS](ACTION_PATHS.md)를 따른다. 원본 컬렉션 소유권과 업무 계산 경계는 유지한다.

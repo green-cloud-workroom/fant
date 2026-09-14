@@ -5,6 +5,7 @@ import { resolve, relative } from 'node:path';
 import { DASHBOARD_LOGIC_VERSION } from '../src/config/dashboardCompatibility.js';
 export const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 export const source = () => execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
+export const VERIFIED_ROUTES=['main','recipe','settings','production','bag','equipment','supplement','schedule','egg','frozenProduct','frozenPan','freezeOp','frozenSep','meat','stats'];
 export function requireClean() {
   const paths=execFileSync('git',['status','--porcelain','-z','--untracked-files=all'],{encoding:'utf8'}).split('\0').filter(Boolean);
   if(paths.some(line=>!line.slice(3).startsWith('output/')))throw Error('Commit source changes before preparing or deploying a release.');
@@ -14,7 +15,8 @@ export function validateFlags(flags,{summaryVerified=false}={}) {
   if(JSON.stringify(Object.keys(flags).sort())!==JSON.stringify(keys.sort()))throw Error('Release flags missing or unknown.');
   if(!['true','false'].includes(flags.VITE_PERF_SHELL)||!['true','false'].includes(flags.VITE_PERF_STORE)||!['legacy','session','summary'].includes(flags.VITE_PRODUCTION_VIEW_MODE))throw Error('Unsupported release flags.');
   if(flags.VITE_PRODUCTION_VIEW_MODE==='summary'&&!summaryVerified)throw Error('Summary was not independently verified.');
-  if(flags.VITE_PERF_ROUTES!==''&&flags.VITE_PERF_ROUTES!=='main')throw Error('Unverified route activation.');
+  const routes=flags.VITE_PERF_ROUTES?flags.VITE_PERF_ROUTES.split(','):[];
+  if(new Set(routes).size!==routes.length||routes.some(route=>!VERIFIED_ROUTES.includes(route)))throw Error('Unverified route activation.');
 }
 export function validateSummaryAcceptance(acceptance,now=Date.now()) {
   const verifiedAt=Date.parse(acceptance?.verifiedAt),hash=/^[a-f0-9]{64}$/;

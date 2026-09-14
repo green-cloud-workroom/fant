@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertArtifacts, validateFlags, validateSummaryAcceptance } from '../scripts/readpathRelease.mjs';
+import { assertArtifacts, validateFlags, validateSummaryAcceptance, VERIFIED_ROUTES } from '../scripts/readpathRelease.mjs';
 import { DASHBOARD_LOGIC_VERSION } from '../src/config/dashboardCompatibility.js';
 test('release refuses missing, extra or changed assets',()=>{
   assert.doesNotThrow(()=>assertArtifacts({a:'1',b:'2'},{b:'2',a:'1'}));
@@ -14,5 +14,5 @@ test('summary release requires fresh serving evidence for today with real matchi
 });
 test('release refuses missing flags and unverified routes or summary activation',()=>{
   const flags={VITE_PERF_SHELL:'true',VITE_PERF_STORE:'true',VITE_PERF_ROUTES:'main',VITE_PRODUCTION_VIEW_MODE:'session'};
-  validateFlags(flags);assert.throws(()=>validateFlags({}));assert.throws(()=>validateFlags({...flags,VITE_PERF_ROUTES:'main,meat'}));assert.throws(()=>validateFlags({...flags,VITE_PRODUCTION_VIEW_MODE:'summary'}));
+  validateFlags(flags);validateFlags({...flags,VITE_PERF_ROUTES:VERIFIED_ROUTES.join(',')});assert.throws(()=>validateFlags({}));assert.throws(()=>validateFlags({...flags,VITE_PERF_ROUTES:'main,unknown'}));assert.throws(()=>validateFlags({...flags,VITE_PERF_ROUTES:'main,main'}));assert.throws(()=>validateFlags({...flags,VITE_PRODUCTION_VIEW_MODE:'summary'}));
 });

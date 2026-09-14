@@ -1,6 +1,15 @@
 # 생산관리 로딩 구조 변경 실행 체크시트
 
-작성: 2026-09-14. **구현 착수. [1차 릴리스 기록](READPATH_RELEASE_20260914.md)에 구현·실측·검증 범위를 기록한다. 아래 단계 전체를 완료한 것은 아니며 서버/전 메뉴 이행은 남아 있다.**
+작성: 2026-09-14. **서버 serve 운영 전환·전 메뉴 구현 완료. 최신 증거는 [전 메뉴 릴리스](MENU_READPATH_RELEASE_20260914.md)와 [저장 경로표](ACTION_PATHS.md). 아래 체크 중 미체크는 복합 조건 전체를 충족했다고 주장하지 않는다는 의미이며, 현재 단계별 판정은 다음 표를 우선한다.**
+
+| 단계 | 현재 판정 |
+| --- | --- |
+| 00~05 | 공통 경계·모델·세션·수명·메인 구현/테스트 완료. 실제 모든 역할/시나리오 인수와 구분 |
+| 06 | 전 메뉴 이행 및 메뉴별 커밋 완료. 아래 목록 참조 |
+| 07 | 최종 릴리스 결과는 전 메뉴 릴리스 운영 배포 기록 참조 |
+| 08~11 | 서버 계약·구현·emulator·도구·선택 배포 완료. backend 릴리스 기록 참조 |
+| 12~13 | backfill complete·독립 원본 parity·serve 적용 완료. generation568 재검증 일치 |
+| 14 | 구현 확대 완료. 첫 정상 운영일 비용/지연 관측은 아직 미완료 |
 
 설계·데이터 계약·검증 기준은 [상세 실행 계획](PERFORMANCE_EXECUTION_PLAN_20260914.md)을 따른다. 이 체크시트는 작업 순서, 인계 조건, 증거 위치를 관리한다. 상세 계획과 충돌하면 임의 진행하지 말고 두 문서를 함께 수정한다.
 
@@ -30,12 +39,12 @@
 | 실행자 / 시작일 | Codex / 2026-09-14 |
 | 프런트 base / branch / worktree | 57c70d3 / codex/production-readpath-v2 / C:/dev/fant-production-readpath |
 | 서버 base / branch / worktree | 11fbbf0 / codex/production-dashboard-v1 / C:/dev/fant-inventory-dashboard |
-| 현재 운영 source / gh-pages / 자산 hash | 23332c1 / 006e599 / 37/37 SHA-256 일치 |
+| 직전 운영 source / gh-pages / 자산 hash | 61af19a / eebcb2a / 37/37 SHA-256 일치. 후속 배포는 전 메뉴 릴리스 기록 참조 |
 | 보존할 다른 변경 | a28a441 설비 기능, 기존 output, inventory 타 작업 worktree |
-| fixture / 순수 코어 hash | 02에서 기록 |
-| 적용 route / 역할 / flags | main / 기존 production 역할 / shell/store=true, viewMode=session |
+| fixture / 순수 코어 hash | ac3cd78d47f19528409da0373f8bff9688e39e738e45eeb0060ad433fe8ae151 / 7개 코어 파일 호환 유지 |
+| 적용 route / 역할 / flags | 전체14개 메뉴+freezeOp / 기존 역할 유지 / shell/store=true, viewMode=summary |
 | 배포 승인 근거 / 비용·문서 한도 | 사용자 구현·배포 지시. 월 추가1만원 목표 확정. 작업당 원본1800/쓰기100, 운영110시도·원본변경250건/일. 최신 검증은 SUMMARY_RELEASE_20260914.md |
-| 증거 폴더 | `output/performance-readpath/<release-id>/` — 실행 때 생성 |
+| 증거 폴더 | `output/readpath/`, backend `functions/output/production-dashboard/` |
 
 ## 00. 기준 고정·계측
 
@@ -53,9 +62,9 @@
 
 - [ ] `serverReadScope`는 서버 강제 조회만 사용하며 표시 store를 참조하지 않는다.
 - [ ] `closingGuard`는 조회 실패 시 저장을 차단한다. 서버에서 확인한 문서 없음은 기존대로 미마감으로 처리한다.
-- [ ] `ACTION_PATHS.md`에 버튼→모달→최종 확인→기존 서비스의 모든 저장 경로를 기록했다.
+- [x] `ACTION_PATHS.md`에 버튼→모달→최종 확인→기존 서비스의 모든 저장 경로를 기록했다.
 - [ ] main 입고·마감은 ID/date/session으로 재조회하며 최종 확인 직전 source fingerprint·권한·마감·경고를 다시 검증한다.
-- [ ] 이중 제출, 전송 후 결과불명, 이전 모달, source 변경 시 draft 보존을 검증했다.
+- [x] 이중 제출, 전송 후 결과불명, 이전 모달, source 변경 시 draft 보존을 검증했다.
 - [ ] gateway가 없는 행위가 남은 route는 session 활성화 대상에서 제외했다.
 
 **Gate:** T07~T10, 정상 payload parity, 제출 전 검증 실패 시 업무 쓰기0, 제출 후 단절 시 자동 재발행0/read-back. **인계:** action 표, command별 테스트, 커밋. 기존 TOCTOU 전체 해결은 주장하지 않는다.
@@ -110,27 +119,27 @@
 
 | 순서 | 메뉴 묶음 | 상태 / 커밋 / 증거 |
 | --- | --- | --- |
-| 06-1 | recipe | 미실행 |
-| 06-2 | settings, 닫힌 영역 지연조회·단가 N+1 | 미실행 |
-| 06-3 | production, 날짜 범위·수량/차감 보호 | 미실행 |
-| 06-4 | bag / equipment | 미실행 |
-| 06-5 | supplement / schedule | 미실행 |
-| 06-6 | egg / frozenProduct | 미실행 |
-| 06-7 | frozenPan / freezeOp / frozenSep | 미실행 |
-| 06-8 | meat | 미실행 |
-| 06-9 | stats, XLSX 클릭 시 import | 미실행 |
+| 06-1 | recipe | 구현·검증 완료 / 97b8c4b + d3396ed / 99개 테스트·golden 증거 |
+| 06-2 | settings, 닫힌 영역 지연조회·단가 N+1 | 구현·검증 완료 / e133eec (영역 개방 시 N+1 유지) / 99개 테스트·golden 증거 |
+| 06-3 | production, 날짜 범위·수량/차감 보호 | 구현·검증 완료 / d054151 / 99개 테스트·golden 증거 |
+| 06-4 | bag / equipment | 구현·검증 완료 / 99e4d87 / e1781d4 / 99개 테스트·golden 증거 |
+| 06-5 | supplement / schedule | 구현·검증 완료 / 71b994e / 6e5b116 / 99개 테스트·golden 증거 |
+| 06-6 | egg / frozenProduct | 구현·검증 완료 / 90c19a8 / 066832e / 99개 테스트·golden 증거 |
+| 06-7 | frozenPan / freezeOp / frozenSep | 구현·검증 완료 / c15c84d / 9525b0b / 99개 테스트·golden 증거 |
+| 06-8 | meat | 구현·검증 완료 / b08d976 / 99개 테스트·golden 증거 |
+| 06-9 | stats, XLSX 클릭 시 import | 구현·검증 완료 / 8456506 + 130afb5 / 99개 테스트·golden 증거 |
 
-- [ ] 활성화 route만 `VITE_PERF_ROUTES`에 등록했다.
-- [ ] 미이행 route와 이유를 기록했고, legacy에서도 공통 shell과 충돌하지 않는다.
+- [x] 활성화 route만 `VITE_PERF_ROUTES`에 등록했다.
+- [x] 미이행 route와 이유를 기록했고, legacy에서도 공통 shell과 충돌하지 않는다.
 - [ ] T15~T17 및 각 저장 경로 테스트를 통과했다.
 
 **Gate:** 승인한 1차 적용 route는 모두 완료. 나머지를 제외한 사유를 명시한다. **인계:** route/역할/flag 행렬, 커밋 목록, 메뉴별 결과.
 
 ## 07. 프런트 릴리스
 
-- [ ] 동일 조건 20회 이상 cold/warm 측정, 신규 query 수, listener 수를 비교했다.
+- [x] 동일 조건 20회 이상 cold/warm 측정, 신규 query 수, listener 수를 비교했다.
 - [ ] 성능 목표와 T01~T20 중 적용되는 전체 gate를 통과했다.
-- [ ] off fallback build에도 단계01의 저장 검증이 유지된다.
+- [x] off fallback build에도 단계01의 저장 검증이 유지된다.
 - [ ] 테스트·자산·flags·이전 revision을 포함한 release manifest를 작성했다.
 - [ ] deploy wrapper가 manifest flags를 재주입하고 재빌드 전체 자산 hash가 일치할 때만 gh-pages로 전송한다.
 - [ ] 배포 승인 범위를 확인하고 상세 계획 R1 절차를 실행했다.
@@ -246,4 +255,4 @@ fixture·표본 환경 / p50·p95 / query·document·write 수:
 
 ## 다음 구현자에게 전달할 시작 지시문
 
-> `docs/PERFORMANCE_EXECUTION_PLAN_20260914.md`와 이 체크시트를 읽고, 승인된 구현 범위 안에서 단계00부터 순서대로 진행하라. 현재 운영 기능을 포함한 HEAD를 확인하고 별도 worktree를 사용하라. 단계01 저장 검증을 먼저 완성하고 캐시 확대는 이후에 진행하라. 각 단계의 코드·테스트·증거를 남기고 gate를 통과한 단계만 완료 표시하라. 기존 원본 쓰기 규칙·재고 계산·역할·설비 기능을 보존하라. 서버 작업은 inventory의 별도 worktree에서 projection-only로 진행하라. 운영 배포는 완성된 manifest와 기존 승인 범위를 확인한 뒤 해당 단계에서 실행하라. 계획에 적힌 신설 명령은 먼저 구현·검증하라. 새로운 사실로 계획을 바꿀 때에는 근거와 두 문서의 변경을 함께 남겨라.
+> 먼저 `docs/MENU_READPATH_RELEASE_20260914.md`의 실제 배포/미관측 범위를 읽어라. 이미 완료된 구현·backfill을 재실행하지 말고 남은 운영 관측과 발견된 오류만 다뤄라. 다음은 최초 실행 당시의 지시문이다: 현재 운영 기능을 포함한 HEAD를 확인하고 별도 worktree를 사용하라. 단계01 저장 검증을 먼저 완성하고 캐시 확대는 이후에 진행하라. 각 단계의 코드·테스트·증거를 남기고 gate를 통과한 단계만 완료 표시하라. 기존 원본 쓰기 규칙·재고 계산·역할·설비 기능을 보존하라. 서버 작업은 inventory의 별도 worktree에서 projection-only로 진행하라. 운영 배포는 완성된 manifest와 기존 승인 범위를 확인한 뒤 해당 단계에서 실행하라. 계획에 적힌 신설 명령은 먼저 구현·검증하라. 새로운 사실로 계획을 바꿀 때에는 근거와 두 문서의 변경을 함께 남겨라.
