@@ -1,26 +1,41 @@
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc
+  collection, getDocsFromServer as getDocs, doc, query, orderBy, getDocFromServer as getDoc
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
-import { recordMeatLog } from '../services/meatLogs.js';
-import { recordActivity } from '../services/activityLogs.js';
 import { currentUserRole } from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
 
-export async function renderSchedule() {
-  const content = document.getElementById('mainContent');
-  content.innerHTML = `<div style="padding:24px;"><p>입고 예정관리 로딩 중...</p></div>`;
-  const [schedules] = await Promise.all([loadSchedules(), loadStaffCache()]);
-  if (!content.isConnected) return;
-  renderScheduleLayout(schedules);
+import {pageResource} from '../state/pageResources.js';
+import {withReadCommand} from '../services/readCommand.js';
+import {commandBatch} from '../services/commandBatch.js';
+import {pageRefresh} from '../utils/pageRefresh.js';
+import {getPageContext,registerPageCleanup} from '../utils/pageLifecycle.js';
+const scheduleResource=pageResource('schedule');
+let scheduleMeatTypes=[],scheduleBagTypes=[];
+async function runScheduleCommand(callback,roles=['admin','office']) {
+  const page=getPageContext();
+  try{return await withReadCommand(scheduleResource,command=>{command.isCurrent=()=>!page||page.isCurrent();return callback(command);},{roles});}
+  catch(error){console.error('[입고 예정 저장]',error);alert(error.message);}
 }
 
-async function loadSchedules() {
+export async function renderSchedule({force=false}={}) {
+  const content=document.getElementById('mainContent');
+  content.innerHTML='<div style="padding:24px;"><p>입고 예정관리 로딩 중...</p></div>';
+  const data=await scheduleResource.load(async scope=>{
+    const keys=['senior','lead','office'];
+    const [schedules,meatTypes,bagTypes,...groups]=await Promise.all([loadSchedules(scope),loadMeatTypes(scope),loadBagTypes(scope),...keys.map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
+    return {schedules,meatTypes,bagTypes,staff:Object.fromEntries(keys.map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
+  },{force,onChange:pageRefresh(scheduleResource,renderSchedule)});
+  if(!data||!content.isConnected)return;
+  scheduleMeatTypes=data.meatTypes;scheduleBagTypes=data.bagTypes;staffCache=data.staff;renderScheduleLayout(data.schedules);
+}
+
+async function loadSchedules(scope={getDocs}) {
   const q = query(collection(db, 'schedules'), orderBy('date', 'asc'));
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
   // [묶음 5E] 같은 날짜 안에서 최근 등록이 위로 (createdAt desc, 클라이언트 정렬)
@@ -33,13 +48,13 @@ async function loadSchedules() {
   return list;
 }
 
-async function loadMeatTypes() {
-  const snap = await getDocs(collection(db, 'meatTypes'));
+async function loadMeatTypes(scope={getDocs}) {
+  const snap = await scope.getDocs(collection(db, 'meatTypes'));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-async function loadBagTypes() {
-  const snap = await getDocs(collection(db, 'bagTypes'));
+async function loadBagTypes(scope={getDocs}) {
+  const snap = await scope.getDocs(collection(db, 'bagTypes'));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
@@ -148,6 +163,7 @@ function renderScheduleLayout(schedules) {
         return;
       }
       if (await blockIfClosed(s.date)) return;
+      if(page&&!page.isCurrent())return;
       showScheduleModal(s);
     });
   });
@@ -167,6 +183,7 @@ function renderScheduleLayout(schedules) {
 
       // 마감 가드 — 예정일이 마감된 날짜면 취소 차단
       if (await blockIfClosed(s.date)) return;
+      if(page&&!page.isCurrent())return;
 
       showCancelScheduleModal(s);
     });
@@ -240,8 +257,8 @@ function getTypeLabel(type) {
 
 async function showScheduleModal(editingSchedule = null) {
   const isEdit = Boolean(editingSchedule);
-  const meatTypes = await loadMeatTypes();
-  const bagTypes = await loadBagTypes();
+  registerPageCleanup(()=>delete window.updateScheduleItem);
+  const meatTypes=scheduleMeatTypes,bagTypes=scheduleBagTypes;
 
   showModal(`
     <h3 class="modal-title">입고 예정 ${isEdit ? '수정' : '등록'}</h3>
@@ -362,7 +379,9 @@ async function showScheduleModal(editingSchedule = null) {
     document.getElementById('m_staff').value = editingSchedule.orderStaffName || '';
   }
 
-  document.getElementById('btnSaveSchedule').addEventListener('click', async () => {
+  document.getElementById('btnSaveSchedule').addEventListener('click', () => runScheduleCommand(async command=>{
+    const staged=commandBatch(command,db),{addDoc,updateDoc,recordActivity,recordMeatLog}=staged;
+    const {getDoc}=command;
     if (!isScheduleStaffRole()) {
       alert(`입고 예정 ${isEdit ? '수정' : '등록'} 권한이 없습니다.`);
       return;
@@ -384,8 +403,8 @@ async function showScheduleModal(editingSchedule = null) {
       return;
     }
     if (isEdit) {
-      if (await blockIfClosed(editingSchedule.date)) return;
-      if (date !== editingSchedule.date && await blockIfClosed(date)) return;
+      if (await blockIfClosed(editingSchedule.date,command)) return;
+      if (date !== editingSchedule.date && await blockIfClosed(date,command)) return;
     }
 
     let itemId = isEdit ? (editingSchedule.itemId || null) : null;
@@ -401,7 +420,7 @@ async function showScheduleModal(editingSchedule = null) {
 
    // [묶음 5E] 중복 등록 강제 차단 — 같은 date + type + itemId(또는 egg)의 scheduled 항목 있으면 등록 거부
     // (수정하려면 기존 항목을 취소하고 재등록해야 함)
-    const existingSchedules = await loadSchedules();
+    const existingSchedules = await loadSchedules(command);
     const duplicate = existingSchedules.find(s => {
       if (isEdit && s.id === editingSchedule.id) return false;
       if (s.status !== 'scheduled') return false;
@@ -465,9 +484,10 @@ async function showScheduleModal(editingSchedule = null) {
         },
       });
 
+      await staged.commit();
+      if(!command.isCurrent())return;
       closeModal();
-      const newSchedules = await loadSchedules();
-      renderScheduleLayout(newSchedules);
+      await renderSchedule({force:true});
       alert('입고 예정 수정 완료!');
       return;
     }
@@ -510,11 +530,12 @@ async function showScheduleModal(editingSchedule = null) {
       },
     });
 
+    await staged.commit();
+    if(!command.isCurrent())return;
     closeModal();
-    const newSchedules = await loadSchedules();
-    renderScheduleLayout(newSchedules);
+    await renderSchedule({force:true});
     alert('입고 예정 등록 완료!');
-  });
+  }));
 }
 
 function showCancelScheduleModal(s) {
@@ -538,7 +559,10 @@ function showCancelScheduleModal(s) {
     </div>
   `);
 
-  document.getElementById('btnSaveCancelSchedule').addEventListener('click', async () => {
+  document.getElementById('btnSaveCancelSchedule').addEventListener('click', () => runScheduleCommand(async command=>{
+    const staged=commandBatch(command,db),{addDoc,updateDoc,recordActivity,recordMeatLog}=staged;
+    const {getDoc}=command;
+    if(await blockIfClosed(s.date,command))return;
     const reason = document.getElementById('m_reason').value.trim();
     const staff = document.getElementById('m_staff').value;
 
@@ -573,11 +597,12 @@ function showCancelScheduleModal(s) {
       },
     });
 
+    await staged.commit();
+    if(!command.isCurrent())return;
     closeModal();
-    const newSchedules = await loadSchedules();
-    renderScheduleLayout(newSchedules);
+    await renderSchedule({force:true});
     alert('취소 완료!');
-  });
+  }));
 }
 
 function showCompleteModal(s) {
@@ -615,7 +640,9 @@ function showCompleteModal(s) {
     </div>
   `);
 
-  document.getElementById('btnSaveComplete').addEventListener('click', async () => {
+  document.getElementById('btnSaveComplete').addEventListener('click', () => runScheduleCommand(async command=>{
+    const staged=commandBatch(command,db),{addDoc,updateDoc,recordActivity,recordMeatLog}=staged;
+    const {getDoc}=command;
     try {
     const actual = parseFloat(document.getElementById('m_actual').value);
     const actualUnit = document.getElementById('m_actual_unit')?.value || s.orderedUnit;
@@ -628,7 +655,7 @@ function showCompleteModal(s) {
       return;
     }
     const today = getToday();
-    if (await blockIfClosed(today)) return;
+    if (await blockIfClosed(today,command)) return;
 
     // 발주/실제 수량 차이 시 한 번 더 확인
     const orderedCompareQty = isCountIncomingUnit(s.orderedUnit) && actualUnit === 'g'
@@ -817,15 +844,16 @@ function showCompleteModal(s) {
       },
     });
 
+    await staged.commit();
+    if(!command.isCurrent())return;
     closeModal();
-    const newSchedules = await loadSchedules();
-    renderScheduleLayout(newSchedules);
+    await renderSchedule({force:true});
     alert('완료 처리되었습니다!');
     } catch (err) {
       console.error('입고 완료 처리 오류:', err);
       alert(`완료 처리 중 오류가 발생했습니다.\n\n${err.code || ''} ${err.message}\n\n이 메시지를 관리자에게 전달해주세요.`);
     }
-  });
+  },['admin','office','production']));
 }
 
 // 유틸
@@ -839,13 +867,6 @@ function escapeAttr(value) {
 }
 
 let staffCache = {};
-async function loadStaffCache() {
-  if (Object.keys(staffCache).length > 0) return;
-  await Promise.all(['senior', 'lead', 'office'].map(async key => {
-    const snap = await getDoc(doc(db, 'staffGroups', key));
-    if (snap.exists()) staffCache[key] = snap.data().members || [];
-  }));
-}
 
 function getStaffOptions(groups) {
   let options = '';
