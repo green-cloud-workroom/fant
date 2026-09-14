@@ -15,13 +15,13 @@ import { isDateClosed } from '../closing.js';
  * @param {string} dateStr - 검사할 날짜 (YYYY-MM-DD)
  * @returns {Promise<boolean>} true=차단됨(호출 측 중단해야 함), false=통과
  */
-export async function blockIfClosed(dateStr) {
+export async function blockIfClosed(dateStr, scope) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr || '')) {
     alert('처리 날짜를 확인할 수 없습니다. 화면을 다시 불러온 뒤 시도해주세요.');
     return true;
   }
   try {
-    const closed = await isDateClosed(dateStr);
+    const closed = await isDateClosed(dateStr, scope);
     if (closed) {
       alert(`${dateStr}는 이미 마감된 날짜입니다.\n수정하려면 마감해제하세요.`);
       return true;

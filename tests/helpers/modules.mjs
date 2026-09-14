@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { makeFirestore } from '../fixtures/firestore.mjs';
+const baselineSources=new Map();
 
 export async function environment(options = {}) {
   const fake = options.firestore || makeFirestore(options);
@@ -34,7 +35,11 @@ export async function environment(options = {}) {
   async function getModule(id) {
     if(cache.has(id))return cache.get(id);
     let source=readFileSync(id,'utf8');
-    if(options.baselineRef && id.startsWith(resolve('src'))) source=execFileSync('git',['show',options.baselineRef+':'+id.slice(root.length+1).replaceAll('\\','/')],{encoding:'utf8'});
+    if(options.baselineRef && id.startsWith(resolve('src'))) {
+      const key=options.baselineRef+':'+id.slice(root.length+1).replaceAll('\\','/');
+      if(!baselineSources.has(key))baselineSources.set(key,execFileSync('git',['show',key],{encoding:'utf8'}));
+      source=baselineSources.get(key);
+    }
     if(id===resolve('src/pages/main.js'))source+='\nexport { loadAllData, '+(source.includes('function installMainModel')?'installMainModel, ':'')+'renderMainLayout }; export function testState(){return {productions,nextProductions,recipes,meatStocks,eggStock,completionDoc,blockingData,overdueClosingDate,overdueClosingAlreadyClosed,overdueProductions,overdueNextProductions,overdueCompletionDoc,calendarSchedules,calendarProductions,calendarEvents,combinedLogs,equipmentAlerts};}';
     if(id===resolve('src/pages/production.js'))source+='\nexport { loadProductions };';
     source += options.instrument?.[id.slice(root.length+1).replaceAll('\\','/')] || '';

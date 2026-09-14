@@ -84,6 +84,14 @@ test('submitting twice executes callback only once',async()=>{
   const first=a.submit(async()=>{count++;await new Promise(r=>release=r);});await assert.rejects(()=>a.submit(()=>count++),/처리 중/);
   while(!release)await new Promise(r=>setTimeout(r,0));release();await first;assert.equal(count,1);
 });
+test('a receipt confirmation ticket cannot authorize a second attempt after an ambiguous write',async()=>{
+  const e=await actionEnv();const action=await e.action.openAction({refs:['eggStock/global']});
+  await action.confirm();await assert.rejects(()=>action.confirm(),/이미 확인한/);
+  const repeated=await e.action.openAction({refs:['eggStock/global'],reusableConfirm:true});
+  await repeated.confirm();await repeated.confirm();let attempts=0;
+  await assert.rejects(()=>repeated.submit(()=>{attempts++;throw Error('lost acknowledgement');}),error=>error.readBack?.[0].serverObserved===true);
+  await assert.rejects(()=>repeated.submit(()=>attempts++),/이미 전송/);assert.equal(attempts,1);
+});
 test('holiday result from old session never publishes',async()=>{
   const e=await environment();const dates=await e.load('src/utils/date.js');const {sessionStore}=await e.load('src/state/sessionStore.js');let release;
   const pending=dates.loadHolidaysCache({getDocs:()=>new Promise(r=>release=r)});sessionStore.clear('other');release({docs:[]});

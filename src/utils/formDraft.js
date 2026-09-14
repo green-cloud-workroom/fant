@@ -1,13 +1,24 @@
 import { registerModalDismiss } from './modalManager.js';
+const baselines=new WeakMap();
+const controls=root=>[...root.querySelectorAll('input,textarea,select')];
+const values=root=>JSON.stringify(controls(root).map(field=>[field.id,field.name,field.type,field.type==='checkbox'||field.type==='radio'?field.checked:field.value]));
+export function markFieldsSaved(root,{extra}={}) {
+  for(const field of controls(root)){
+    if(field.type==='checkbox'||field.type==='radio')field.defaultChecked=field.checked;
+    else if(field.tagName==='SELECT')for(const option of field.options)option.defaultSelected=option.selected;
+    else field.defaultValue=field.value;
+  }
+  baselines.set(root,{values:values(root),extra,extraValue:JSON.stringify(extra?.())});
+}
 export function hasChanged(field) {
   if (field.type === 'checkbox' || field.type === 'radio') return field.checked !== field.defaultChecked;
   if (field.tagName === 'SELECT') return field.value !== ([...field.options].find(option => option.defaultSelected) || field.options[0])?.value;
   return field.value !== field.defaultValue;
 }
-export function hasDirtyFields(root=document){return [...root.querySelectorAll('input,textarea,select')].some(hasChanged);}
+export function hasDirtyFields(root=document){const saved=baselines.get(root);return saved?values(root)!==saved.values||JSON.stringify(saved.extra?.())!==saved.extraValue:controls(root).some(hasChanged);}
 export async function canLeavePage() {
-  const fields = document.querySelectorAll('.modal-overlay input,.modal-overlay textarea,.modal-overlay select,.recipe-detail-panel input,.recipe-detail-panel textarea,.recipe-detail-panel select,.settings-section input,.settings-section textarea,.settings-section select');
-  if (![...fields].some(field => hasChanged(field))) return true;
+  const roots = document.querySelectorAll('.modal-overlay,.recipe-detail-panel,#productionForm,.settings-section,.supplement-page');
+  if (![...roots].some(hasDirtyFields)) return true;
   // Keep the form and its values mounted until the user chooses to leave.
   return new Promise(resolve => {
     const overlay = document.createElement('div');

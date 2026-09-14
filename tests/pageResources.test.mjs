@@ -63,6 +63,9 @@ test('a never-acknowledged write times out into read-back without sending again'
   const e=await setup();let writes=0;
   await assert.rejects(()=>e.command.withReadCommand(e.resource,c=>c.commit({commit:()=>{writes++;return new Promise(()=>{});}},{targets:[e.api.doc({},'recipes','r1')]}),{timeoutMs:5}),error=>error.code==='outcome-unknown');
   assert.equal(writes,1);assert.equal(e.resource.blocked,true);
+  await e.resource.load(e.loader,{force:true});
+  await assert.rejects(()=>e.command.withReadCommand(e.resource,()=>writes++),/직전 저장 결과/);
+  assert.equal(writes,1);
 });
 
 test('a late load cannot replace a newer model in the same page',async()=>{
@@ -83,5 +86,17 @@ test('eviction also releases fingerprints, query registry refs and Sortable.crea
   for(let i=0;i<5;i++){e.lifecycle.beginPage({isConnected:true},'r'+i);await e.resources.pageResource('r'+i).load(e.loader);}
   assert.equal(e.resource.observations.length,0);
   const {default:Sortable}=await e.load('src/utils/sortable.js');const instance=Sortable.create({});e.lifecycle.disposePage();assert.equal(instance._disposed,true);
+});
+
+test('a workflow refreshes reads after its own commit and stops after a later conflict',async()=>{
+  const e=await setup();let writes=0;
+  await assert.rejects(()=>e.command.withReadWorkflow(e.resource,async command=>{
+    await command.getDocs(e.ref);
+    await command.commit({commit:async()=>{writes++;e.state.rows.recipes[0].name='own write';}});
+    const fresh=await command.getDocs(e.ref);assert.equal(fresh.docs[0].data().name,'own write');
+    e.state.rows.recipes[0].name='another user';
+    await command.commit({commit:async()=>writes++});
+  }),/원본이 변경/);
+  assert.equal(writes,1);assert.equal(e.resource.blocked,true);
 });
 

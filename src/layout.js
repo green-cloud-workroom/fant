@@ -627,7 +627,7 @@ async function handleLogoutClick() {
  * 전체 담당자(senior+lead+office) 선택 가능.
  */
 async function showCloseConfirmModal(targetDate) {
-  const action = await openAction({ refs: ['closings/' + targetDate] });
+  const action = await openAction({ refs: ['closings/' + targetDate], reusableConfirm:true });
   // 기존 모달 제거
   const existing = document.getElementById('closeConfirmOverlay');
   if (existing) existing.remove();
@@ -702,7 +702,7 @@ async function showCloseConfirmModal(targetDate) {
       const finalBlocks = await getAllBlockingItems(targetDate);
       if (fingerprint(finalBlocks) !== fingerprint(latest)) throw new Error('마감 확인 중 처리 항목이 변경되었습니다. 다시 확인해주세요.');
       const { closeDate } = await import('./closing.js');
-      await closeDate(targetDate, staffName);
+      await action.submit(()=>closeDate(targetDate, staffName));
       overlay.remove();
       alert(`${dateLabel} 마감 완료`);
       // 라벨/배너 갱신
@@ -722,7 +722,7 @@ async function showCloseConfirmModal(targetDate) {
  * 전체 담당자(senior+lead+office) 선택 가능.
  */
 async function showReleaseConfirmModal(targetDate) {
-  const action = await openAction({ refs: ['closings/' + targetDate] });
+  const action = await openAction({ refs: ['closings/' + targetDate], reusableConfirm:true });
   // 기존 모달 제거
   const existing = document.getElementById('releaseConfirmOverlay');
   if (existing) existing.remove();
@@ -796,7 +796,7 @@ async function showReleaseConfirmModal(targetDate) {
     try {
       await action.confirm();
       const { releaseClosing } = await import('./closing.js');
-      await releaseClosing(targetDate, staffName, reason);
+      await action.submit(()=>releaseClosing(targetDate, staffName, reason));
       overlay.remove();
       alert(`${dateLabel} 마감해제 완료`);
       // 라벨/배너 갱신

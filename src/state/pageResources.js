@@ -20,7 +20,7 @@ function trim(){
   let bytes=models.reduce((n,r)=>n+r.bytes,0),count=models.length;
   for(const r of models){if(count<=MAX_MODELS&&bytes<=MAX_BYTES)break;if(r.active)continue;bytes-=r.bytes;count--;r.model=null;r.observations=[];r.bytes=0;r.disconnect();}
 }
-sessionStore.onClear(()=>{for(const r of resources.values()){r.disconnect();r.model=null;r.observations=[];r.blocked=false;r.active=false;} });
+sessionStore.onClear(()=>{for(const r of resources.values()){r.disconnect();r.model=null;r.observations=[];r.blocked=!!r.pending;r.active=false;} });
 
 export function pageResource(route){
   if(resources.has(route))return resources.get(route);
@@ -43,7 +43,7 @@ export function pageResource(route){
       const scope={...reader,getDoc:track('getDoc'),getDocs:track('getDocs')};
       const model=await loader(scope);
       if(loadId!==this.loadId||epoch!==sessionStore.epoch||(context&&!context.isCurrent()))return null;
-      this.model=copyModel(model);this.observations=observations;this.dirty=this.revision!==revision;this.blocked=false;
+      this.model=copyModel(model);this.observations=observations;this.dirty=this.revision!==revision;this.blocked=!!this.pending;
       this.bytes=JSON.stringify(model).length*2+observations.reduce((n,o)=>n+o.fingerprint.length*4,0);trim();return model;
     },
   };

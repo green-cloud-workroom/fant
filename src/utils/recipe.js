@@ -2,7 +2,7 @@
 // 사용처: 동결판 재고, 분리작업 등 productName 드롭다운
 
 import { db } from '../firebase.js';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocsFromServer as getDocs, query, where } from 'firebase/firestore';
 
 /**
  * 활성 동결건조 레시피 목록을 반환.
@@ -10,13 +10,13 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
  *
  * @returns {Promise<Array<{id:string, displayName:string}>>}
  */
-export async function getActiveFreezeDryRecipes() {
+export async function getActiveFreezeDryRecipes(scope={getDocs}) {
   const q = query(
     collection(db, 'recipes'),
     where('category', '==', 'freezeDry'),
     where('active', '==', true)
   );
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   const list = snap.docs.map(d => {
     const data = d.data();
     const prefix = data.target === 'cat' ? '고양이 '

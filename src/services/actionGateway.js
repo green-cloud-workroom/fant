@@ -12,7 +12,7 @@ export function fingerprint(value) {
   if (Array.isArray(value)) return '[' + value.map(fingerprint).join(',') + ']';
   return '{' + Object.keys(value).sort().map(k => JSON.stringify(k) + ':' + fingerprint(value[k])).join(',') + '}';
 }
-export async function openAction({ refs = [], roles = ['admin', 'office', 'production'] } = {}) {
+export async function openAction({ refs = [], roles = ['admin', 'office', 'production'], reusableConfirm = false } = {}) {
   const user = auth.currentUser;
   const day = getTodayKST();
   const epoch = sessionStore.epoch;
@@ -29,18 +29,33 @@ export async function openAction({ refs = [], roles = ['admin', 'office', 'produ
   }
   const values = await read();
   const original = fingerprint(values);
-  let submitting = false;
+  let submitting = false, dispatched = false, confirmed = false, confirming = false;
   return {
     values,
     async confirm() {
-      const latest = await read();
-      if (fingerprint(latest) !== original) throw new Error('다른 작업으로 원본이 변경되었습니다. 입력을 확인하고 화면을 다시 열어주세요.');
-      return latest;
+      if(confirming)throw new Error('이미 확인 중입니다.');
+      if(confirmed&&!reusableConfirm)throw new Error('이미 확인한 저장 요청입니다. 서버 결과를 확인한 뒤 화면을 다시 열어주세요.');
+      confirming=true;
+      try {
+        const latest = await read();
+        if (fingerprint(latest) !== original) throw new Error('다른 작업으로 원본이 변경되었습니다. 입력을 확인하고 화면을 다시 열어주세요.');
+        confirmed=true;return latest;
+      }finally{confirming=false;}
     },
     async submit(callback) {
       if (submitting) throw new Error('이미 처리 중입니다.');
+      if (dispatched) throw new Error('이미 전송한 요청입니다. 화면에서 저장 결과를 확인해주세요.');
       submitting = true;
-      try { const latest = await this.confirm(); return await callback(latest); }
+      try {
+        const latest = await this.confirm(); dispatched = true;
+        try { return await callback(latest); }
+        catch(error){
+          const scope=createServerReadScope();
+          const observed=await Promise.allSettled(refs.map(path=>scope.getDoc(doc(db,path))));
+          error.readBack=observed.map(result=>({serverObserved:result.status==='fulfilled',exists:result.status==='fulfilled'?result.value.exists():null}));
+          throw error;
+        }
+      }
       finally { submitting = false; }
     },
   };
