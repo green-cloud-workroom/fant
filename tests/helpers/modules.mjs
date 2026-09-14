@@ -34,7 +34,7 @@ export async function environment(options = {}) {
     if(cache.has(id))return cache.get(id);
     let source=readFileSync(id,'utf8');
     if(options.baselineRef && id.startsWith(resolve('src'))) source=execFileSync('git',['show',options.baselineRef+':'+id.slice(root.length+1).replaceAll('\\','/')],{encoding:'utf8'});
-    if(id===resolve('src/pages/main.js'))source+='\nexport { loadAllData }; export function testState(){return {productions,nextProductions,recipes,meatStocks,eggStock,completionDoc,blockingData,overdueClosingDate,overdueClosingAlreadyClosed,overdueProductions,overdueNextProductions,overdueCompletionDoc,calendarSchedules,calendarProductions,calendarEvents,combinedLogs,equipmentAlerts};}';
+    if(id===resolve('src/pages/main.js'))source+='\nexport { loadAllData, installMainModel, renderMainLayout }; export function testState(){return {productions,nextProductions,recipes,meatStocks,eggStock,completionDoc,blockingData,overdueClosingDate,overdueClosingAlreadyClosed,overdueProductions,overdueNextProductions,overdueCompletionDoc,calendarSchedules,calendarProductions,calendarEvents,combinedLogs,equipmentAlerts};}';
     if(id===resolve('src/pages/production.js'))source+='\nexport { loadProductions };';
     const module=new vm.SourceTextModule(source,{context,identifier:id,importModuleDynamically:async specifier=>{
       const child=await getModule(resolve(dirname(id),specifier));
