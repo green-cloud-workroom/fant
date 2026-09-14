@@ -1,7 +1,7 @@
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, setDoc, writeBatch
+  collection, getDocsFromServer as getDocs, doc, addDoc, updateDoc, query, orderBy, getDocFromServer as getDoc, setDoc, writeBatch
 } from 'firebase/firestore';
 import Sortable from '../utils/sortable.js';
 import { currentUserRole } from '../app.js';
@@ -14,27 +14,27 @@ import { recordActivity } from '../services/activityLogs.js';
 let freezeDryRecipes = [];
 const QTY_EPSILON = 0.000001;
 
-export async function renderFrozenSep() {
-  const content = document.getElementById('mainContent');
-  content.innerHTML = `<div style="padding:24px;"><p>동결 분리작업 로딩 중...</p></div>`;
-  const [loadedRecipes, stocks, logs] = await Promise.all([
-    getActiveFreezeDryRecipes(), loadFrozenSepStocks(), loadFrozenSepLogs(),
-    loadStaffCache(), loadSepProductOrder(),
-  ]);
-  if (!content.isConnected) return;
-  freezeDryRecipes = loadedRecipes;
-  renderFrozenSepLayout(stocks, logs);
+export async function renderFrozenSep({force=false}={}) {
+ const content=document.getElementById('mainContent');
+ content.innerHTML='<p style="padding:24px">동결 분리작업 로딩 중...</p>';
+ const data=await frozenSepResource.load(async scope=>{
+  const [recipes,stocks,logs,staff,order]=await Promise.all([getActiveFreezeDryRecipes(scope),loadFrozenSepStocks(scope),loadFrozenSepLogs(scope),loadPageStaff(scope),scope.getDoc(doc(db,'settings','frozenSepProductOrder'))]);
+  return {recipes,stocks,logs,staff,order:order.exists()?order.data().order||[]:[]};
+ },{force,onChange:pageRefresh(frozenSepResource,renderFrozenSep)});
+ if(!data||!content.isConnected)return;
+ freezeDryRecipes=data.recipes;staffCache=data.staff;sepProductOrder=data.order;
+ renderFrozenSepLayout(data.stocks,data.logs);
 }
 
-async function loadFrozenSepStocks() {
+async function loadFrozenSepStocks(scope={getDocs,getDoc}) {
   const q = query(collection(db, 'frozenSeparation'), orderBy('date', 'desc'));
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.closed);
 }
 
-async function loadFrozenSepLogs() {
+async function loadFrozenSepLogs(scope={getDocs,getDoc}) {
   const q = query(collection(db, 'frozenSeparationLogs'), orderBy('timestamp', 'desc'));
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
@@ -264,6 +264,9 @@ function renderFrozenSepLayout(stocks, logs = []) {
       draggable: '.sep-col-th',
       direction: 'horizontal',
       onEnd: async () => {
+ return runPageCommand(frozenSepResource,async command=>{
+  const {setDoc}=commandWrites(command);
+
         const newOrder = [...headRow.querySelectorAll('.sep-col-th')].map(th => th.dataset.product);
         sepProductOrder = newOrder;
         try {
@@ -274,8 +277,11 @@ function renderFrozenSepLayout(stocks, logs = []) {
           console.error('saveSepProductOrder:', err);
           alert('순서 저장 실패: ' + err.message);
         }
+        if(!command.isCurrent())return;
         renderFrozenSepLayout(stocks, logs);
-      },
+
+ },{roles:['admin','office']});
+},
     });
   }
 
@@ -507,12 +513,15 @@ function renderProductCard(name, stocks, logs, balances, canDelete) {
 }
 
 async function deleteFrozenSepStock(stock) {
+ return runPageCommand(frozenSepResource,async command=>{
+  const {writeBatch,recordActivity}=commandWrites(command);
+
   if (!canDeleteFrozenSepStock()) {
     alert('삭제 권한이 없습니다.');
     return;
   }
 
-  if (await blockIfClosed(stock.date)) return;
+  if (await blockIfClosed(stock.date, command)) return;
 
   const initialQty = Number(stock.initialQty || 0);
   const remainingQty = Number(stock.remaining || 0);
@@ -582,8 +591,11 @@ async function deleteFrozenSepStock(stock) {
   });
 
   const [newStocks, newLogs] = await Promise.all([loadFrozenSepStocks(), loadFrozenSepLogs()]);
+  if(!command.isCurrent())return;
   renderFrozenSepLayout(newStocks, newLogs);
   alert('삭제 완료!');
+
+ },{roles:['admin','office']});
 }
 
 function showIncomingModal(stocks) {
@@ -650,6 +662,9 @@ function showIncomingModal(stocks) {
   updateSepGuide();
 
   document.getElementById('btnSaveIncoming').addEventListener('click', async () => {
+ return runPageCommand(frozenSepResource,async command=>{
+  const {addDoc,recordActivity}=commandWrites(command);
+
     const name = document.getElementById('m_name').value.trim();
     const qty = parseQtyInput();
     const date = document.getElementById('m_date').value;
@@ -658,7 +673,7 @@ function showIncomingModal(stocks) {
 
     if (!name || !Number.isFinite(qty) || qty <= 0 || !date) { alert('제품명, 수량, 날짜는 필수입니다.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
-    if (await blockIfClosed(date)) return;
+    if (await blockIfClosed(date, command)) return;
 
     // [묶음 5C] 분리 필요 여부 자동 결정 (운영자 입력 대신 레시피 설정 사용)
     const recipe = freezeDryRecipes.find(r => r.displayName === name);
@@ -701,11 +716,15 @@ function showIncomingModal(stocks) {
       },
     });
 
+    if(!command.isCurrent())return;
     closeModal();
     const [newStocks, newLogs] = await Promise.all([loadFrozenSepStocks(), loadFrozenSepLogs()]);
+    if(!command.isCurrent())return;
     renderFrozenSepLayout(newStocks, newLogs);
     alert('입고 완료!');
-  });
+
+ },{roles:['admin','office','production']});
+});
 }
 
 function showSeparateModal(stocks) {
@@ -748,6 +767,9 @@ function showSeparateModal(stocks) {
   `);
 
   document.getElementById('btnSaveSeparate').addEventListener('click', async () => {
+ return runPageCommand(frozenSepResource,async command=>{
+  const {addDoc,updateDoc,recordActivity}=commandWrites(command);
+
     const productName = document.getElementById('m_product').value;
     const qty = parseQtyInput();
     const date = document.getElementById('m_date').value;
@@ -755,7 +777,7 @@ function showSeparateModal(stocks) {
 
     if (!productName || !Number.isFinite(qty) || qty <= 0 || !date) { alert('제품, 수량, 날짜는 필수입니다.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
-    if (await blockIfClosed(date)) return;
+    if (await blockIfClosed(date, command)) return;
 
     const productStocks = notSepStocks
       .filter(s => s.productName === productName)
@@ -812,11 +834,15 @@ function showSeparateModal(stocks) {
       },
     });
 
+    if(!command.isCurrent())return;
     closeModal();
     const [newStocks, newLogs] = await Promise.all([loadFrozenSepStocks(), loadFrozenSepLogs()]);
+    if(!command.isCurrent())return;
     renderFrozenSepLayout(newStocks, newLogs);
     alert('분리 작업 완료!');
-  });
+
+ },{roles:['admin','office','production']});
+});
 }
 
 function showOutModal(stocks) {
@@ -896,6 +922,9 @@ function showOutModal(stocks) {
   updateOutType();
 
   document.getElementById('btnSaveOut').addEventListener('click', async () => {
+ return runPageCommand(frozenSepResource,async command=>{
+  const {addDoc,updateDoc,recordActivity}=commandWrites(command);
+
     const productName = document.getElementById('m_product').value;
     const qty = parseQtyInput();
     const date = document.getElementById('m_date').value;
@@ -903,7 +932,7 @@ function showOutModal(stocks) {
 
     if (!productName || !Number.isFinite(qty) || qty <= 0 || !date) { alert('제품, 수량, 날짜는 필수입니다.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
-    if (await blockIfClosed(date)) return;
+    if (await blockIfClosed(date, command)) return;
 
     // [묶음 5C] 재고 종류 자동 결정 (운영자 입력 대신 레시피 설정 사용)
     const recipe = freezeDryRecipes.find(r => r.displayName === productName);
@@ -960,11 +989,15 @@ function showOutModal(stocks) {
       },
     });
 
+    if(!command.isCurrent())return;
     closeModal();
     const [newStocks, newLogs] = await Promise.all([loadFrozenSepStocks(), loadFrozenSepLogs()]);
+    if(!command.isCurrent())return;
     renderFrozenSepLayout(newStocks, newLogs);
     alert('출고 완료!');
-  });
+
+ },{roles:['admin','office','production']});
+});
 }
 
 function showAdjustModal(stocks) {
@@ -1018,6 +1051,9 @@ function showAdjustModal(stocks) {
   `);
 
   document.getElementById('btnSaveAdjust').addEventListener('click', async () => {
+ return runPageCommand(frozenSepResource,async command=>{
+  const {addDoc,updateDoc,recordActivity}=commandWrites(command);
+
     const productName = document.getElementById('m_product').value;
     const stockType = document.getElementById('m_stockType').value;
     const adjustType = document.getElementById('m_adjustType').value;
@@ -1027,7 +1063,7 @@ function showAdjustModal(stocks) {
 
     if (!productName || !Number.isFinite(qty) || qty <= 0 || !reason || !staff) { alert('모든 필수 항목을 입력해주세요.'); return; }
     const today = getToday();
-    if (await blockIfClosed(today)) return;
+    if (await blockIfClosed(today, command)) return;
 
     const delta = adjustType === 'plus' ? qty : -qty;
     const targetStocks = stocks
@@ -1069,7 +1105,7 @@ function showAdjustModal(stocks) {
       fromStockType: stockType,
       qty: delta, staffName: staff, reason,
     });
-    
+
     const stockTypeLabel = getStockTypeLabel(stockType);
     const sign = delta >= 0 ? '+' : '';
     await recordActivity({
@@ -1086,11 +1122,15 @@ function showAdjustModal(stocks) {
       },
     });
 
+    if(!command.isCurrent())return;
     closeModal();
     const [newStocks, newLogs] = await Promise.all([loadFrozenSepStocks(), loadFrozenSepLogs()]);
+    if(!command.isCurrent())return;
     renderFrozenSepLayout(newStocks, newLogs);
     alert('조정 완료!');
-  });
+
+ },{roles:['admin','office','production']});
+});
 }
 
 // 유틸
@@ -1134,3 +1174,13 @@ registerCloseModal('frozenSep', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
 });
+
+import {pageResource} from '../state/pageResources.js';
+import {pageRefresh} from '../utils/pageRefresh.js';
+import {getPageContext} from '../utils/pageLifecycle.js';
+import {loadPageStaff} from '../services/pageStaff.js';
+const frozenSepResource=pageResource('frozenSep');
+frozenSepResource.refresh=renderFrozenSep;
+
+import {runPageCommand} from '../services/pageCommand.js';
+import {commandWrites} from '../services/commandWrites.js';
