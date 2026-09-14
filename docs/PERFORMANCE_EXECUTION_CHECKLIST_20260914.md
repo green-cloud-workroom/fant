@@ -27,23 +27,23 @@
 
 | 항목 | 실행 기록 |
 | --- | --- |
-| 실행자 / 시작일 | 미실행 |
-| 프런트 base / branch / worktree | 미실행 |
-| 서버 base / branch / worktree | 미실행 |
-| 현재 운영 source / gh-pages / 자산 hash | 미실행 |
-| 보존할 다른 변경 | 미실행 |
+| 실행자 / 시작일 | Codex / 2026-09-14 |
+| 프런트 base / branch / worktree | 57c70d3 / codex/production-readpath-v2 / C:/dev/fant-production-readpath |
+| 서버 base / branch / worktree | 11fbbf0 / codex/production-dashboard-v1 / C:/dev/fant-inventory-dashboard |
+| 현재 운영 source / gh-pages / 자산 hash | 23332c1 / 006e599 / 37/37 SHA-256 일치 |
+| 보존할 다른 변경 | a28a441 설비 기능, 기존 output, inventory 타 작업 worktree |
 | fixture / 순수 코어 hash | 02에서 기록 |
-| 적용 route / 역할 / flags | 릴리스별 기록 |
-| 배포 승인 근거 / 비용·문서 한도 | 해당 운영 단계 직전에 기록 |
+| 적용 route / 역할 / flags | main / 기존 production 역할 / shell/store=true, viewMode=session |
+| 배포 승인 근거 / 비용·문서 한도 | 사용자 구현·배포 지시. 프런트 배포 완료. 서버 월 비용 목표 응답 대기, read-only 사전 조사 회당20,000 제한/12,888 사용, 쓰기0 |
 | 증거 폴더 | `output/performance-readpath/<release-id>/` — 실행 때 생성 |
 
 ## 00. 기준 고정·계측
 
-- [ ] `C:\dev\fant-production`의 status/HEAD/remote, `main`과 배포 코드의 차이, live 자산을 확인했다.
-- [ ] `C:\dev\fantapet-inventory`의 status/HEAD/remote와 서버 소유 경계를 확인했다.
-- [ ] 현재 검증된 운영 코드를 포함하는 HEAD에서 `codex/production-readpath-v2`와 별도 worktree를 만들었다. `main`을 무조건 기준으로 사용하지 않았다.
-- [ ] `output/` 및 설비 부품 선행 기능, 타 작업 변경을 보존했다.
-- [ ] VM loader의 동시 모듈 중복을 수정하고 반복 테스트가 같은 결과를 내는지 확인했다.
+- [x] `C:\dev\fant-production`의 status/HEAD/remote, `main`과 배포 코드의 차이, live 자산을 확인했다.
+- [x] `C:\dev\fantapet-inventory`의 status/HEAD/remote와 서버 소유 경계를 확인했다.
+- [x] 현재 검증된 운영 코드를 포함하는 HEAD에서 `codex/production-readpath-v2`와 별도 worktree를 만들었다. `main`을 무조건 기준으로 사용하지 않았다.
+- [x] `output/` 및 설비 부품 선행 기능, 타 작업 변경을 보존했다.
+- [x] VM loader의 동시 모듈 중복을 수정하고 반복 테스트가 같은 결과를 내는지 확인했다.
 - [ ] client marks와 신규 npm scripts를 등록했다. 신규 script를 등록 전에 실행하지 않았다.
 - [ ] 기존 performance/phase3a/phase3b/build와 새 계측 baseline을 저장했다.
 

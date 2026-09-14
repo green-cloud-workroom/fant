@@ -33,13 +33,25 @@
 - emulator는 `demo-fant-readpath`, `127.0.0.1:8088` 강제. rules는 inventory HEAD 사본이며 배포하지 않음. 운영 project 실행 거부.
 - 로컬14개 메뉴 진입, 이벤트 입력 중 주소 이동 취소→값 유지, 외부 계란 변경→상단 수량 갱신 확인.
 - 설정 입력 시험에서 fixture가 활동 로그 쓰기를 의도적으로 거부한 오류1건은 로컬 제한이다. 저장 성공으로 계산하지 않는다.
-- 기본 flags OFF build 성공. 실제 ON build/라이브 확인은 배포 후 기록한다.
+- 기본 flags OFF build 성공. 실제 ON build와 전송 직전 재빌드의 전체 자산 SHA-256 일치 확인.
+
+## 운영 배포 완료
+
+- 운영 source: `23332c13747e6a86e42e0799975897bedf437cee`.
+- gh-pages: `006e599dd7c174e5731622c7ac070fe668c469c4`, Pages 실행 `34811616174` 성공.
+- flags: shell/store=true, routes=main, viewMode=session.
+- 운영 파일 **37/37** SHA-256 일치. 일부 CDN의 일시적 404는 재검증 때 모두 해소됐다.
+- 운영 로그인 세션으로 14개 메뉴의 읽기 전용 진입 확인. 메인 본문 19,431자가 변경 전과 동일했다. 전체 업무 저장 회귀를 뜻하지 않는다.
+- 배포 이후 `4462fb1`은 테스트 fixture의 `data()`에서 문서 ID를 제거한 수정이며 운영 코드 변경이 아니다.
+- 증거: `output/readpath/release-manifest.json`, `output/readpath/live-verification.json`.
 
 ## 운영 조사와 남은 범위
 
 읽기 전용 count: productions449, productionCompletion65, closings65, eggLogs110, frozenPanStock6, schedules55, activityLogs11357, events0, holidays71, recipes28, meatTypes30, meatStocks146, bagTypes24, eggStock1, supplementTypes172, supplementStock172, equipmentParts44, equipments5, settings5, staffGroups3. 조사 이후 달라질 수 있다. 문서 내용/토큰은 보고서에 저장하지 않았다.
 
-기존 Functions10개 ACTIVE 확인. 새 Functions/rules/index/scheduler/projection은 이 릴리스에서 배포하지 않는다. 기존 원본 스키마·차감·outbox 프로토콜을 유지한다. 사전 서버 조회는 이후 동시 쓰기까지 원자적으로 막지는 않는다. 전송 후 결과불명 read-back, 전 메뉴 gateway/모델, 서버 parity/비용/초기 집계는 미완료다.
+기존 Functions10개 ACTIVE 확인. 새 Functions/rules/index/scheduler/projection은 아직 운영 배포하지 않았다. 기존 원본 스키마·차감·outbox 프로토콜을 유지한다. 사전 서버 조회는 이후 동시 쓰기까지 원자적으로 막지는 않는다. 전송 후 결과불명 read-back, 전 메뉴 gateway/모델, 서버 운영 비교·비용·초기 집계·summary 화면 연결은 미완료다.
+
+서버 로컬 후속 구현은 `C:/dev/fant-inventory-dashboard`의 `codex/production-dashboard-v1`에 분리했다. 날짜 사실/세대/lease/재시도/초기 집계·재개/선택 배포 도구를 구현했다. 순수 계산·계약12개와 emulator9개가 통과했고, 실제 원본을 읽어 기존 프런트를 메모리 fixture에서 실행한 비교도 불일치0·운영쓰기0이었다. 이 결과는 운영 trigger 실행이나 summary 화면 배포 증거가 아니다. 세부 상태는 해당 저장소의 `docs/PRODUCTION_DASHBOARD_IMPLEMENTATION_20260914.md` 참조.
 
 ## 배포 절차
 
