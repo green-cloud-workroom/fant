@@ -50,4 +50,9 @@
 
 ## 운영 배포 기록
 
-최종 source·gh-pages·Pages 실행·자산 검증 결과는 배포 완료 후 이 절에 기록한다.
+- 운영 source: `8df0d70bb8cc692fb3c54cff18ee6686c33f8c69`.
+- gh-pages: `959b1c47fadd62eca3785216f4f1047f68cf9cae`; GitHub Pages 실행 `34828793602` 성공.
+- 전체45개 파일 HTTP200 및 SHA-256 일치. 배포 직후 압축 응답의 CDN negative cache로 closingChecks 파일이 잠시404였으며, 캐시 해소 뒤 일반 압축 요청으로45/45 재검증했다. 최초 실패를 성공으로 간주하지 않았다.
+- Chrome 사무실 역할에서 최신 진입 번들 `index-BN9Hd0zI.js`를 확인하고 메인 포함14개 메뉴와 동결가동 하위 화면의 본문을 읽기 전용으로 확인했다. 업무 저장 버튼은 누르지 않았다.
+- `npm run build`, 프런트99개 테스트, 실제 SDK 에뮬레이터6개, `git diff --check` 통과. 배포 wrapper 재빌드와 준비 manifest hash도 일치했다.
+- 후속 문서/검증 도구 커밋은 운영 source와 구분한다. 비용의 첫 정상 운영일 관측은 아직 미완료다.
