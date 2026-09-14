@@ -1,7 +1,7 @@
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, where, writeBatch, setDoc
+  collection, getDocsFromServer as getDocs, doc, addDoc, updateDoc, query, orderBy, getDocFromServer as getDoc, where, writeBatch, setDoc
 } from 'firebase/firestore';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
@@ -19,22 +19,17 @@ let stockSummaryCategorySortable = null;
 let collapsedStockSummaryIds = new Set();
 let expandedMeatLogTypeIds = new Set();
 
-export async function renderMeat() {
-  const content = document.getElementById('mainContent');
-  content.innerHTML = `<div style="padding:24px;"><p>원료 재고 로딩 중...</p></div>`;
-  const data = await Promise.all([
-    loadMeatTypes(),
-    loadMeatStockCategories(),
-    loadStaffCache(),
-  ]);
-  if (!content.isConnected) return;
-  [meatTypes, meatStockCategories] = data;
-  renderMeatLayout();
+export async function renderMeat({force=false}={}) {
+ const content=document.getElementById('mainContent');
+ content.innerHTML='<p style="padding:24px">원료 재고 로딩 중...</p>';
+ await loadMeatPage({force});
+ if(!getPageContext()?.isCurrent())return;
+ renderMeatLayout();
 }
 
-async function loadMeatTypes() {
+async function loadMeatTypes(scope={getDocs,getDoc}) {
   const q = query(collection(db, 'meatTypes'), orderBy('sortOrder'));
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
@@ -50,13 +45,15 @@ function normalizeMeatStockCategories(groups) {
     .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name, 'ko'));
 }
 
-async function loadMeatStockCategories() {
-  const snap = await getDoc(doc(db, 'settings', 'meatStockCategories'));
+async function loadMeatStockCategories(scope={getDocs,getDoc}) {
+  const snap = await scope.getDoc(doc(db, 'settings', 'meatStockCategories'));
   if (!snap.exists()) return [];
   return normalizeMeatStockCategories(snap.data().groups);
 }
 
-async function saveMeatStockCategories(groups) {
+async function saveMeatStockCategories(groups, command) {
+  if(!command)return runPageCommand(meatResource,command=>saveMeatStockCategories(groups,command));
+  const {setDoc}=commandWrites(command);
   const normalized = normalizeMeatStockCategories(groups)
     .map((g, idx) => ({ ...g, sortOrder: idx }));
   await setDoc(doc(db, 'settings', 'meatStockCategories'), {
@@ -102,13 +99,13 @@ function isProduceCategoryLog(log) {
   return isProduceMeatType(log.meatTypeId);
 }
 
-async function loadMeatLogs(stage) {
+async function loadMeatLogs(stage, scope={getDocs,getDoc}) {
   const q = query(
     collection(db, 'meatLogs'),
     where('stage', '==', stage),
     orderBy('timestamp', 'desc')
   );
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
@@ -145,9 +142,9 @@ function formatMeatLogQty(grams) {
   return `${sign}${kg.toFixed(2)}kg`;
 }
 
-async function loadMeatStocks(stage) {
+async function loadMeatStocks(stage, scope={getDocs,getDoc}) {
   const q = query(collection(db, 'meatStocks'), orderBy('incomingDate'));
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .filter(s => s.stage === stage && !s.closed);
@@ -664,6 +661,9 @@ function destroyStockSummarySortables() {
 }
 
 async function persistStockSummaryMeatTypeGroups() {
+ return runPageCommand(meatResource,async command=>{
+  const {writeBatch}=commandWrites(command);
+
   const batch = writeBatch(db);
   const now = new Date();
   const localUpdates = new Map();
@@ -684,7 +684,10 @@ async function persistStockSummaryMeatTypeGroups() {
 
   await batch.commit();
   meatTypes = await loadMeatTypes();
+  if(!command.isCurrent())return;
   await renderTab(currentTab);
+
+ },{roles:['admin','office']});
 }
 
 async function persistStockSummaryCategoryOrder() {
@@ -798,11 +801,9 @@ async function renderTab(tab) {
   const tabContent = document.getElementById('tabContent');
   tabContent.innerHTML = `<div style="padding:24px;"><p>로딩 중...</p></div>`;
 
-  const dataStage = tab === 'produce' ? 'frozen' : tab;
-  const [stocks, logs] = await Promise.all([
-    loadMeatStocks(dataStage),
-    loadMeatLogs(dataStage),
-  ]);
+  const data = await loadMeatPage();
+  if(!data)return;
+  const {stocks,logs}=data;
   if (!tabContent.isConnected || tab !== currentTab) return;
 
   if (tab === 'frozen') {
@@ -1262,6 +1263,9 @@ function showAddFrozenModal(options = {}) {
   `);
 
   document.getElementById('btnSaveFrozen').addEventListener('click', async () => {
+ return runPageCommand(meatResource,async command=>{
+  const {addDoc,recordActivity,recordMeatLog}=commandWrites(command);
+
     const meatTypeId = document.getElementById('m_meatType').value;
     const meatTypeEl = document.getElementById('m_meatType');
     const meatName = meatTypeEl.options[meatTypeEl.selectedIndex]?.text;
@@ -1283,7 +1287,7 @@ function showAddFrozenModal(options = {}) {
       alert('담당자를 선택해주세요.');
       return;
     }
-    if (await blockIfClosed(date)) return;
+    if (await blockIfClosed(date, command)) return;
 
     const qtyG = unit === 'kg' ? weight * 1000 : weight;
 
@@ -1332,10 +1336,14 @@ function showAddFrozenModal(options = {}) {
       },
     });
 
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     renderTab(returnTab);
     alert('입고 등록 완료!');
-  });
+
+ },{roles:['admin','office','production']});
+});
 }
 
 // 전처리 등록 모달
@@ -1388,6 +1396,9 @@ function showAddProcessedModal() {
   });
 
   document.getElementById('btnSaveProcessed').addEventListener('click', async () => {
+ return runPageCommand(meatResource,async command=>{
+  const {addDoc,updateDoc,recordMeatLog}=commandWrites(command);
+
     const meatTypeId = document.getElementById('m_meatType').value;
     const meatTypeEl = document.getElementById('m_meatType');
     const meatName = meatTypeEl.options[meatTypeEl.selectedIndex]?.text;
@@ -1409,7 +1420,7 @@ function showAddProcessedModal() {
       alert('담당자를 선택해주세요.');
       return;
     }
-    if (await blockIfClosed(date)) return;
+    if (await blockIfClosed(date, command)) return;
 
     const totalG = unitWeight * count;
 
@@ -1494,10 +1505,14 @@ function showAddProcessedModal() {
       batchId,
     });
 
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     renderTab('processed');
     alert('전처리 등록 완료!');
-  });
+
+ },{roles:['admin','office','production']});
+});
 }
 
 // 재포장 등록 모달
@@ -1549,6 +1564,9 @@ function showAddRepackedModal() {
   });
 
   document.getElementById('btnSaveRepacked').addEventListener('click', async () => {
+ return runPageCommand(meatResource,async command=>{
+  const {addDoc,updateDoc,recordMeatLog}=commandWrites(command);
+
     const meatTypeId = document.getElementById('m_meatType').value;
     const meatTypeEl = document.getElementById('m_meatType');
     const meatName = meatTypeEl.options[meatTypeEl.selectedIndex]?.text;
@@ -1570,7 +1588,7 @@ function showAddRepackedModal() {
       alert('담당자를 선택해주세요.');
       return;
     }
-    if (await blockIfClosed(date)) return;
+    if (await blockIfClosed(date, command)) return;
 
     const totalG = unitWeight * count;
 
@@ -1663,10 +1681,14 @@ function showAddRepackedModal() {
       batchId,
     });
 
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     renderTab('repacked');
     alert('재포장 등록 완료!');
-  });
+
+ },{roles:['admin','office','production']});
+});
 }
 
 // 수동 조정 모달
@@ -1697,6 +1719,9 @@ function showAdjustModal(id, name, remaining) {
   `);
 
   document.getElementById('btnSaveAdjust').addEventListener('click', async () => {
+ return runPageCommand(meatResource,async command=>{
+  const {getDoc,updateDoc,recordActivity,recordMeatLog}=commandWrites(command);
+
     const inputVal = document.getElementById('m_actualRemaining').value;
     const reason = document.getElementById('m_adjustReason').value.trim();
     const staff = document.getElementById('m_staff').value;
@@ -1721,7 +1746,7 @@ function showAdjustModal(id, name, remaining) {
     }
 
     const adjustDate = getToday();
-    if (await blockIfClosed(adjustDate)) return;
+    if (await blockIfClosed(adjustDate, command)) return;
 
     // meatStocks 문서에서 meatTypeId 가져오기 (meatLogs 기록용)
     const stockSnap = await getDoc(doc(db, 'meatStocks', id));
@@ -1767,10 +1792,14 @@ function showAdjustModal(id, name, remaining) {
       reason,
     });
 
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     renderTab(currentTab);
     alert('조정 완료!');
-  });
+
+ },{roles:['admin','office','production']});
+});
 }
 
 // 원육 종류 관리 모달
@@ -1911,6 +1940,9 @@ function showMeatStockCategoriesModal() {
 
   document.querySelectorAll('.btn-delete-stock-category').forEach(btn => {
     btn.addEventListener('click', async () => {
+ return runPageCommand(meatResource,async command=>{
+  const {writeBatch}=commandWrites(command);
+
       const id = btn.dataset.id;
       const group = scopedCategories.find(g => g.id === id);
       if (!group) return;
@@ -1925,13 +1957,16 @@ function showMeatStockCategoriesModal() {
           });
         });
         await batch.commit();
-        await saveMeatStockCategories(meatStockCategories.filter(g => g.id !== id));
+        await saveMeatStockCategories(meatStockCategories.filter(g => g.id !== id), command);
+        if(!command.isCurrent())return;
         await refreshMeatStockCategoryModal();
       } catch (err) {
         console.error('[meat] stock category delete failed:', err);
         alert('카테고리 삭제 실패: ' + (err.message || err));
       }
-    });
+
+ },{roles:['admin','office']});
+});
   });
 }
 
@@ -2020,6 +2055,9 @@ function showMeatTypesModal(options = {}) {
 
   document.querySelectorAll('.m-unit-weight').forEach(input => {
     input.addEventListener('change', async (e) => {
+ return runPageCommand(meatResource,async command=>{
+  const {updateDoc}=commandWrites(command);
+
       const id = e.target.dataset.id;
       const target = meatTypes.find(m => m.id === id);
       const prev = target?.defaultUnitWeightG;
@@ -2040,11 +2078,16 @@ function showMeatTypesModal(options = {}) {
         alert('저장 실패: ' + (err.message || err));
         e.target.value = prev ?? '';
       }
-    });
+
+ },{roles:['admin','office']});
+});
   });
 
   document.querySelectorAll('.m-min-qty').forEach(input => {
     input.addEventListener('change', async (e) => {
+ return runPageCommand(meatResource,async command=>{
+  const {updateDoc}=commandWrites(command);
+
       const id = e.target.dataset.id;
       const target = meatTypes.find(m => m.id === id);
       const prevG = target?.minimumQtyG ?? 0;
@@ -2066,11 +2109,16 @@ function showMeatTypesModal(options = {}) {
         alert('저장 실패: ' + (err.message || err));
         e.target.value = isProduceModal ? prevG : (prevG / 1000).toFixed(1);
       }
-    });
+
+ },{roles:['admin','office']});
+});
   });
 
   document.querySelectorAll('.m-active-toggle').forEach(cb => {
     cb.addEventListener('change', async (e) => {
+ return runPageCommand(meatResource,async command=>{
+  const {updateDoc,recordActivity}=commandWrites(command);
+
       const id = e.target.dataset.id;
       const active = e.target.checked;
       const target = meatTypes.find(m => m.id === id);
@@ -2095,17 +2143,24 @@ function showMeatTypesModal(options = {}) {
             },
           });
         }
+        if(!command.isCurrent())return;
         closeModal();
+        if(!command.isCurrent())return;
         showMeatTypesModal(options);
       } catch (err) {
         console.error('[meat] active save failed:', err);
         alert('Save failed: ' + (err.message || err));
         e.target.checked = !active;
       }
-    });
+
+ },{roles:['admin','office']});
+});
   });
 
   document.getElementById('btnAddMeatType').addEventListener('click', async () => {
+ return runPageCommand(meatResource,async command=>{
+  const {addDoc}=commandWrites(command);
+
     const name = document.getElementById('m_newMeatName').value.trim();
     const unitWeight = parseFloat(document.getElementById('m_newUnitWeight').value) || 0;
     const minQty = parseFloat(document.getElementById('m_newMinQty').value) || 0;
@@ -2126,9 +2181,13 @@ function showMeatTypesModal(options = {}) {
     });
 
     meatTypes = await loadMeatTypes();
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     showMeatTypesModal(options);
-  });
+
+ },{roles:['admin','office']});
+});
 }
 
 // 유틸
@@ -2161,6 +2220,9 @@ function destroyMeatTypeSortable() {
 }
 
 async function persistMeatTypeOrder() {
+ return runPageCommand(meatResource,async command=>{
+  const {writeBatch}=commandWrites(command);
+
   const listEl = document.getElementById('meatTypesList');
   if (!listEl) return;
   const orderedIds = Array.from(listEl.querySelectorAll('tr[data-id]'))
@@ -2186,9 +2248,13 @@ async function persistMeatTypeOrder() {
     console.error('[meat] reorder save failed:', err);
     alert('순번 저장 실패: ' + (err.message || err));
     meatTypes = await loadMeatTypes();
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     showMeatTypesModal();
   }
+
+ },{roles:['admin','office']});
 }
 
 function getRandomColor() {
@@ -2244,3 +2310,25 @@ registerCloseModal('meat', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
 });
+
+import {pageResource} from '../state/pageResources.js';
+import {pageRefresh} from '../utils/pageRefresh.js';
+import {getPageContext} from '../utils/pageLifecycle.js';
+import {loadPageStaff} from '../services/pageStaff.js';
+const meatResource=pageResource('meat');
+meatResource.refresh=renderMeat;
+
+let meatModelKey=null;
+async function loadMeatPage({force=false}={}) {
+ const key=currentTab==='produce'?'frozen':currentTab;
+ if(key!==meatModelKey){meatModelKey=key;force=true;}
+ const data=await meatResource.load(async scope=>{
+  const [types,categories,staff,stocks,logs]=await Promise.all([loadMeatTypes(scope),loadMeatStockCategories(scope),loadPageStaff(scope),loadMeatStocks(key,scope),loadMeatLogs(key,scope)]);
+  return {types,categories,staff,stocks,logs};
+ },{force,onChange:pageRefresh(meatResource,renderMeat)});
+ if(data){meatTypes=data.types;meatStockCategories=data.categories;staffCache=data.staff;}
+ return data;
+}
+
+import {runPageCommand} from '../services/pageCommand.js';
+import {commandWrites} from '../services/commandWrites.js';
