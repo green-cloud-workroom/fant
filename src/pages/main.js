@@ -12,6 +12,7 @@ import { showPromptModal, showConfirmModal } from '../utils/modal.js';
 import { acknowledgeLog, recordActivity } from '../services/activityLogs.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { round2, formatIngredientQtyValue } from '../utils/number.js';
+import { loadPartAlerts, partLabel, formatDday } from '../services/equipmentParts.js';
 
 let productions = [];
 let nextProductions = [];
@@ -53,6 +54,7 @@ function renderFreezeDryProductionMeta(item) {
 
 // [묶음 6C-1] 로그 패널 데이터 — 당일 전체 + 어제 이전 미확인(확인 필수)만
 let combinedLogs = [];
+let equipmentAlerts = [];  // 설비 부품 교체 임박·재고 부족 (services/equipmentParts.js)
 
 export async function renderMain() {
   const content = document.getElementById('mainContent');
@@ -65,6 +67,7 @@ export async function renderMain() {
   // currentMenu가 'main'이 아니라면 stale 호출이므로 mainContent 보존.
   if (currentMenu !== 'main') return;
   renderMainLayout();
+  maybeShowEquipmentPopup();
 }
 
 async function loadAllData() {
@@ -122,6 +125,14 @@ async function loadAllData() {
   // [묶음 6C-3] 자동 발행 — 이벤트 당일/입고예정 도래/최소재고 미달
   // dedup으로 같은 사유 중복 발행 방지. date=today로 매일 새로 발행 (= 매일 반복).
   // ★ loadCombinedLogs 이전에 호출해야 신규 발행도 화면에 즉시 표시됨.
+  // 설비 부품 알림 (교체 임박·재고 부족) — 알림 카드 + 팝업 + 자동 로그 공용
+  try {
+    equipmentAlerts = await loadPartAlerts(today);
+  } catch (err) {
+    console.error('[equipment] 알림 로드 실패:', err);
+    equipmentAlerts = [];
+  }
+
   await triggerAutoLogs(today);
 
   // [묶음 6C-1] 로그 패널 데이터 (당일 전체 + 어제~10일 전 미확인 확인필수)
@@ -831,10 +842,10 @@ function refreshCalendarUI() {
 // ============================================================
 
 // 사무 로그 카테고리 — 현재 발행 중인 8개 action
-const OFFICE_LOG_ACTIONS = ['bag', 'egg', 'meat', 'frozenProduct', 'frozenSep', 'schedule', 'frozenPan', 'closing', 'supplementStock', 'recipe', 'settings', 'holiday', 'conversion'];
+const OFFICE_LOG_ACTIONS = ['bag', 'egg', 'meat', 'frozenProduct', 'frozenSep', 'schedule', 'frozenPan', 'closing', 'supplementStock', 'recipe', 'settings', 'holiday', 'conversion', 'equipment'];
 
 // 생산 로그 카테고리 — production은 6C-2 신규, 나머지는 6C-3 자동 발행 예정
-const PRODUCTION_LOG_ACTIONS = ['production', 'repackaging', 'pretreat', 'event', 'scheduleDue', 'autoRepack', 'minStock', 'frozenStockLow'];
+const PRODUCTION_LOG_ACTIONS = ['production', 'repackaging', 'pretreat', 'event', 'scheduleDue', 'autoRepack', 'minStock', 'frozenStockLow', 'partDue'];
 
 // [묶음 6C-2] action:subAction 단위 카테고리 오버라이드
 // action만으로 결정 안 되는 경우. meat은 사무(입출고)+생산(adjust) 혼재 → adjust만 생산으로.
@@ -849,6 +860,7 @@ const REQUIRES_ACK_KEYS = new Set([
   'autoRepack:diff',         // 자동 재포장 차이 발생 로그
   'minStock:alert',          // 최소재고 미달 (자동 — 6C-3)
   'frozenStockLow:alert',    // 냉동창고 잔량 부족 (자동 — 6C-3)
+  'partDue:alert',           // 설비 부품 교체 임박/지남 (자동 — 설비 부품)
   'schedule:completeDiff',   // [묶음 6C-2] 입고 완료 차이 있음
   'closing:refresh',         // [묶음 6E-3] 마감 새로고침 (롤백+재차감)
 ]);
@@ -938,6 +950,10 @@ function renderBlockerArea(data = blockingData) {
       </div>
     `);
   }
+
+  // 설비 부품 — 교체 임박·지남 / 재고 부족 (노랑, 요약 1장)
+  const equipmentCard = renderEquipmentAlertCard();
+  if (equipmentCard) cards.push(equipmentCard);
 
   if (cards.length === 0) return '';
 
@@ -1821,6 +1837,33 @@ async function triggerAutoLogs(today) {
   await triggerEventDueLogs(today);
   await triggerScheduleDueLogs(today);
   await triggerMinStockLogs(today);
+  await triggerEquipmentLogs(today);
+}
+
+// 4. 🔧 설비 부품 — 교체 임박/지남(partDue) + 재고 부족(minStock kind:part). equipmentAlerts는 loadAllData에서 채움.
+async function triggerEquipmentLogs(today) {
+  for (const a of equipmentAlerts) {
+    const p = a.part;
+    if (a.kind === 'due') {
+      await ensureAutoLog({
+        action: 'partDue',
+        subAction: 'alert',
+        date: today,
+        message: `🔧 ${partLabel(p)} 교체 ${a.overdue ? `예정일 ${Math.abs(a.dday)}일 지남` : formatDday(a.dday)} (예정 ${p.nextDueAt})`,
+        details: { kind: 'part', partId: p.id, equipmentId: p.equipmentId, name: p.name, nextDueAt: p.nextDueAt, dday: a.dday },
+        dedupKey: `partDue:${p.id}`,
+      });
+    } else if (a.kind === 'low') {
+      await ensureAutoLog({
+        action: 'minStock',
+        subAction: 'alert',
+        date: today,
+        message: `⚠️ ${partLabel(p)} 부품 부족 — 현재 ${Number(p.currentQty || 0)}개 / 최소 ${Number(p.minimumQty || 0)}개`,
+        details: { kind: 'part', partId: p.id, equipmentId: p.equipmentId, name: p.name, current: Number(p.currentQty || 0), minimum: Number(p.minimumQty || 0) },
+        dedupKey: `minStock:part:${p.id}`,
+      });
+    }
+  }
 }
 
 function renderProductionTableCard(p) {
@@ -2500,6 +2543,69 @@ function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
   }).join('');
 }
 
+function renderEquipmentAlertCard() {
+  if (!equipmentAlerts.length) return '';
+  const due = equipmentAlerts.filter(a => a.kind === 'due');
+  const overdue = due.filter(a => a.overdue).length;
+  const low = equipmentAlerts.filter(a => a.kind === 'low').length;
+  const partsText = [
+    overdue ? `교체 지남 ${overdue}` : '',
+    due.length - overdue ? `교체 임박 ${due.length - overdue}` : '',
+    low ? `재고 부족 ${low}` : '',
+  ].filter(Boolean).join(' · ');
+  const first = due[0] || equipmentAlerts[0];
+  return `
+      <div class="alert-card ${overdue ? 'alert-card-blocker' : 'alert-card-warning'}">
+        <span class="alert-card-label">🔧 설비 부품 확인 필요 — ${partsText} (${escapeHtmlMain(partLabel(first.part))} 등)</span>
+        <button class="alert-card-jump" data-jump="equipment">처리하러 가기 →</button>
+      </div>
+  `;
+}
+
+// 메인 진입 시 하루 1회 팝업 (브라우저 sessionStorage 기준). 차단 모달 아님 — 닫기만 하면 됨.
+function maybeShowEquipmentPopup() {
+  if (!equipmentAlerts.length) return;
+  const key = `equipmentPopupShown_${getToday()}`;
+  try {
+    if (sessionStorage.getItem(key)) return;
+    sessionStorage.setItem(key, '1');
+  } catch (_) { /* sessionStorage 불가 환경이면 그냥 표시 */ }
+  const existing = document.getElementById('equipmentAlertPopup');
+  if (existing) existing.remove();
+
+  const rows = equipmentAlerts.slice(0, 12).map(a => {
+    const p = a.part;
+    const pill = a.kind === 'low'
+      ? `<span class="eq-pill eq-pill-amber">재고 ${Number(p.currentQty || 0)}</span>`
+      : `<span class="eq-pill ${a.overdue ? 'eq-pill-red' : 'eq-pill-amber'}">${escapeHtmlMain(formatDday(a.dday))}</span>`;
+    const tail = a.kind === 'low' ? ` <span style="color:#888;">(최소 ${Number(p.minimumQty || 0)})</span>` : '';
+    return `<div>${pill}${escapeHtmlMain(partLabel(p))}${tail}</div>`;
+  }).join('');
+  const more = equipmentAlerts.length > 12 ? `<div style="color:#888;font-size:12px;">외 ${equipmentAlerts.length - 12}건</div>` : '';
+
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="modal-overlay" id="equipmentAlertPopup">
+      <div class="modal-box" style="width:420px;">
+        <h3 class="modal-title" style="margin-bottom:4px;">🔧 설비 부품 확인 필요</h3>
+        <p style="font-size:12px;color:#888;margin:0 0 12px;">교체 예정일 7일 이내·지남 또는 재고 부족 부품입니다.</p>
+        <div class="eq-popup-list">${rows}${more}</div>
+        <div class="modal-actions">
+          <button class="btn-secondary" id="equipmentPopupClose">닫기</button>
+          <button class="btn-primary" id="equipmentPopupGo">설비 부품으로 가기</button>
+        </div>
+      </div>
+    </div>
+  `);
+  const popup = document.getElementById('equipmentAlertPopup');
+  document.getElementById('equipmentPopupClose').addEventListener('click', () => popup.remove());
+  document.getElementById('equipmentPopupGo').addEventListener('click', () => {
+    popup.remove();
+    setCurrentMenu('equipment');
+    renderLayout();
+    renderPage('equipment');
+  });
+}
+
 function renderQuickInfo(isCompleted) {
   const cards = [];
 
@@ -2522,6 +2628,10 @@ function renderQuickInfo(isCompleted) {
       </div>
     `);
   }
+
+  // 설비 부품 — 교체 임박·지남 / 재고 부족 (노랑, 요약 1장)
+  const equipmentCard = renderEquipmentAlertCard();
+  if (equipmentCard) cards.push(equipmentCard);
 
   // 3. 정보 항목 (초록) — 내일생산불러오기 완료
   if (isCompleted) {

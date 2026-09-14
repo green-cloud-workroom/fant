@@ -12,6 +12,7 @@ import { renderSchedule } from './pages/schedule.js';
 import { renderProduction } from './pages/production.js';
 import { renderMain } from './pages/main.js';
 import { renderStats } from './pages/stats.js'; // [묶음 7A] 통계 페이지
+import { renderEquipment } from './pages/equipment.js';
 
 export async function renderPage(menuId) {
   const content = document.getElementById('mainContent');
@@ -60,6 +61,9 @@ export async function renderPage(menuId) {
     case 'stats': // [묶음 7A] 통계
       await renderStats();
       break;
+    case 'equipment':
+      await renderEquipment();
+      break;
     default:
       content.innerHTML = `
         <div class="page-placeholder">
@@ -82,6 +86,7 @@ function getMenuLabel(menuId) {
     frozenPan: '동결판 재고',
     frozenSep: '동결 분리작업',
     schedule: '입고 예정관리',
+    equipment: '설비 부품',
     recipe: '레시피 관리',
     stats: '통계',
     settings: '설정',

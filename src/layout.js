@@ -4,6 +4,7 @@ import { formatKstDate, formatKstDateWithDay, getTodayKST } from './utils/date.j
 import { db } from './firebase.js';
 import { doc, getDoc } from 'firebase/firestore';
 import { showConfirmModal } from './utils/modal.js';
+import { loadPartAlerts } from './services/equipmentParts.js';
 
 // [Phase 3d] 모달 자동 오픈 1회 플래그 — 모듈 레벨에서 유지
 let blockingModalAutoShown = false;
@@ -100,6 +101,7 @@ export function renderLayout() {
   }
 
   updateSubbar();
+  updateEquipmentBadge();
   updateBlockingBanner();
   updateClosingButton();
   registerHashListener();
@@ -108,6 +110,25 @@ export function renderLayout() {
     window.location.hash = currentMenu;
   }
   renderPage(currentMenu);
+}
+
+// 설비 부품 메뉴 버튼 배지 — 교체 임박·지남 + 재고 부족 건수
+async function updateEquipmentBadge() {
+  const btn = document.querySelector('.nav-btn[data-menu="equipment"]');
+  if (!btn) return;
+  try {
+    const alerts = await loadPartAlerts(getTodayKST());
+    const stillThere = document.querySelector('.nav-btn[data-menu="equipment"]');
+    if (!stillThere) return;
+    stillThere.querySelector('.nav-count-badge')?.remove();
+    if (alerts.length === 0) return;
+    const span = document.createElement('span');
+    span.className = 'nav-count-badge';
+    span.textContent = String(alerts.length);
+    stillThere.appendChild(span);
+  } catch (err) {
+    console.error('[equipment] 배지 로드 실패:', err);
+  }
 }
 
 async function updateSubbar() {

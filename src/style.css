@@ -3607,3 +3607,66 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
     grid-column: 2;
   }
 }
+
+/* ============================================
+   설비 부품 (equipment.js)
+   ============================================ */
+.eq-pill {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 7px;
+  border-radius: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.eq-pill-red { background: #fee2e2; color: #991b1b; }
+.eq-pill-amber { background: #fef3c7; color: #92400e; }
+.eq-pill-gray { background: #f0f0f0; color: #666; }
+
+.eq-all-item {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  margin-bottom: 6px;
+  padding-right: 8px;
+}
+.eq-all-item.active { background: #fee2e2; }
+
+.eq-table td { vertical-align: middle; }
+.eq-part-row:hover td { background: rgba(0,0,0,0.03); }
+.eq-part-row-selected td { box-shadow: inset 3px 0 0 #4a7c59; }
+
+.eq-act {
+  font-size: 11px;
+  padding: 2px 7px;
+  margin-right: 2px;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  background: #fff;
+  color: #444;
+  cursor: pointer;
+}
+.eq-act:hover { background: #f5f5f5; }
+
+.eq-filter-on {
+  background: #eef4f0 !important;
+  border-color: #4a7c59 !important;
+  color: #2d5a3a !important;
+}
+
+.nav-btn .nav-count-badge {
+  display: inline-block;
+  margin-left: 4px;
+  min-width: 16px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 16px;
+  border-radius: 8px;
+  background: #e53e3e;
+  color: #fff;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.eq-popup-list { font-size: 13px; line-height: 1.9; margin: 0 0 4px; }
+.eq-popup-list .eq-pill { margin-right: 6px; }
