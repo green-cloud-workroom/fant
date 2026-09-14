@@ -1,7 +1,7 @@
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, writeBatch,
+  collection, getDocsFromServer as getDocs, doc, addDoc, updateDoc, query, orderBy, getDocFromServer as getDoc, writeBatch,
   deleteDoc, where, setDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { getTodayKST as getToday, addMonthsKST } from '../utils/date.js';
@@ -26,18 +26,21 @@ const FROZEN_PRODUCT_CATEGORIES = [
   { key: 'sample-set', label: '샘플세트', target: null, kind: 'sampleSet' },
 ];
 
-export async function renderFrozenProduct() {
-  const content = document.getElementById('mainContent');
-  content.innerHTML = `<div style="padding:24px;"><p>동결제품 입고 로딩 중...</p></div>`;
-  const [products] = await Promise.all([loadFrozenProducts(), loadStaffCache()]);
-  if (!content.isConnected) return;
-  frozenProducts = products;
-  renderFrozenProductLayout();
+export async function renderFrozenProduct({force=false}={}) {
+ const content=document.getElementById('mainContent');
+ content.innerHTML='<p style="padding:24px">동결제품 입고 로딩 중...</p>';
+ const data=await frozenProductResource.load(async scope=>{
+   const [products,staff]=await Promise.all([loadFrozenProducts(scope),loadPageStaff(scope)]);
+   return {products,staff};
+ },{force,onChange:pageRefresh(frozenProductResource,renderFrozenProduct)});
+ if(!data||!content.isConnected)return;
+ frozenProducts=data.products;staffCache=data.staff;renderFrozenProductLayout();
+ if(selectedProductId){const selected=frozenProducts.find(p=>p.id===selectedProductId);if(selected)await showProductDetail(selected);}
 }
 
-async function loadFrozenProducts() {
+async function loadFrozenProducts(scope={getDocs,getDoc}) {
   const q = query(collection(db, 'frozenProducts'), orderBy('sortOrder'));
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
@@ -174,6 +177,9 @@ function initFrozenProductSortable() {
 }
 
 async function persistFrozenProductOrder() {
+ return runPageCommand(frozenProductResource,async command=>{
+  const {writeBatch}=commandWrites(command);
+
   const listEl = document.getElementById('productList');
   if (!listEl) return;
   const orderedIds = Array.from(listEl.querySelectorAll('.recipe-list-item'))
@@ -198,12 +204,15 @@ async function persistFrozenProductOrder() {
     console.error('[frozenProduct] reorder save failed:', err);
     alert('순번 저장 실패: ' + (err.message || err));
     frozenProducts = await loadFrozenProducts();
+    if(!command.isCurrent())return;
     renderFrozenProductLayout();
     if (selectedProductId) {
       const selected = frozenProducts.find(p => p.id === selectedProductId);
       if (selected) await showProductDetail(selected);
     }
   }
+
+ },{roles:['admin','office']});
 }
 
 function bindProductListEvents() {
@@ -234,8 +243,8 @@ function bindProductListEvents() {
   });
 }
 
-async function getActiveFrozenLogCount(productId) {
-  const snap = await getDocs(query(collection(db, 'frozenLogs'), where('productId', '==', productId)));
+async function getActiveFrozenLogCount(productId, scope={getDocs}) {
+  const snap = await scope.getDocs(query(collection(db, 'frozenLogs'), where('productId', '==', productId)));
   return snap.docs
     .map(d => d.data())
     .filter(log => log.status !== 'deleted')
@@ -243,12 +252,15 @@ async function getActiveFrozenLogCount(productId) {
 }
 
 async function deleteFrozenProductIfNoLogs(product) {
+ return runPageCommand(frozenProductResource,async command=>{
+  const {deleteDoc,recordActivity}=commandWrites(command);
+
   if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
     alert('동결제품 삭제는 관리자/사무 계정만 가능합니다.');
     return;
   }
 
-  const logCount = await getActiveFrozenLogCount(product.id);
+  const logCount = await getActiveFrozenLogCount(product.id, command);
   if (logCount > 0) {
     alert(`사용 이력이 ${logCount}건 있어 삭제할 수 없습니다.`);
     return;
@@ -278,13 +290,17 @@ async function deleteFrozenProductIfNoLogs(product) {
 
   frozenProducts = frozenProducts.filter(p => p.id !== product.id);
   if (selectedProductId === product.id) selectedProductId = null;
+  if(!command.isCurrent())return;
   renderFrozenProductLayout();
   alert('삭제 완료!');
+
+ },{roles:['admin','office']});
 }
 
 async function showProductDetail(product) {
   const detail = document.getElementById('productDetail');
   const logs = await loadFrozenLogs(product.id);
+  if(!detail?.isConnected||selectedProductId!==product.id)return;
   const canManageFrozenProduct = currentUserRole === 'admin' || currentUserRole === 'office';
 
   detail.innerHTML = `
@@ -359,6 +375,9 @@ async function showProductDetail(product) {
 
   document.querySelectorAll('.btn-del-row').forEach(btn => {
     btn.addEventListener('click', async () => {
+ return runPageCommand(frozenProductResource,async command=>{
+  const {getDoc,addDoc,updateDoc}=commandWrites(command);
+
       // [권한 매트릭스 C4] production은 동결제품 입고 삭제 불가
       if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
         alert('동결제품 입고 삭제는 대표/사무실 계정만 가능합니다.');
@@ -375,7 +394,7 @@ async function showProductDetail(product) {
       }
       const frozenLog = frozenLogSnap.data();
 
-      if (await blockIfClosed(frozenLog.date)) return;
+      if (await blockIfClosed(frozenLog.date, command)) return;
 
       if (frozenLog.ledgerId) {
         // ledger 기반 롤백
@@ -444,9 +463,12 @@ async function showProductDetail(product) {
         await updateDoc(doc(db, 'frozenLogs', cid), { status: 'deleted' });
       }
 
+      if(!command.isCurrent())return;
       await showProductDetail(product);
       alert('삭제 완료!');
-    });
+
+ },{roles:['admin','office']});
+});
   });
 }
 
@@ -501,7 +523,8 @@ function escapeAttribute(value = '') {
     .replace(/>/g, '&gt;');
 }
 
-async function enqueueFrozenProductReceiptTransfer({ product, frozenLogId, date, expiry, qty, staff }) {
+async function enqueueFrozenProductReceiptTransfer({ product, frozenLogId, date, expiry, qty, staff }, command) {
+  const {setDoc}=commandWrites(command);
   const kind = getFrozenProductKind(product);
   if (kind !== 'product' && kind !== 'sample') return;
 
@@ -530,6 +553,7 @@ async function enqueueFrozenProductReceiptTransfer({ product, frozenLogId, date,
     });
   } catch (error) {
     console.error('동결제품 입고 productTransferRequests 전송 실패', error);
+    throw error;
   }
 }
 
@@ -639,6 +663,9 @@ async function showProductModal(product) {
   });
 
   document.getElementById('btnSaveProduct').addEventListener('click', async () => {
+ return runPageCommand(frozenProductResource,async command=>{
+  const {addDoc,updateDoc}=commandWrites(command);
+
     if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
       alert('동결제품 등록/수정은 대표/사무실 계정만 가능합니다.');
       return;
@@ -685,10 +712,14 @@ async function showProductModal(product) {
     }
 
     frozenProducts = await loadFrozenProducts();
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     renderFrozenProductLayout();
     alert(isNew ? '추가 완료!' : '수정 완료!');
-  });
+
+ },{roles:['admin','office']});
+});
 }
 function showEditIncomingModal(product, log) {
   showModal(`
@@ -725,13 +756,16 @@ function showEditIncomingModal(product, log) {
   `);
 
   document.getElementById('btnSaveEditIncoming').addEventListener('click', async () => {
+ return runPageCommand(frozenProductResource,async command=>{
+  const {getDoc,addDoc,updateDoc}=commandWrites(command);
+
     const expiry = document.getElementById('m_expiry').value;
     const newQty = parseInt(document.getElementById('m_qty').value);
     const staff = document.getElementById('m_staff').value;
     const note = document.getElementById('m_note').value;
 
     if (!newQty || newQty <= 0) { alert('수량은 1개 이상이어야 합니다.'); return; }
-    if (await blockIfClosed(log.date)) return;
+    if (await blockIfClosed(log.date, command)) return;
 
     // [권한 매트릭스 C4] production은 동결제품 입고 수정 불가
     if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
@@ -813,7 +847,9 @@ function showEditIncomingModal(product, log) {
         const currentBag = bagData.currentQty || 0;
         if (currentBag < newQty) {
           alert(`봉투 재고가 부족합니다.\n현재 봉투 재고: ${currentBag}장\n필요 수량: ${newQty}장\n\n수정이 중단되었습니다. 봉투 재고는 이전 상태로 이미 복원되었습니다.`);
+          if(!command.isCurrent())return;
           closeModal();
+          if(!command.isCurrent())return;
           await showProductDetail(product);
           return;
         }
@@ -876,10 +912,14 @@ function showEditIncomingModal(product, log) {
       updatedAt: new Date(),
     });
 
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     await showProductDetail(product);
     alert('수정 완료!');
-  });
+
+ },{roles:['admin','office']});
+});
 }
 
 // 제품별 현재 재고 (frozenLogs 합산, deleted 제외)
@@ -961,6 +1001,9 @@ async function showIncomingModal(product) {
   }
 
   document.getElementById('btnSaveIncoming').addEventListener('click', async () => {
+ return runPageCommand(frozenProductResource,async command=>{
+  const {getDoc,addDoc,updateDoc,recordActivity}=commandWrites(command);
+
     const date = document.getElementById('m_date').value;
     const expiry = document.getElementById('m_expiry').value;
     const qty = parseInt(document.getElementById('m_qty').value);
@@ -973,7 +1016,7 @@ async function showIncomingModal(product) {
     if (expiry < date) { alert('유통기한이 입고일보다 빠릅니다.'); return; }
     if (!qty || qty <= 0) { alert('봉지수를 입력해주세요.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
-    if (await blockIfClosed(date)) return;
+    if (await blockIfClosed(date, command)) return;
 
     // 구성품 재고 부족 확인 (막지는 않음 — 실물은 이미 제작됐을 수 있음)
     if (components.length > 0) {
@@ -1090,7 +1133,7 @@ async function showIncomingModal(product) {
       expiry,
       qty,
       staff,
-    });
+    }, command);
 
     // ledger 저장 (items 있을 때만)
     if (ledgerItems.length > 0) {
@@ -1125,10 +1168,14 @@ async function showIncomingModal(product) {
       },
     });
 
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     await showProductDetail(product);
     alert('입고 등록 완료!');
-  });
+
+ },{roles:['admin','office','production']});
+});
 }
 
 // 유틸
@@ -1179,3 +1226,13 @@ registerCloseModal('frozenProduct', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
 });
+
+import {pageResource} from '../state/pageResources.js';
+import {pageRefresh} from '../utils/pageRefresh.js';
+import {getPageContext} from '../utils/pageLifecycle.js';
+import {loadPageStaff} from '../services/pageStaff.js';
+const frozenProductResource=pageResource('frozenProduct');
+frozenProductResource.refresh=renderFrozenProduct;
+
+import {runPageCommand} from '../services/pageCommand.js';
+import {commandWrites} from '../services/commandWrites.js';
