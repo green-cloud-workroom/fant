@@ -3,6 +3,7 @@ import { createReadScope } from '../services/readScope.js';
 import { createServerReadScope } from '../services/serverReadScope.js';
 import { buildMainViewModel, copyMainModel } from '../domain/mainViewModel.js';
 import { createAutoLogCoordinator } from '../services/autoLogCoordinator.js';
+import { loadSummary,summaryEnabled } from '../services/mainViewSource.js';
 import { openAction, fingerprint } from '../services/actionGateway.js';
 import { sessionStore } from '../state/sessionStore.js';
 import { createDisplayScope, displayPool } from '../state/displayReads.js';
@@ -104,6 +105,7 @@ export async function renderMain({ scope = createReadScope() } = {}) {
     };
     // Keep invalidation active while away; the main model stays in session memory.
     displayPool.onChange('main', scheduleRefresh);
+    displayPool.onChange('main-summary', scheduleRefresh);
     const observer = new MutationObserver(() => {
       if (mainModelDirty && !document.querySelector('.modal-overlay')) scheduleRefresh();
     });
@@ -145,6 +147,26 @@ async function loadAllData(scope = createServerReadScope(), { autoLogsEnabled = 
   const isCurrent = () => version === mainLoadVersion && content === document.getElementById('mainContent');
   const today = getToday();
   await ensureHolidaysCache(scope);
+  if(scope.displayOwner==='main'&&calendarWeekOffset===0&&summaryEnabled()){
+    const model=await loadSummary(today);
+    if(!isCurrent())return false;
+    if(model){
+      // Alerts keep their existing visit-time semantics and use current original inputs.
+      const [logs,egg,alerts]=await Promise.all([
+        scope.getDocs(query(collection(db,'activityLogs'),where('date','==',today))),
+        scope.getDoc(doc(db,'eggStock','global')),loadPartAlerts(today,scope),
+      ]);
+      const batch=createAutoLogBatch(logs.docs.map(d=>({id:d.id,...d.data()})));
+      const outcome=autoLogsEnabled?await autoLogCoordinator.run('main:'+today,async()=>{
+        await triggerAutoLogs(today,batch,scope,{eggStock:egg.exists()?egg.data():{},equipmentAlerts:alerts});
+        return isCurrent()?batch.flush():{createdIds:[],existingIds:[],failedIds:[]};
+      }):{createdIds:[],existingIds:[],failedIds:[]};
+      if(!isCurrent())return false;
+      if(outcome.failedIds.length)throw new Error('일부 자동 알림을 저장하지 못했습니다. 다시 불러와주세요.');
+      if(outcome.createdIds.length||outcome.existingIds.length)return loadAllData(createServerReadScope(),{autoLogsEnabled:false});
+      installMainModel(model);mainModelDirty=false;sessionStore.publish('main:model',{model});return true;
+    }
+  }
   const prefetchedLogs = fetchCombinedLogs(scope);
   prefetchedLogs.catch(() => {});
   scope.getDocs(query(collection(db, 'events'), where('date', '==', today))).catch(() => {});

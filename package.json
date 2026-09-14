@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test:performance": "node --experimental-vm-modules --test tests/performance.test.mjs",
     "preview:performance": "node scripts/previewPerformance.mjs",
-    "test:readpath": "node --experimental-vm-modules --test tests/readpath.test.mjs tests/performance.test.mjs tests/readpathRelease.test.mjs",
+    "test:readpath": "node --experimental-vm-modules --test tests/readpath.test.mjs tests/performance.test.mjs tests/readpathRelease.test.mjs tests/summaryContract.test.mjs",
     "perf:measure": "node --experimental-vm-modules scripts/measureReadpath.mjs",
     "test:readpath:integration": "node scripts/runReadpathEmulator.mjs",
     "release:prepare": "node scripts/deployReadpathRelease.mjs --prepare",

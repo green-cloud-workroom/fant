@@ -10,8 +10,8 @@ export const displayPool = createListenerPool({
   listen: (ref, next, error) => onSnapshot(ref, { includeMetadataChanges: true }, next, error),
 });
 export function createDisplayScope(owner) {
-  return createReadScope({
+  return Object.assign(createReadScope({
     getDoc: ref => displayPool.getDoc(ref, owner),
     getDocs: ref => displayPool.getDocs(ref, owner),
-  });
+  }),{displayOwner:owner});
 }
