@@ -10,7 +10,7 @@ import { showConfirmModal } from '../utils/modal.js';
 import Sortable from '../utils/sortable.js';
 import { pageResource } from '../state/pageResources.js';
 import { withReadCommand } from '../services/readCommand.js';
-import { hasDirtyFields, canLeavePage } from '../utils/formDraft.js';
+import { hasDirtyFields, canLeavePage, markFieldsSaved } from '../utils/formDraft.js';
 import { registerPageCleanup, getPageContext } from '../utils/pageLifecycle.js';
 const recipeResource=pageResource('recipe');
 let recipeRefreshTimer;
@@ -788,6 +788,7 @@ function showRecipeDetail(recipe) {
 
   // 삭제
   document.getElementById('btnDeleteRecipe')?.addEventListener('click', () => deleteRecipe(recipe));
+  markFieldsSaved(detail,{extra:()=>currentUnitPresets});
 }
 
 function getRecipeDeleteMessage(recipe, supplementSummaries) {
