@@ -1,0 +1,20 @@
+{
+  "project": "fant-e5ae5",
+  "readModelMode": "serve",
+  "logicVersion": "ac3cd78d47f19528409da0373f8bff9688e39e738e45eeb0060ad433fe8ae151",
+  "verifiedAt": "2026-09-14T07:37:43.599Z",
+  "controlRevision": 5,
+  "backendSource": "4c61a80608e685f58a0479225590ff1441d0ac57",
+  "views": [
+    {
+      "date": "2026-09-14",
+      "generation": 368,
+      "buildId": "b6756a72-dc2d-400d-ab32-0670d8f68bec",
+      "expectedHash": "640e863d1a1e6dd76766c2c6f534f63140dba7f71e9a670505eb56d8f03a4f41",
+      "actualHash": "640e863d1a1e6dd76766c2c6f534f63140dba7f71e9a670505eb56d8f03a4f41",
+      "equal": true,
+      "sourceReadDocuments": 1672,
+      "publicBytes": 189941
+    }
+  ]
+}

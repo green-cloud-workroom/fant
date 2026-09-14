@@ -2,5 +2,5 @@
   "VITE_PERF_SHELL": "true",
   "VITE_PERF_STORE": "true",
   "VITE_PERF_ROUTES": "main",
-  "VITE_PRODUCTION_VIEW_MODE": "session"
+  "VITE_PRODUCTION_VIEW_MODE": "summary"
 }

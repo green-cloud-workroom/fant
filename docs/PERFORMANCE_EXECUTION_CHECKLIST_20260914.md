@@ -34,7 +34,7 @@
 | 보존할 다른 변경 | a28a441 설비 기능, 기존 output, inventory 타 작업 worktree |
 | fixture / 순수 코어 hash | 02에서 기록 |
 | 적용 route / 역할 / flags | main / 기존 production 역할 / shell/store=true, viewMode=session |
-| 배포 승인 근거 / 비용·문서 한도 | 사용자 구현·배포 지시. 프런트 배포 완료. 서버 월 비용 목표 응답 대기, read-only 사전 조사 회당20,000 제한/12,888 사용, 쓰기0 |
+| 배포 승인 근거 / 비용·문서 한도 | 사용자 구현·배포 지시. 월 추가1만원 목표 확정. 작업당 원본1800/쓰기100, 운영110시도·원본변경250건/일. 최신 검증은 SUMMARY_RELEASE_20260914.md |
 | 증거 폴더 | `output/performance-readpath/<release-id>/` — 실행 때 생성 |
 
 ## 00. 기준 고정·계측
