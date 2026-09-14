@@ -6,6 +6,13 @@ import { displayPool } from '../state/displayReads.js';
 import { sessionStore } from '../state/sessionStore.js';
 import { eligibleSummary,assembleSummary } from '../domain/summaryContract.js';
 export function summaryEnabled(){return flags.viewMode==='summary'&&!performanceDisabled()&&!!DASHBOARD_LOGIC_VERSION;}
+const versions=new WeakMap();
+export async function summaryStillCurrent(model){
+  const version=versions.get(model);if(!version||version.epoch!==sessionStore.epoch)return false;
+  const snapshot=await displayPool.getDoc(doc(db,'productionDashboardViews','v1__'+version.date),'main-summary');
+  const latest=snapshot.exists()?snapshot.data():null;
+  return version.epoch===sessionStore.epoch&&eligibleSummary(latest,{date:version.date,logicVersion:DASHBOARD_LOGIC_VERSION})&&latest.generation===version.generation&&latest.buildId===version.buildId&&latest.controlRevision===version.controlRevision;
+}
 export async function loadSummary(date) {
   if(!summaryEnabled())return null;
   const epoch=sessionStore.epoch;
@@ -21,6 +28,7 @@ export async function loadSummary(date) {
     const current=await displayPool.getDoc(doc(db,'productionDashboardViews','v1__'+date),'main-summary');
     const latest=current.exists()?current.data():null;
     if(!eligibleSummary(latest,{date,logicVersion:DASHBOARD_LOGIC_VERSION})||latest.generation!==root.generation||latest.buildId!==root.buildId||latest.controlRevision!==root.controlRevision)return null;
+    versions.set(model,{epoch,date,generation:root.generation,buildId:root.buildId,controlRevision:root.controlRevision});
     return epoch===sessionStore.epoch?model:null;
   }catch(error){
     if(error.code==='permission-denied')throw error;

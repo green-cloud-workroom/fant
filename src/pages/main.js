@@ -3,7 +3,7 @@ import { createReadScope } from '../services/readScope.js';
 import { createServerReadScope } from '../services/serverReadScope.js';
 import { buildMainViewModel, copyMainModel } from '../domain/mainViewModel.js';
 import { createAutoLogCoordinator } from '../services/autoLogCoordinator.js';
-import { loadSummary,summaryEnabled } from '../services/mainViewSource.js';
+import { loadSummary,summaryEnabled,summaryStillCurrent } from '../services/mainViewSource.js';
 import { openAction, fingerprint } from '../services/actionGateway.js';
 import { sessionStore } from '../state/sessionStore.js';
 import { createDisplayScope, displayPool } from '../state/displayReads.js';
@@ -163,7 +163,8 @@ async function loadAllData(scope = createServerReadScope(), { autoLogsEnabled = 
       }):{createdIds:[],existingIds:[],failedIds:[]};
       if(!isCurrent())return false;
       if(outcome.failedIds.length)throw new Error('일부 자동 알림을 저장하지 못했습니다. 다시 불러와주세요.');
-      if(outcome.createdIds.length||outcome.existingIds.length)return loadAllData(createServerReadScope(),{autoLogsEnabled:false});
+      if(outcome.createdIds.length||outcome.existingIds.length||!await summaryStillCurrent(model))return loadAllData(createServerReadScope(),{autoLogsEnabled:false});
+      if(!isCurrent())return false;
       installMainModel(model);mainModelDirty=false;sessionStore.publish('main:model',{model});return true;
     }
   }
