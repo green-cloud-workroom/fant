@@ -1,25 +1,61 @@
 import { currentMenu } from './app.js';
-import { startNavigation, finishNavigation } from './perf/metrics.js';
+import { startNavigation, finishNavigation, failNavigation } from './perf/metrics.js';
 import { beginPage } from './utils/pageLifecycle.js';
 import { setModalOwner } from './utils/modalManager.js';
 import { isModuleLoadError } from './utils/moduleLoadError.js';
+import { MENUS, currentUserRole } from './app.js';
+import { flags } from './config/performanceFlags.js';
+import { sessionStore } from './state/sessionStore.js';
+
+const modules = new Map();
+const preparations = new Map();
+function pageModule(module, route, name) {
+  preparations.set(route, module.preparePage);
+  return module[name];
+}
+export function preloadPage(menuId) {
+  if (!pages[menuId] || !flags.instantRoutes?.includes(menuId)) return Promise.resolve(null);
+  if (!modules.has(menuId)) {
+    const pending = pages[menuId]().catch(error => { modules.delete(menuId); throw error; });
+    modules.set(menuId, pending);
+  }
+  return modules.get(menuId);
+}
+let warmTimer;
+sessionStore.onClear(()=>clearTimeout(warmTimer));
+function prepareMenuCode() {
+  clearTimeout(warmTimer);
+  const queue = MENUS.filter(menu => menu.roles.includes(currentUserRole) && flags.instantRoutes?.includes(menu.id)).map(menu => menu.id);
+  const next = async () => {
+    if (document.hidden || !queue.length || navigator.onLine===false || navigator.connection?.saveData || document.querySelector('.modal-overlay')) return;
+    try {
+      const route=queue.shift();
+      if(!MENUS.some(menu=>menu.id===route&&menu.roles.includes(currentUserRole)))return;
+      await preloadPage(route);
+      // No speculative Firestore requests: derive only from already observed data.
+      await preparations.get(route)?.({cacheOnly:true});
+    } catch { /* Foreground handles misses and module errors. */ }
+    warmTimer = setTimeout(next, 100);
+  };
+  warmTimer = setTimeout(next, 100);
+}
 
 const pages = {
-  settings: () => import('./pages/settings.js').then(module => module.renderSettings),
-  recipe: () => import('./pages/recipe.js').then(module => module.renderRecipe),
-  meat: () => import('./pages/meat.js').then(module => module.renderMeat),
-  bag: () => import('./pages/bag.js').then(module => module.renderBag),
-  supplement: () => import('./pages/supplement.js').then(module => module.renderSupplement),
-  egg: () => import('./pages/egg.js').then(module => module.renderEgg),
-  frozenProduct: () => import('./pages/frozenProduct.js').then(module => module.renderFrozenProduct),
-  frozenPan: () => import('./pages/frozenPan.js').then(module => module.renderFrozenPan),
-  frozenSep: () => import('./pages/frozenSep.js').then(module => module.renderFrozenSep),
-  freezeOp: () => import('./pages/freezeOp.js').then(module => module.renderFreezeOp),
-  schedule: () => import('./pages/schedule.js').then(module => module.renderSchedule),
-  production: () => import('./pages/production.js').then(module => module.renderProduction),
-  main: () => import('./pages/main.js').then(module => module.renderMain),
-  stats: () => import('./pages/stats.js').then(module => module.renderStats),
-  equipment: () => import('./pages/equipment.js').then(module => module.renderEquipment),
+  settings: () => import('./pages/settings.js').then(module => pageModule(module,'settings','renderSettings')),
+  recipe: () => import('./pages/recipe.js').then(module => pageModule(module,'recipe','renderRecipe')),
+  meat: () => import('./pages/meat.js').then(module => pageModule(module,'meat','renderMeat')),
+  bag: () => import('./pages/bag.js').then(module => pageModule(module,'bag','renderBag')),
+  supplement: () => import('./pages/supplement.js').then(module => pageModule(module,'supplement','renderSupplement')),
+  egg: () => import('./pages/egg.js').then(module => pageModule(module,'egg','renderEgg')),
+  frozenProduct: () => import('./pages/frozenProduct.js').then(module => pageModule(module,'frozenProduct','renderFrozenProduct')),
+  frozenPan: () => import('./pages/frozenPan.js').then(module => pageModule(module,'frozenPan','renderFrozenPan')),
+  frozenSep: () => import('./pages/frozenSep.js').then(module => pageModule(module,'frozenSep','renderFrozenSep')),
+  freezeOp: () => import('./pages/freezeOp.js').then(module => pageModule(module,'freezeOp','renderFreezeOp')),
+  schedule: () => import('./pages/schedule.js').then(module => pageModule(module,'schedule','renderSchedule')),
+  production: () => import('./pages/production.js').then(module => pageModule(module,'production','renderProduction')),
+  main: () => import('./pages/main.js').then(module => pageModule(module,'main','renderMain')),
+  stats: () => import('./pages/stats.js').then(module => pageModule(module,'stats','renderStats')),
+  equipment: () => import('./pages/equipment.js').then(module => pageModule(module,'equipment','renderEquipment')),
 };
 
 export async function renderPage(menuId, options = {}) {
@@ -35,11 +71,14 @@ export async function renderPage(menuId, options = {}) {
   }
   content.innerHTML = '<div style="padding:24px;"><p>' + getMenuLabel(menuId) + ' 로딩 중...</p></div>';
   try {
-    const render = await load();
+    const render = await (flags.instantRoutes?.includes(menuId) ? preloadPage(menuId) : load());
     if (document.getElementById('mainContent') !== content || currentMenu !== menuId) return;
     await render(options);
-    finishNavigation(measurement, context.isCurrent);
+    if(content.dataset?.pageFailed)failNavigation(measurement);
+    else finishNavigation(measurement, context.isCurrent);
+    if(context.isCurrent())prepareMenuCode();
   } catch (err) {
+    failNavigation(measurement);
     console.error('[페이지 로딩 실패]', menuId, err);
     if (document.getElementById('mainContent') !== content || currentMenu !== menuId) return;
     const reloadApp=isModuleLoadError(err);

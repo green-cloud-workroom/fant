@@ -17,10 +17,7 @@ const QTY_EPSILON = 0.000001;
 export async function renderFrozenSep({force=false}={}) {
  const content=document.getElementById('mainContent');
  content.innerHTML='<p style="padding:24px">동결 분리작업 로딩 중...</p>';
- const data=await frozenSepResource.load(async scope=>{
-  const [recipes,stocks,logs,staff,order]=await Promise.all([getActiveFreezeDryRecipes(scope),loadFrozenSepStocks(scope),loadFrozenSepLogs(scope),loadPageStaff(scope),scope.getDoc(doc(db,'settings','frozenSepProductOrder'))]);
-  return {recipes,stocks,logs,staff,order:order.exists()?order.data().order||[]:[]};
- },{force,onChange:pageRefresh(frozenSepResource,renderFrozenSep)});
+ const data=await frozenSepResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(frozenSepResource,renderFrozenSep)});
  if(!data||!content.isConnected)return;
  freezeDryRecipes=data.recipes;staffCache=data.staff;sepProductOrder=data.order;
  renderFrozenSepLayout(data.stocks,data.logs);
@@ -1184,3 +1181,10 @@ frozenSepResource.refresh=renderFrozenSep;
 
 import {runPageCommand} from '../services/pageCommand.js';
 import {commandWrites} from '../services/commandWrites.js';
+
+// Read-only model construction shared by activation and idle preparation.
+async function loadInitialModel(scope) {
+  const [recipes,stocks,logs,staff,order]=await Promise.all([getActiveFreezeDryRecipes(scope),loadFrozenSepStocks(scope),loadFrozenSepLogs(scope),loadPageStaff(scope),scope.getDoc(doc(db,'settings','frozenSepProductOrder'))]);
+  return {recipes,stocks,logs,staff,order:order.exists()?order.data().order||[]:[]};
+}
+export function preparePage({cacheOnly=true}={}) { return frozenSepResource.prepare?.('default',loadInitialModel,{cacheOnly}); }

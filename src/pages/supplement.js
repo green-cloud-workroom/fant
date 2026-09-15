@@ -48,6 +48,8 @@ export async function renderSupplement({force=false}={}) {
   renderSupplementLayout();
 }
 
+export function preparePage({cacheOnly=true}={}) { return supplementResource.prepare?.('default',loadSupplementModel,{cacheOnly}); }
+
 async function loadSupplementModel(scope) {
   const dates=getSupplementDateColumns(),rangeStart=dates.at(-1);
   const keys=['senior','lead','office'];

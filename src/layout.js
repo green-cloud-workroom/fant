@@ -5,7 +5,9 @@ import { disposePage } from './utils/pageLifecycle.js';
 import { dismissAllModals } from './utils/modalManager.js';
 import { canLeavePage } from './utils/formDraft.js';
 import { MENUS, currentUser, currentUserRole, currentMenu, setCurrentMenu, handleLogout, commitCurrentMenu, registerNavigationHandler } from './app.js';
-import { renderPage } from './router.js';
+import { renderPage, preloadPage } from './router.js';
+import { requestNavigation } from './perf/metrics.js';
+import { installDiagnostics } from './perf/diagnostics.js';
 import { formatKstDate, formatKstDateWithDay, getTodayKST } from './utils/date.js';
 import { db } from './firebase.js';
 import { doc, getDoc } from 'firebase/firestore';
@@ -63,6 +65,7 @@ sessionStore.onClear(() => {
 export async function navigate(menuId) {
   const menu = MENUS.find(item => item.id === menuId);
   if (!menu || !menu.roles.includes(currentUserRole)) return;
+  requestNavigation(menuId);
   nextMenu = menuId;
   if (navigationPending) return;
   navigationPending = true;
@@ -82,6 +85,7 @@ export async function navigate(menuId) {
 
 export function renderLayout() {
   if (navigationPending) return;
+  installDiagnostics();
   const retained = flags.shell && flags.store && !performanceDisabled();
   const scope = retained ? createDisplayScope('shell') : createReadScope();
   const visibleMenus = MENUS.filter(m => m.roles.includes(currentUserRole));
@@ -123,6 +127,9 @@ export function renderLayout() {
   `;
 
   document.querySelectorAll('.nav-btn').forEach(btn => {
+    const prepare = () => preloadPage(btn.dataset.menu).catch(()=>{});
+    btn.addEventListener('pointerenter',prepare);
+    btn.addEventListener('focus',prepare);
     btn.addEventListener('click', () => {
       const menuId = btn.dataset.menu;
       if (menuId === 'settings' && currentUserRole === 'production') {

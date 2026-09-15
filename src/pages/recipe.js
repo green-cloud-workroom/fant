@@ -64,12 +64,15 @@ export async function renderRecipe({force=false}={}) {
     }
     recipeRefreshTimer=setTimeout(()=>renderRecipe().catch(error=>onChange({error})),120);
   };
-  const data = await recipeResource.load(scope=>Promise.all([loadRecipes(scope),loadMeatTypes(scope),loadBagTypes(scope)]),{onChange,force});
+  const data = await recipeResource.load(loadInitialModel,{onChange,force});
   if (!data||!content.isConnected) return;
   [recipes, meatTypes, bagTypes] = data;
   renderRecipeLayout();
   if(selectedRecipeId){const selected=recipes.find(r=>r.id===selectedRecipeId);if(selected)showRecipeDetail(selected);}
 }
+
+function loadInitialModel(scope) { return Promise.all([loadRecipes(scope),loadMeatTypes(scope),loadBagTypes(scope)]); }
+export function preparePage({cacheOnly=true}={}) { return recipeResource.prepare?.('default',loadInitialModel,{cacheOnly}); }
 
 async function loadRecipes(scope={getDocs}) {
   const q = query(collection(db, 'recipes'), orderBy('sortOrder'));

@@ -10,12 +10,15 @@ export async function withReadCommand(resource, callback, {
   if (resource.busy) throw new Error('이미 처리 중입니다.');
   if (resource.blocked) throw new Error('직전 저장 결과를 확인해야 합니다. 입력을 복사한 뒤 화면을 다시 불러와주세요.');
   resource.busy = true;
+  const baseline = [...(resource.getCommandBaseline?.() || resource.observations)];
+  const view = resource.viewRevision;
   let completed = 0, dispatching = false, attempted = false, failure = null;
   try {
     const gate = await openAction({ roles, reusableConfirm:true });
-    let observations = [...resource.observations];
+    let observations = baseline;
     let reader = createServerReadScope();
     const verify = async () => {
+      if(view && resource.viewRevision!==view)throw new Error('표시된 화면이 변경되었습니다. 현재 자료를 확인한 뒤 다시 저장해주세요.');
       await gate.confirm();
       const fresh = createServerReadScope();
       const compared = await Promise.all(observations.map(async item => {
@@ -23,6 +26,7 @@ export async function withReadCommand(resource, callback, {
         return snapshotFingerprint(snapshot) === item.fingerprint;
       }));
       if (compared.some(equal => !equal)) throw new Error('다른 작업으로 원본이 변경되었습니다. 입력을 보존한 뒤 최신 자료를 다시 불러와주세요.');
+      if(view && resource.viewRevision!==view)throw new Error('표시된 화면이 변경되었습니다. 현재 자료를 확인한 뒤 다시 저장해주세요.');
       await gate.confirm();
     };
     await verify();

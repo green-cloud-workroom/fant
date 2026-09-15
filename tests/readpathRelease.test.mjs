@@ -45,3 +45,10 @@ test('release refuses missing flags and unverified routes or summary activation'
   const flags={VITE_PERF_SHELL:'true',VITE_PERF_STORE:'true',VITE_PERF_ROUTES:'main',VITE_PRODUCTION_VIEW_MODE:'session'};
   validateFlags(flags);validateFlags({...flags,VITE_PERF_ROUTES:VERIFIED_ROUTES.join(',')});assert.throws(()=>validateFlags({}));assert.throws(()=>validateFlags({...flags,VITE_PERF_ROUTES:'main,unknown'}));assert.throws(()=>validateFlags({...flags,VITE_PERF_ROUTES:'main,main'}));assert.throws(()=>validateFlags({...flags,VITE_PRODUCTION_VIEW_MODE:'summary'}));
 });
+test('instant page activation is explicit and restricted to enabled routes',()=>{
+ const flags={VITE_PERF_SHELL:'true',VITE_PERF_STORE:'true',VITE_PERF_ROUTES:'production,meat',VITE_PRODUCTION_VIEW_MODE:'session'};
+ validateFlags({...flags,VITE_INSTANT_PAGE_ROUTES:''});
+ validateFlags({...flags,VITE_INSTANT_PAGE_ROUTES:'production,meat'});
+ assert.throws(()=>validateFlags({...flags,VITE_INSTANT_PAGE_ROUTES:'settings'}));
+ assert.throws(()=>validateFlags({...flags,VITE_INSTANT_PAGE_ROUTES:'production,production'}));
+});

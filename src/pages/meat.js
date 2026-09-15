@@ -24,7 +24,7 @@ export async function renderMeat({force=false}={}) {
  content.innerHTML='<p style="padding:24px">원료 재고 로딩 중...</p>';
  await loadMeatPage({force});
  if(!getPageContext()?.isCurrent())return;
- renderMeatLayout();
+ await renderMeatLayout();
 }
 
 async function loadMeatTypes(scope={getDocs,getDoc}) {
@@ -768,7 +768,7 @@ function initStockSummarySortable() {
   });
 }
 
-function renderMeatLayout() {
+async function renderMeatLayout() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `
     <div class="page-wrap">
@@ -794,7 +794,7 @@ function renderMeatLayout() {
     });
   });
 
-  renderTab(currentTab);
+  await renderTab(currentTab);
 }
 
 async function renderTab(tab) {
@@ -2321,14 +2321,18 @@ meatResource.refresh=renderMeat;
 let meatModelKey=null;
 async function loadMeatPage({force=false}={}) {
  const key=currentTab==='produce'?'frozen':currentTab;
- if(key!==meatModelKey){meatModelKey=key;force=true;}
- const data=await meatResource.load(async scope=>{
-  const [types,categories,staff,stocks,logs]=await Promise.all([loadMeatTypes(scope),loadMeatStockCategories(scope),loadPageStaff(scope),loadMeatStocks(key,scope),loadMeatLogs(key,scope)]);
-  return {types,categories,staff,stocks,logs};
- },{force,onChange:pageRefresh(meatResource,renderMeat)});
+ if(key!==meatModelKey){meatModelKey=key;force ||= !meatResource.prepare;}
+ const data=await meatResource.load(scope=>loadInitialModel(scope, key),{key,force,onChange:pageRefresh(meatResource,renderMeat)});
  if(data){meatTypes=data.types;meatStockCategories=data.categories;staffCache=data.staff;}
  return data;
 }
 
 import {runPageCommand} from '../services/pageCommand.js';
 import {commandWrites} from '../services/commandWrites.js';
+
+// Read-only model construction shared by activation and idle preparation.
+async function loadInitialModel(scope, key) {
+  const [types,categories,staff,stocks,logs]=await Promise.all([loadMeatTypes(scope),loadMeatStockCategories(scope),loadPageStaff(scope),loadMeatStocks(key,scope),loadMeatLogs(key,scope)]);
+  return {types,categories,staff,stocks,logs};
+}
+export function preparePage({cacheOnly=true,stage='frozen'}={}) { return meatResource.prepare?.(stage,scope=>loadInitialModel(scope,stage),{cacheOnly}); }

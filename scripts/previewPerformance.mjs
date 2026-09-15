@@ -3,7 +3,7 @@
 import { build } from 'vite';
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { readFile, mkdir } from 'node:fs/promises';
+import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve, relative, extname } from 'node:path';
 
 const root=process.cwd();
@@ -17,7 +17,7 @@ for(const variant of variants) {
   const sourceOverride={
     name:'local-performance-fixture',enforce:'pre',
     load(id) {
-      if(id.replaceAll('\\','/').endsWith('/src/firebase.js'))return `import {fixtureAuth} from '${resolve('tests/fixtures/auth.mjs').replaceAll('\\','/')}';export const db = {}; export const auth = fixtureAuth;`;
+      if(id.replaceAll('\\','/').endsWith('/src/firebase.js'))return `import '${resolve('tests/fixtures/browserData.mjs').replaceAll('\\','/')}';import {fixtureAuth} from '${resolve('tests/fixtures/auth.mjs').replaceAll('\\','/')}';export const db = {}; export const auth = fixtureAuth;`;
     },
     transform(code,id) {
       const file=relative(root,id).replaceAll('\\','/');
@@ -33,6 +33,7 @@ for(const variant of variants) {
       return html.replace('<div id="app"></div>',`<aside style="padding:6px;background:#fff3cd;font:12px monospace">LOCAL FIXTURE — ${variant} — 합성 데이터 / DB 요청당 50ms / 운영 DB 연결 없음 <span id="fixtureTiming">로딩 중</span><button id="measureWarm">재방문 20회 측정</button><button id="changeEgg">외부 계란 변경</button><button id="denyReads">조회 오류 전환</button><pre id="warmResults"></pre></aside><div id="app"></div>
 <script type="module">
 import { fixture } from '${fixture.replaceAll('\\','/')}';
+import '${resolve('tests/fixtures/instantBrowserHarness.mjs').replaceAll('\\','/')}';
 let start=performance.now(),initialReads=0,measured=false;
 let measureResolve;
 document.getElementById('changeEgg').onclick=()=>{fixture.state.rows.eggStock[0].currentQty++;fixture.state.notify('eggStock/global');};
@@ -58,11 +59,23 @@ new MutationObserver(()=>{
 </script>`);
     } },
   };
-  await build({root,logLevel:'error',base:'/fant/',plugins:[sourceOverride],resolve:{alias:{'firebase/firestore':fixture,'firebase/auth':resolve('tests/fixtures/auth.mjs')}},build:{outDir:dir,emptyOutDir:false}});
+  const flags=JSON.parse(await readFile('readpath.release.json','utf8'));
+  flags.VITE_INSTANT_PAGE_ROUTES=variant==='baseline'?'':flags.VITE_PERF_ROUTES;
+  const define=Object.fromEntries(Object.entries(flags).map(([key,value])=>['import.meta.env.'+key,JSON.stringify(value)]));
+  await build({root,define,logLevel:'error',base:'/fant/',plugins:[sourceOverride],resolve:{alias:{'firebase/firestore':fixture,'firebase/auth':resolve('tests/fixtures/auth.mjs')}},build:{outDir:dir,emptyOutDir:false}});
+  if(process.argv.includes('--build-only'))continue;
   const port=variant==='baseline'?4301:4302;
   createServer(async(req,res)=>{
     try {
       const url=new URL(req.url,'http://localhost');
+      if(req.method==='POST'&&url.pathname==='/__instant-results'){
+        const chunks=[];for await(const chunk of req)chunks.push(chunk);
+        const report=JSON.parse(Buffer.concat(chunks).toString());
+        const folder=resolve('output/instant-page/browser');await mkdir(folder,{recursive:true});
+        await writeFile(resolve(folder,variant+(report.idle?'-idle':'')+'.json'),JSON.stringify(report,null,2));
+        await writeFile(resolve(folder,variant+'-'+report.startedAt.replace(/[^0-9TZ]/g,'')+'.json'),JSON.stringify(report,null,2));
+        res.end('saved');return;
+      }
       const path=url.pathname.replace(/^\/fant\/?/,'')||'index.html';
       const file=resolve(dir,path);
       if(!file.startsWith(dir+ '\\')&&!file.startsWith(dir+'/'))throw Error('Outside fixture');

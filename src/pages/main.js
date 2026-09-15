@@ -9,6 +9,11 @@ import { sessionStore } from '../state/sessionStore.js';
 import { createDisplayScope, displayPool } from '../state/displayReads.js';
 import { useSessionReads } from '../config/performanceFlags.js';
 import { registerPageCleanup } from '../utils/pageLifecycle.js';
+import { getPageContext } from '../utils/pageLifecycle.js';
+import { pageResource } from '../state/pageResources.js';
+import { pageRefresh } from '../utils/pageRefresh.js';
+const mainResource = pageResource('main');
+let mainAlertRevision = null;
 const autoLogCoordinator = createAutoLogCoordinator();
 let mainRefreshTimer;
 let mainModelDirty = true;
@@ -73,6 +78,7 @@ let combinedLogs = [];
 let equipmentAlerts = [];  // 설비 부품 교체 임박·재고 부족 (services/equipmentParts.js)
 
 export async function renderMain({ scope = createReadScope() } = {}) {
+  if (mainResource.prepare) return renderInstantMain();
   const retained = useSessionReads('main');
   if (retained) scope = createDisplayScope('main');
   const content = document.getElementById('mainContent');
@@ -142,6 +148,7 @@ export async function assertAutomaticAlertsReady() {
   if (batch.pendingIds().length) throw new Error('새 자동 알림을 확인해야 합니다. 메인을 다시 불러온 후 처리해주세요.');
 }
 async function loadAllData(scope = createServerReadScope(), { autoLogsEnabled = true } = {}) {
+  if(mainResource.prepare)mainResource.invalidate();
   const version = ++mainLoadVersion;
   const content = document.getElementById('mainContent');
   const isCurrent = () => version === mainLoadVersion && content === document.getElementById('mainContent');
@@ -233,8 +240,8 @@ async function loadAllData(scope = createServerReadScope(), { autoLogsEnabled = 
   return true;
 }
 
-function installMainModel(source) {
-  const model = copyMainModel(source);
+function installMainModel(source, {detached=false}={}) {
+  const model = detached ? source : copyMainModel(source);
   ({ productions, nextProductions, recipes, meatStocks, eggStock, completionDoc, blockingData,
     overdueClosingDate, overdueClosingAlreadyClosed, overdueProductions, overdueNextProductions,
     overdueCompletionDoc, calendarSchedules, calendarProductions, calendarEvents, combinedLogs,
@@ -449,7 +456,7 @@ async function fetchCalendarData(weekOffset = 0, scope = createReadScope()) {
     scope.getDocs(rangeQuery('schedules')),
     scope.getDocs(rangeQuery('productions')),
     scope.getDocs(rangeQuery('events')).catch(err => {
-      console.warn('[캘린더] events 컬렉션 로드 실패:', err.message);
+      if(err.code!=='cache-miss')console.warn('[캘린더] events 컬렉션 로드 실패:', err.message);
       return null;
     }),
   ]);
@@ -1000,11 +1007,11 @@ async function fetchCombinedLogs(scope = createReadScope()) {
   const tenDaysAgo = getDateNDaysAgoKST(10);
   const [todaySnap, olderSnap] = await Promise.all([
     scope.getDocs(query(collection(db, 'activityLogs'), where('date', '==', today))).catch(err => {
-      console.error('[6C-1] 당일 로그 로드 실패:', err);
+      if(err.code!=='cache-miss')console.error('[6C-1] 당일 로그 로드 실패:', err);
       throw err;
     }),
     scope.getDocs(query(collection(db, 'activityLogs'), where('date', '>=', tenDaysAgo), where('date', '<', today))).catch(err => {
-      console.error('[6C-1] 과거 로그 로드 실패:', err);
+      if(err.code!=='cache-miss')console.error('[6C-1] 과거 로그 로드 실패:', err);
       throw err;
     }),
   ]);
@@ -3667,3 +3674,70 @@ registerCloseModal('main', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
 });
+
+// Preparation is display-only: no DOM installation or automatic-log flush.
+async function prepareMainModel(scope, {today=getToday(),weekOffset=0}={}) {
+  await ensureHolidaysCache(scope);
+  const prefetchedLogs = fetchCombinedLogs(scope);
+  prefetchedLogs.catch(() => {});
+  scope.getDocs(query(collection(db, 'events'), where('date', '==', today))).catch(() => {});
+  scope.getDocs(query(collection(db, 'schedules'), where('date', '==', today))).catch(() => {});
+  scope.getDocs(query(collection(db, 'supplementTypes'), where('active', '==', true))).catch(() => {});
+  scope.getDocs(collection(db, 'supplementStock')).catch(() => {});
+  const nextBizDay = getNextBusinessDay(today);
+
+  const [prodSnap, recipeSnap, meatTypeSnap, meatSnap, eggSnap, compSnap,
+    overdueClosing, calendar, alerts] = await Promise.all([
+    scope.getDocs(query(collection(db, 'productions'), orderBy('sortOrder'))),
+    scope.getDocs(collection(db, 'recipes')),
+    scope.getDocs(collection(db, 'meatTypes')),
+    scope.getDocs(collection(db, 'meatStocks')),
+    scope.getDoc(doc(db, 'eggStock', 'global')),
+    scope.getDoc(doc(db, 'productionCompletion', today)),
+    findActionableClosingDate(today, null, scope),
+    fetchCalendarData(weekOffset, scope),
+    scope.once('equipmentAlerts:' + today, () => loadPartAlerts(today, scope)),
+  ]);
+  const allProds = prodSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const overdueDate = overdueClosing?.date || null;
+  const [overdueCompSnap, blocks] = await Promise.all([
+    overdueDate ? scope.getDoc(doc(db, 'productionCompletion', overdueDate)) : null,
+    overdueClosing?.blockingData || getAllBlockingItems(today, scope),
+  ]);
+  const logs=await prefetchedLogs;
+  const rows=snap=>snap.docs.map(d=>({id:d.id,...d.data()}));
+  const row=snap=>snap?.exists()?{id:snap.id,...snap.data()}:null;
+  return buildMainViewModel({today,nextBizDay,overdueNextBizDay:overdueDate?getNextBusinessDay(overdueDate):null,allProds,
+    recipeRows:rows(recipeSnap),meatTypeRows:rows(meatTypeSnap),meatRows:rows(meatSnap),
+    eggStock:eggSnap.exists()?eggSnap.data():{currentQty:0,minimumQty:0},equipmentAlerts:alerts,
+    completionDoc:row(compSnap),overdueCompletionDoc:row(overdueCompSnap),overdueClosing,blocks,calendar,logs});
+}
+export function preparePage({cacheOnly=true}={}) {
+  const today=getToday();
+  return mainResource.prepare?.(JSON.stringify([today,0]),scope=>prepareMainModel(scope,{today,weekOffset:0}),{cacheOnly});
+}
+async function renderInstantMain({force=false}={}) {
+  const content=document.getElementById('mainContent'),today=getToday(),weekOffset=calendarWeekOffset;
+  const key=JSON.stringify([today,weekOffset]);
+  selectedProductionDate=null;selectedDateProductions=[];selectedDateBlockingData=null;
+  const refresh=pageRefresh(mainResource,renderInstantMain);
+  const model=await mainResource.load(scope=>prepareMainModel(scope,{today,weekOffset}),{key,force,onChange:event=>{
+    if(selectedProductionDate){showRefreshError(content);return;}
+    refresh(event);
+  }});
+  if(!model||!content.isConnected||currentMenu!=='main')return;
+  installMainModel(model,{detached:true});renderMainLayout();maybeShowEquipmentPopup();
+  const revision=mainResource.viewRevision,page=getPageContext();
+  if(mainAlertRevision===revision.id)return;
+  mainAlertRevision=revision.id;
+  // The actual visit owns this side effect. Closing separately verifies alerts.
+  autoLogCoordinator.run('main:'+today,async()=>{
+    const scope=createDisplayScope('instant:main:'+key);
+    const logs=await scope.getDocs(query(collection(db,'activityLogs'),where('date','==',today)));
+    const batch=createAutoLogBatch(logs.docs.map(d=>({id:d.id,...d.data()})));
+    await triggerAutoLogs(today,batch,scope,{eggStock:model.eggStock,equipmentAlerts:model.equipmentAlerts});
+    if(!page?.isCurrent()||revision.epoch!==sessionStore.epoch)return;
+    const result=await batch.flush();
+    if(result.failedIds.length)throw new Error('일부 자동 알림을 확인하지 못했습니다. 다시 불러와주세요.');
+  }).catch(error=>{mainAlertRevision=null;if(page?.isCurrent())showRefreshError(content);console.error('[메인 자동 알림]',error);});
+}

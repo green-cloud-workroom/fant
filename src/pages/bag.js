@@ -38,11 +38,7 @@ let bagTypes = [];
 export async function renderBag({force=false}={}) {
   const content=document.getElementById('mainContent');
   content.innerHTML='<div style="padding:24px;"><p>봉투 재고 로딩 중...</p></div>';
-  const data=await bagResource.load(async scope=>{
-    const keys=['senior','lead','office'];
-    const [bags,...groups]=await Promise.all([loadBagTypes(scope),...keys.map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
-    return {bags,staff:Object.fromEntries(keys.map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
-  },{force,onChange:pageRefresh(bagResource,renderBag)});
+  const data=await bagResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(bagResource,renderBag)});
   if(!data||!content.isConnected)return;
   bagTypes=data.bags;staffCache=data.staff;renderBagLayout();
 }
@@ -754,3 +750,11 @@ registerCloseModal('bag', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
 });
+
+// Read-only model construction shared by activation and idle preparation.
+async function loadInitialModel(scope) {
+    const keys=['senior','lead','office'];
+    const [bags,...groups]=await Promise.all([loadBagTypes(scope),...keys.map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
+    return {bags,staff:Object.fromEntries(keys.map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
+}
+export function preparePage({cacheOnly=true}={}) { return bagResource.prepare?.('default',loadInitialModel,{cacheOnly}); }

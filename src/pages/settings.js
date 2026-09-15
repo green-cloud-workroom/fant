@@ -68,13 +68,18 @@ export async function renderSettings() {
   content.querySelectorAll('.settings-section').forEach((section,index) => {
     let pending = false, loaded = false;
     const body = section.querySelector('.settings-section-body');
-    async function fill() {
+    async function fill(options={}) {
       if (!section.open || pending || loaded) return;
       pending = true;
       body.textContent = '불러오는 중…';
       try {
+        const resource=settingSections[index];
+        const data=resource?await resource.load(scope=>loadSettingsSection(index,scope),{force:options.force===true,
+          onChange:pageRefresh(resource,async opts=>{loaded=false;await fill(opts);},{draftSelector:'.settings-section-body'})
+        }):await loadSettingsSection(index);
+        if(!section.isConnected || resource && data==null)return;
         switch(index) { case 0: {
-      const staffGroups = await loadStaffGroups();
+      const staffGroups = data;
 
       if (!section.isConnected) return;
       body.innerHTML = `
@@ -88,7 +93,7 @@ export async function renderSettings() {
       break;
     }
 case 1: {
-      const menuStaffGroups = await loadMenuStaffGroups();
+      const menuStaffGroups = data;
 
       if (!section.isConnected) return;
       body.innerHTML = `
@@ -105,7 +110,7 @@ case 1: {
       break;
     }
 case 2: {
-      const closingFlags = await loadClosingFlags();
+      const closingFlags = data;
 
       if (!section.isConnected) return;
       body.innerHTML = `
@@ -127,7 +132,7 @@ case 2: {
       break;
     }
 case 3: {
-      const holidays = await loadHolidays();
+      const holidays = data;
 
       if (!section.isConnected) return;
       body.innerHTML = `
@@ -138,7 +143,7 @@ case 3: {
       break;
     }
 case 4: {
-      const copySheetOrder = await loadCopySheetOrder();
+      const copySheetOrder = data;
 
       if (!section.isConnected) return;
       body.innerHTML = `
@@ -149,7 +154,7 @@ case 4: {
       break;
     }
 case 5: {
-      const [ingredientNameRows,staffGroups]=await Promise.all([loadIngredientNameRows(),loadStaffGroups()]);
+      const [ingredientNameRows,staffGroups]=data;
       if (!section.isConnected) return;
       body.innerHTML = `
           <p class="settings-section-desc">레시피에 적힌 원료명을 실제로 통합합니다. 오늘 이후 생산 카드의 원료명도 함께 갱신되고, 과거 기록은 보존됩니다.</p>
@@ -159,7 +164,7 @@ case 5: {
       break;
     }
 case 6: {
-      const systemValues = await loadSystemValues();
+      const systemValues = data;
 
       if (!section.isConnected) return;
       body.innerHTML = `
@@ -174,7 +179,7 @@ case 6: {
       break;
     }
 case 7: {
-      const meatPriceRows = await loadMeatPriceRows(getTodayKST());
+      const meatPriceRows = data;
 
       if (!section.isConnected) return;
       body.innerHTML = `
@@ -205,13 +210,14 @@ function normalizeCopySheetOrder(order) {
   return [...valid, ...missing];
 }
 
-async function loadCopySheetOrder() {
+async function loadCopySheetOrder(scope={getDoc,getDocs}) {
   try {
-    const snap = await getDoc(doc(db, 'settings', 'copySheetOrder'));
+    const snap = await scope.getDoc(doc(db, 'settings', 'copySheetOrder'));
     return snap.exists()
       ? normalizeCopySheetOrder(snap.data().order)
       : [...COPY_SHEET_ORDER_DEFAULT];
   } catch (err) {
+    if(scope.displayOwner)throw err;
     console.warn('[settings] copySheetOrder load failed:', err);
     return [...COPY_SHEET_ORDER_DEFAULT];
   }
@@ -240,8 +246,8 @@ function escapeSettingsHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-async function loadIngredientNameRows() {
-  const snap = await getDocs(collection(db, 'recipes'));
+async function loadIngredientNameRows(scope={getDoc,getDocs}) {
+  const snap = await scope.getDocs(collection(db, 'recipes'));
   const byName = new Map();
 
   snap.docs.forEach(recipeDoc => {
@@ -688,13 +694,14 @@ async function persistCopySheetOrder() {
  },{roles:['admin','office']});
 }
 
-async function loadClosingFlags() {
+async function loadClosingFlags(scope={getDoc,getDocs}) {
   try {
-    const snap = await getDoc(doc(db, 'settings', 'closingFlags'));
+    const snap = await scope.getDoc(doc(db, 'settings', 'closingFlags'));
     return snap.exists()
       ? { ...DEFAULT_CLOSING_FLAGS, ...snap.data() }
       : { ...DEFAULT_CLOSING_FLAGS };
   } catch (err) {
+    if(scope.displayOwner)throw err;
     console.warn('[settings] closingFlags load failed:', err);
     return { ...DEFAULT_CLOSING_FLAGS };
   }
@@ -994,10 +1001,10 @@ function arraysEqual(a, b) {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
-async function loadStaffGroups() {
+async function loadStaffGroups(scope={getDoc,getDocs}) {
   const groups = { senior: [], lead: [], office: [] };
   await Promise.all(Object.keys(groups).map(async key => {
-    const snap = await getDoc(doc(db, 'staffGroups', key));
+    const snap = await scope.getDoc(doc(db, 'staffGroups', key));
     if (snap.exists()) {
       groups[key] = snap.data().members || [];
     }
@@ -1105,8 +1112,8 @@ function renderStaffList(key, members, isWriter = false) {
   `).join('') || '<p class="staff-empty">담당자 없음</p>';
 }
 
-async function loadHolidays() {
-  const snap = await getDocs(collection(db, 'holidays'));
+async function loadHolidays(scope={getDoc,getDocs}) {
+  const snap = await scope.getDocs(collection(db, 'holidays'));
   const list = snap.docs
     .map(d => normalizeHolidayForSettings(d.id, d.data()))
     .filter(h => h.status !== 'deleted');
@@ -1520,3 +1527,23 @@ import {commandWrites} from '../services/commandWrites.js';
 
 import {pageResource} from '../state/pageResources.js';
 const settingsResource=pageResource('settings');
+
+import {instantPageResource} from '../state/instantPageResources.js';
+import {pageRefresh} from '../utils/pageRefresh.js';
+const settingSections=settingsResource.prepare?Array.from({length:8},(_,index)=>instantPageResource('settings/section/'+index)):[];
+if(settingSections.length){
+ const invalidate=settingsResource.invalidate.bind(settingsResource);
+ settingsResource.invalidate=()=>{invalidate();settingSections.forEach(resource=>resource.invalidate());};
+}
+function loadSettingsSection(index,scope) {
+ const loaders=[loadStaffGroups,loadMenuStaffGroups,loadClosingFlags,loadHolidays,loadCopySheetOrder,
+  scope=>Promise.all([loadIngredientNameRows(scope),loadStaffGroups(scope)]),loadSystemValues,
+  scope=>loadMeatPriceRows(getTodayKST(),scope)];
+ return loaders[index](scope);
+}
+export async function preparePage({cacheOnly=true}={}) {
+ for(let index=0;index<settingSections.length;index++){
+  try{await settingSections[index].prepare('default',scope=>loadSettingsSection(index,scope),{cacheOnly});}
+  catch(error){if(error.code!=='cache-miss')throw error;}
+ }
+}

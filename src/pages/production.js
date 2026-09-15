@@ -183,13 +183,9 @@ async function calculateSupplementRefunds(productionId,scope={getDocs}) {
 export async function renderProduction({force=false}={}) {
   const content = document.getElementById('mainContent'),date=selectedDate;
   content.innerHTML = `<div style="padding:24px;"><p>생산 입력 로딩 중...</p></div>`;
-  force ||= productionResourceDate!==date;productionResourceDate=date;
+  force ||= !productionResource.prepare && productionResourceDate!==date;productionResourceDate=date;
   conversionHistoryCache.clear();registerPageCleanup(()=>conversionHistoryCache.clear());
-  const data=await productionResource.load(async scope=>{
-    const keys=['senior','lead','office'];
-    const [recipes,productions,...groups]=await Promise.all([loadRecipes(scope),loadProductions(date,scope),...keys.map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
-    return {recipes,productions,staff:Object.fromEntries(keys.map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
-  },{force,onChange:pageRefresh(productionResource,renderProduction,{draftSelector:'#productionForm'})});
+  const data=await productionResource.load(scope=>loadInitialModel(scope, date),{key:date,force,onChange:pageRefresh(productionResource,renderProduction,{draftSelector:'#productionForm'})});
   if(!data||!content.isConnected||date!==selectedDate)return;
   recipes=data.recipes;productions=data.productions;staffCache=data.staff;
   renderProductionLayout();
@@ -1379,3 +1375,11 @@ registerCloseModal('production', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
 });
+
+// Read-only model construction shared by activation and idle preparation.
+async function loadInitialModel(scope, date) {
+    const keys=['senior','lead','office'];
+    const [recipes,productions,...groups]=await Promise.all([loadRecipes(scope),loadProductions(date,scope),...keys.map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
+    return {recipes,productions,staff:Object.fromEntries(keys.map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
+}
+export function preparePage({cacheOnly=true,date=getToday()}={}) { return productionResource.prepare?.(date,scope=>loadInitialModel(scope,date),{cacheOnly}); }

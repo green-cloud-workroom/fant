@@ -1,6 +1,7 @@
 import { createDisplayScope, displayPool } from './displayReads.js';
 import { sessionStore } from './sessionStore.js';
-import { useSessionReads } from '../config/performanceFlags.js';
+import { useSessionReads, flags } from '../config/performanceFlags.js';
+import { instantPageResource, inspectInstantResources } from './instantPageResources.js';
 import { createServerReadScope } from '../services/serverReadScope.js';
 import { fingerprint } from '../services/actionGateway.js';
 import { getPageContext, registerPageCleanup } from '../utils/pageLifecycle.js';
@@ -23,6 +24,7 @@ function trim(){
 sessionStore.onClear(()=>{for(const r of resources.values()){r.disconnect();r.model=null;r.observations=[];r.blocked=!!r.pending;r.active=false;} });
 
 export function pageResource(route){
+  if(useSessionReads(route) && flags.instantRoutes?.includes(route))return instantPageResource(route);
   if(resources.has(route))return resources.get(route);
   const owner='page:'+route;
   const resource={route,owner,active:false,access:0,bytes:0,model:null,dirty:true,observations:[],blocked:false,busy:false,timer:null,context:null,boundContext:null,revision:0,loadId:0,
@@ -49,4 +51,4 @@ export function pageResource(route){
   };
   resources.set(route,resource);return resource;
 }
-export function inspectPageResources(){return [...resources.values()].map(r=>({route:r.route,active:r.active,cached:!!r.model,dirty:r.dirty,bytes:r.bytes}));}
+export function inspectPageResources(){return [...resources.values()].map(r=>({route:r.route,active:r.active,cached:!!r.model,dirty:r.dirty,bytes:r.bytes})).concat(inspectInstantResources());}

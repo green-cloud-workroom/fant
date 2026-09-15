@@ -39,13 +39,14 @@ export const MENU_STAFF_GROUP_FIELDS = [
   { key: 'supplementAdjust', label: '영양제 재고 (수동조정)' },
 ];
 
-export async function loadMenuStaffGroups() {
+export async function loadMenuStaffGroups(scope={getDoc}) {
   try {
-    const snap = await getDoc(doc(db, 'settings', 'menuStaffGroups'));
+    const snap = await scope.getDoc(doc(db, 'settings', 'menuStaffGroups'));
     return snap.exists()
       ? { ...DEFAULT_MENU_STAFF_GROUPS, ...snap.data() }
       : { ...DEFAULT_MENU_STAFF_GROUPS };
   } catch (err) {
+    if(scope.displayOwner)throw err;
     console.warn('[menuStaffGroups] load failed:', err);
     return { ...DEFAULT_MENU_STAFF_GROUPS };
   }

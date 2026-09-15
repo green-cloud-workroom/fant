@@ -83,4 +83,9 @@ export function makeFirestore({ latencyMs = 0, alertCount = 80 } = {}) {
 
 export const fixture = makeFirestore({latencyMs:50});
 export const increment = value => ({increment:value});
+export class Timestamp {
+  constructor(seconds, nanoseconds = 0) { this.seconds = seconds; this.nanoseconds = nanoseconds; }
+  toMillis() { return this.seconds * 1000 + this.nanoseconds / 1e6; }
+  static fromMillis(ms) { return new Timestamp(Math.floor(ms / 1000), (ms % 1000) * 1e6); }
+}
 export const { collection,doc,documentId,where,orderBy,limit,startAfter,query,queryEqual,getDoc,getDocs,getDocFromServer,getDocsFromServer,onSnapshot,serverTimestamp,runTransaction,setDoc,addDoc,updateDoc,deleteDoc,writeBatch } = fixture.api;

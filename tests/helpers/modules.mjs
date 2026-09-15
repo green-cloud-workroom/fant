@@ -27,10 +27,10 @@ export async function environment(options = {}) {
   synthetic(resolve('src/firebase.js'),{db:{},auth:{}});
   synthetic(resolve('src/app.js'),{currentUser:{uid:'fixture',email:'fixture@example.invalid'},currentUserRole:'office',currentMenu:'main',setCurrentMenu:()=>{},MENUS:[]});
   synthetic(resolve('src/layout.js'),{renderLayout:()=>{}});
-  synthetic(resolve('src/config/performanceFlags.js'),{useSessionReads:()=>!!options.session,flags:{shell:!!options.session,store:!!options.session}});
+  synthetic(resolve('src/config/performanceFlags.js'),{useSessionReads:()=>!!options.session,flags:{shell:!!options.session,store:!!options.session,instantRoutes:options.instantRoutes||[]}});
   synthetic(resolve('src/services/mainViewSource.js'),{loadSummary:async()=>null,summaryEnabled:()=>false,summaryStillCurrent:async()=>false});
   if (!options.session) synthetic(resolve('src/state/displayReads.js'),{createDisplayScope:()=>{},displayPool:{onChange:()=>{}}});
-  const legacyRouterStub = { renderPage:()=>{} };
+  const legacyRouterStub = { renderPage:()=>{},preloadPage:async()=>{} };
   if(!options.realRouter)synthetic(resolve('src/router.js'),legacyRouterStub);
   async function getModule(id) {
     if(cache.has(id))return cache.get(id);

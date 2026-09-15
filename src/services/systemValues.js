@@ -120,13 +120,14 @@ export const SYSTEM_VALUE_FIELDS = [
 
 // settings/systemValues 문서를 읽어 디폴트와 병합해 반환.
 // 문서가 없거나 읽기 실패 시 디폴트 반환.
-export async function loadSystemValues() {
+export async function loadSystemValues(scope={getDoc}) {
   try {
-    const snap = await getDoc(doc(db, 'settings', 'systemValues'));
+    const snap = await scope.getDoc(doc(db, 'settings', 'systemValues'));
     return snap.exists()
       ? { ...DEFAULT_SYSTEM_VALUES, ...snap.data() }
       : { ...DEFAULT_SYSTEM_VALUES };
   } catch (err) {
+    if(scope.displayOwner)throw err;
     console.warn('[systemValues] load failed:', err);
     return { ...DEFAULT_SYSTEM_VALUES };
   }

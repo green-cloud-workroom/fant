@@ -54,11 +54,7 @@ async function loadEquipmentRows(scope={getDocs}) {
 }
 async function reloadAll({force=false}={}) {
   const host=document.getElementById('mainContent');
-  const result=await equipmentResource.load(async scope=>{
-    const keys=['senior','lead','office'];
-    const [equipment,parts,...groups]=await Promise.all([loadEquipmentRows(scope),loadEquipmentParts(scope),...keys.map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
-    return {equipment,parts,staff:Object.fromEntries(keys.map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
-  },{force,onChange:pageRefresh(equipmentResource,renderEquipment)});
+  const result=await equipmentResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(equipmentResource,renderEquipment)});
   if(!result||document.getElementById('mainContent')!==host)return;
   equipments=result.equipment;parts=result.parts;staffCache=result.staff;
 }
@@ -1065,3 +1061,11 @@ function showModal(html) {
 function closeModal() {
   document.getElementById(MODAL_ID)?.remove();
 }
+
+// Read-only model construction shared by activation and idle preparation.
+async function loadInitialModel(scope) {
+    const keys=['senior','lead','office'];
+    const [equipment,parts,...groups]=await Promise.all([loadEquipmentRows(scope),loadEquipmentParts(scope),...keys.map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
+    return {equipment,parts,staff:Object.fromEntries(keys.map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
+}
+export function preparePage({cacheOnly=true}={}) { return equipmentResource.prepare?.('default',loadInitialModel,{cacheOnly}); }

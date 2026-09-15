@@ -29,10 +29,7 @@ const FROZEN_PRODUCT_CATEGORIES = [
 export async function renderFrozenProduct({force=false}={}) {
  const content=document.getElementById('mainContent');
  content.innerHTML='<p style="padding:24px">동결제품 입고 로딩 중...</p>';
- const data=await frozenProductResource.load(async scope=>{
-   const [products,staff]=await Promise.all([loadFrozenProducts(scope),loadPageStaff(scope)]);
-   return {products,staff};
- },{force,onChange:pageRefresh(frozenProductResource,renderFrozenProduct)});
+ const data=await frozenProductResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(frozenProductResource,renderFrozenProduct)});
  if(!data||!content.isConnected)return;
  frozenProducts=data.products;staffCache=data.staff;renderFrozenProductLayout();
  if(selectedProductId){const selected=frozenProducts.find(p=>p.id===selectedProductId);if(selected)await showProductDetail(selected);}
@@ -1236,3 +1233,10 @@ frozenProductResource.refresh=renderFrozenProduct;
 
 import {runPageCommand} from '../services/pageCommand.js';
 import {commandWrites} from '../services/commandWrites.js';
+
+// Read-only model construction shared by activation and idle preparation.
+async function loadInitialModel(scope) {
+   const [products,staff]=await Promise.all([loadFrozenProducts(scope),loadPageStaff(scope)]);
+   return {products,staff};
+}
+export function preparePage({cacheOnly=true}={}) { return frozenProductResource.prepare?.('default',loadInitialModel,{cacheOnly}); }

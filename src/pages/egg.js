@@ -36,10 +36,7 @@ let eggFifoExpanded = false;
 export async function renderEgg({force=false}={}) {
   const content=document.getElementById('mainContent');
   content.innerHTML='<div style="padding:24px;"><p>계란 로딩 중...</p></div>';
-  const data=await eggResource.load(async scope=>{
-    const [stock,logs,...groups]=await Promise.all([loadEggStock(scope),loadEggLogs(scope),...['senior','lead','office'].map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
-    return {stock,logs,staff:Object.fromEntries(['senior','lead','office'].map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
-  },{force,onChange:pageRefresh(eggResource,renderEgg)});
+  const data=await eggResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(eggResource,renderEgg)});
   if(!data||!content.isConnected)return;
   staffCache=data.staff;renderEggLayout(data.stock,data.logs);
 }
@@ -555,3 +552,10 @@ registerCloseModal('egg', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
 });
+
+// Read-only model construction shared by activation and idle preparation.
+async function loadInitialModel(scope) {
+    const [stock,logs,...groups]=await Promise.all([loadEggStock(scope),loadEggLogs(scope),...['senior','lead','office'].map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
+    return {stock,logs,staff:Object.fromEntries(['senior','lead','office'].map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
+}
+export function preparePage({cacheOnly=true}={}) { return eggResource.prepare?.('default',loadInitialModel,{cacheOnly}); }

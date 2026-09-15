@@ -53,11 +53,7 @@ async function loadFrozenPanLogs(scope={getDocs,getDoc}) {
 
 async function refreshFrozenPanLayout({force=false}={}) {
  const content=document.getElementById('mainContent');
- const data=await frozenPanResource.load(async scope=>{
-  const [rows,lots,breadPanLots,breadPanLogs,frozenPanLogs,recipes,staff]=await Promise.all([
-   loadFrozenPanRows(scope),loadFrozenPanLots(scope),loadBreadPanLots(scope),loadBreadPanLogs(scope),loadFrozenPanLogs(scope),getActiveFreezeDryRecipes(scope),loadPageStaff(scope)]);
-  return {rows,lots,breadPanLots,breadPanLogs,frozenPanLogs,recipes,staff};
- },{force,onChange:pageRefresh(frozenPanResource,refreshFrozenPanLayout)});
+ const data=await frozenPanResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(frozenPanResource,refreshFrozenPanLayout)});
  if(!data||!content?.isConnected)return;
  freezeDryRecipes=data.recipes;staffCache=data.staff;
  renderFrozenPanLayout(data.rows,data.lots,data.breadPanLots,data.breadPanLogs,data.frozenPanLogs);
@@ -433,7 +429,7 @@ function bindFrozenPanTabEvents(rows, lots) {
 
       const __c = await showConfirmModal({ title:'발주 행 삭제', message:'발주 행을 삭제하시겠습니까?', confirmText:'삭제', danger:true }); if (!__c) return;
       const targetRow = rows.find(r => r.id === btn.dataset.id);
-      if (targetRow && await blockIfClosed(targetRow.date), command) return;
+      if (targetRow && await blockIfClosed(targetRow.date, command)) return;
       await updateDoc(doc(db, 'frozenPanStock', btn.dataset.id), { status: 'cancelled' });
       if(!command.isCurrent())return;
       await refreshFrozenPanLayout();
@@ -1727,3 +1723,11 @@ frozenPanResource.refresh=refreshFrozenPanLayout;
 
 import {runPageCommand} from '../services/pageCommand.js';
 import {commandWrites} from '../services/commandWrites.js';
+
+// Read-only model construction shared by activation and idle preparation.
+async function loadInitialModel(scope) {
+  const [rows,lots,breadPanLots,breadPanLogs,frozenPanLogs,recipes,staff]=await Promise.all([
+   loadFrozenPanRows(scope),loadFrozenPanLots(scope),loadBreadPanLots(scope),loadBreadPanLogs(scope),loadFrozenPanLogs(scope),getActiveFreezeDryRecipes(scope),loadPageStaff(scope)]);
+  return {rows,lots,breadPanLots,breadPanLogs,frozenPanLogs,recipes,staff};
+}
+export function preparePage({cacheOnly=true}={}) { return frozenPanResource.prepare?.('default',loadInitialModel,{cacheOnly}); }

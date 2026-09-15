@@ -3,7 +3,7 @@ import {resolve} from 'node:path';
 import {environment} from './modules.mjs';
 import {makeEditableFirestore} from '../fixtures/editableFirestore.mjs';
 
-export async function pageEnvironment(route,{baselineRef,instrument='',role='office',latencyMs=0,retained=true}={}) {
+export async function pageEnvironment(route,{baselineRef,instrument='',role='office',latencyMs=0,retained=true,instantRoutes=[]}={}) {
  const fake=makeEditableFirestore({latencyMs,alertCount:0});
  Object.assign(fake.state.rows,{
   productions:[],activityLogs:[],
@@ -20,7 +20,7 @@ export async function pageEnvironment(route,{baselineRef,instrument='',role='off
   frozenPanStock:[{id:'order1',date:fake.today,status:'pending',items:[{productName:'고양이 검증 큐브',orderPanQty:3}]}],
   breadPanLots:[],frozenSeparation:[],frozenSeparationLogs:[],freezeOrders:[],
  });
- const e=await environment({session:true,firestore:fake,baselineRef,instrument:{[`src/pages/${route}.js`]:instrument}});
+ const e=await environment({session:true,firestore:fake,baselineRef,instantRoutes,instrument:{[`src/pages/${route}.js`]:instrument}});
  const {document,Event,HTMLElement}=parseHTML('<html><body><div id="mainContent"></div></body></html>');
  const events=new WeakMap(),pending=new Set(),alerts=[];
  const native=document.defaultView.EventTarget.prototype.addEventListener;

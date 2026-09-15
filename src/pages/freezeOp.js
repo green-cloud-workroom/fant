@@ -93,10 +93,7 @@ function buildStockMap(lots) {
 
 async function loadFreezeOpModel({force=false}={}) {
   registerPageCleanup(()=>{_slots=new Array(TOTAL_SLOTS).fill(null);_builderOrder=null;_activeProduct=null;_colorMap={};});
-  return freezeOpResource.load(async scope=>{
-    const [orders,lots]=await Promise.all([loadFreezeOrders(scope),loadFrozenPanLots(scope)]);
-    return {orders,lots};
-  },{force,onChange:pageRefresh(freezeOpResource,options=>_tabMode?renderFreezeOpInTab(options):renderFreezeOp(options))});
+  return freezeOpResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(freezeOpResource,options=>_tabMode?renderFreezeOpInTab(options):renderFreezeOp(options))});
 }
 
 export function disposeFreezeOpTab() {
@@ -820,3 +817,10 @@ function printLayout(order, slots, colorMap) {
 
 import {runPageCommand} from '../services/pageCommand.js';
 import {commandWrites} from '../services/commandWrites.js';
+
+// Read-only model construction shared by activation and idle preparation.
+async function loadInitialModel(scope) {
+    const [orders,lots]=await Promise.all([loadFreezeOrders(scope),loadFrozenPanLots(scope)]);
+    return {orders,lots};
+}
+export function preparePage({cacheOnly=true}={}) { return freezeOpResource.prepare?.('default',loadInitialModel,{cacheOnly}); }

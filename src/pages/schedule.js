@@ -24,11 +24,7 @@ async function runScheduleCommand(callback,roles=['admin','office']) {
 export async function renderSchedule({force=false}={}) {
   const content=document.getElementById('mainContent');
   content.innerHTML='<div style="padding:24px;"><p>입고 예정관리 로딩 중...</p></div>';
-  const data=await scheduleResource.load(async scope=>{
-    const keys=['senior','lead','office'];
-    const [schedules,meatTypes,bagTypes,...groups]=await Promise.all([loadSchedules(scope),loadMeatTypes(scope),loadBagTypes(scope),...keys.map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
-    return {schedules,meatTypes,bagTypes,staff:Object.fromEntries(keys.map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
-  },{force,onChange:pageRefresh(scheduleResource,renderSchedule)});
+  const data=await scheduleResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(scheduleResource,renderSchedule)});
   if(!data||!content.isConnected)return;
   scheduleMeatTypes=data.meatTypes;scheduleBagTypes=data.bagTypes;staffCache=data.staff;renderScheduleLayout(data.schedules);
 }
@@ -898,3 +894,11 @@ registerCloseModal('schedule', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
 });
+
+// Read-only model construction shared by activation and idle preparation.
+async function loadInitialModel(scope) {
+    const keys=['senior','lead','office'];
+    const [schedules,meatTypes,bagTypes,...groups]=await Promise.all([loadSchedules(scope),loadMeatTypes(scope),loadBagTypes(scope),...keys.map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
+    return {schedules,meatTypes,bagTypes,staff:Object.fromEntries(keys.map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
+}
+export function preparePage({cacheOnly=true}={}) { return scheduleResource.prepare?.('default',loadInitialModel,{cacheOnly}); }

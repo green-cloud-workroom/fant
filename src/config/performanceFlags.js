@@ -7,6 +7,7 @@ export const flags = Object.freeze({
   store: env.VITE_PERF_STORE === 'true',
   routes: (env.VITE_PERF_ROUTES || '').split(',').filter(Boolean),
   viewMode: env.VITE_PRODUCTION_VIEW_MODE || 'legacy',
+  instantRoutes: (env.VITE_INSTANT_PAGE_ROUTES || '').split(',').filter(Boolean),
 });
 export function useSessionReads(route) {
   return flags.shell && flags.store && flags.routes.includes(route) && !performanceDisabled();

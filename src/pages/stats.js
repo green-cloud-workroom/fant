@@ -190,7 +190,7 @@ function bindStatsEvents() {
       activeTab = btn.dataset.tab;
       destroyAllCharts();
       renderStatsLayout();
-      scheduleRefresh();
+      scheduleRefresh({immediate:true});
     });
   });
 
@@ -232,7 +232,7 @@ function bindStatsEvents() {
   if (dlAll) dlAll.addEventListener('click', handleExcelDownloadAll);
 }
 
-function scheduleRefresh() {
+function scheduleRefresh({immediate=false}={}) {
   // Invalidate immediately, before the debounce period. Otherwise an older
   // response can be interpreted as the newly selected tab's data.
   queryToken++;
@@ -242,35 +242,35 @@ function scheduleRefresh() {
   refreshTimer = setTimeout(() => {
     refreshTimer = null;
     refreshStats();
-  }, DEBOUNCE_MS);
+  }, immediate && statsResource.prepare ? 0 : DEBOUNCE_MS);
 }
 
-async function loadProductionsInRange(scope={getDocs}) {
-  const q = query(collection(db, 'productions'), where('date', '>=', startDate), where('date', '<=', endDate));
+async function loadProductionsInRange(scope={getDocs},range={startDate,endDate}) {
+  const q = query(collection(db, 'productions'), where('date', '>=', range.startDate), where('date', '<=', range.endDate));
   const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => p.status === 'active');
 }
 
-async function loadBagLogsInRange(scope={getDocs}) {
-  const q = query(collection(db, 'bagLogs'), where('date', '>=', startDate), where('date', '<=', endDate));
+async function loadBagLogsInRange(scope={getDocs},range={startDate,endDate}) {
+  const q = query(collection(db, 'bagLogs'), where('date', '>=', range.startDate), where('date', '<=', range.endDate));
   const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-async function loadEggLogsInRange(scope={getDocs}) {
-  const q = query(collection(db, 'eggLogs'), where('date', '>=', startDate), where('date', '<=', endDate));
+async function loadEggLogsInRange(scope={getDocs},range={startDate,endDate}) {
+  const q = query(collection(db, 'eggLogs'), where('date', '>=', range.startDate), where('date', '<=', range.endDate));
   const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-async function loadFrozenLogsInRange(scope={getDocs}) {
-  const q = query(collection(db, 'frozenLogs'), where('date', '>=', startDate), where('date', '<=', endDate));
+async function loadFrozenLogsInRange(scope={getDocs},range={startDate,endDate}) {
+  const q = query(collection(db, 'frozenLogs'), where('date', '>=', range.startDate), where('date', '<=', range.endDate));
   const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(l => l.status === 'active');
 }
 
-async function loadSupplementLogsInRange(scope={getDocs}) {
-  const q = query(collection(db, 'supplementLogs'), where('date', '>=', startDate), where('date', '<=', endDate));
+async function loadSupplementLogsInRange(scope={getDocs},range={startDate,endDate}) {
+  const q = query(collection(db, 'supplementLogs'), where('date', '>=', range.startDate), where('date', '<=', range.endDate));
   const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
@@ -516,17 +516,19 @@ function aggregateDailyView(productions, frozenLogs) {
   return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
 }
 
-function loadStatsTab(tab,scope) {
+function loadStatsTab(tab,scope,range) {
   const loaders = {
     production:[loadProductionsInRange], meat:[loadProductionsInRange,loadMeatTypeShowInStatsMap],
     bag:[loadBagLogsInRange,loadBagPiecesPerBoxMap], egg:[loadEggLogsInRange],
     daily:[loadProductionsInRange,loadFrozenLogsInRange],
     supplement:[loadSupplementTypes,loadSupplementStocks,loadSupplementLogsInRange],
   };
-  return Promise.all(loaders[tab].map(load=>load(scope)));
+  return Promise.all(loaders[tab].map(load=>load(scope,range)));
 }
 
 async function refreshStats() {
+  const statsHost=document.getElementById('mainContent');
+  if(statsHost?.dataset)delete statsHost.dataset.pageFailed;
   const myToken = ++queryToken;
   loadedStatsKey=null;
   const summary = document.getElementById('statsSummary');
@@ -537,9 +539,9 @@ async function refreshStats() {
   try {
     const tab = activeTab;
     const key = JSON.stringify([tab,startDate,endDate]);
-    const force = key !== statsResourceKey;
+    const force = !statsResource.prepare && key !== statsResourceKey;
     statsResourceKey = key;
-    const data = await statsResource.load(scope => loadStatsTab(tab,scope), {force,onChange:({error}={})=>{
+    const data = await statsResource.load(scope => loadStatsTab(tab,scope), {key,force,onChange:({error}={})=>{
       clearTimeout(statsRefreshTimer);
       if(error?.code==='permission-denied'){summary?.replaceChildren();detail?.replaceChildren();destroyAllCharts();return;}
       if(error){if(summary)summary.textContent='최신 통계를 확인하지 못했습니다. 연결을 확인한 뒤 기간을 다시 선택해주세요.';return;}
@@ -595,6 +597,7 @@ async function refreshStats() {
   } catch (err) {
     console.error('[stats] 로드 실패:', err);
     if (myToken !== queryToken) return;
+    if(statsHost?.dataset)statsHost.dataset.pageFailed='stats';
     if (summary) summary.innerHTML = `<div class="stats-placeholder" style="color:#c0392b">로드 실패: ${err.message || err}</div>`;
     if (detail) detail.innerHTML = '';
   }
@@ -1144,4 +1147,12 @@ function escapeHtml(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+export function preparePage({cacheOnly=true}={}) {
+ const today=getTodayKST(),startDate=today.slice(0,7)+'-01';
+ const [year,month]=today.split('-').map(Number);
+ const endDate=today.slice(0,7)+'-'+new Date(Date.UTC(year,month,0)).getUTCDate();
+ const key=JSON.stringify(['production',startDate,endDate]);
+ return statsResource.prepare?.(key,scope=>loadStatsTab('production',scope,{startDate,endDate}),{cacheOnly});
 }

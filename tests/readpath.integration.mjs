@@ -24,6 +24,24 @@ const claims=role=>({app:['production'],roles:{production:role}});
 const admin=env.authenticatedContext('readpath-admin',claims('admin')).firestore();
 const reader=env.authenticatedContext('readpath-office',claims('office')).firestore();
 test.after(async()=>env.cleanup());
+test('real SDK background revision cannot authorize a stale displayed form',async()=>{
+ const vm=await environment({session:true,instantRoutes:['egg']});vm.synthetic('firebase/firestore',transactionSdk);
+ vm.synthetic(resolve('src/firebase.js'),{db:reader,auth:{currentUser:{uid:'readpath-office',getIdTokenResult:async()=>({claims:claims('office')})}}});
+ (await vm.load('src/utils/pageLifecycle.js')).beginPage(vm.nodes.mainContent,'egg');
+ const resource=(await vm.load('src/state/pageResources.js')).pageResource('egg');
+ const ref=sdk.doc(reader,'eggStock/global');
+ await env.withSecurityRulesDisabled(async context=>sdk.setDoc(sdk.doc(context.firestore(),'eggStock/global'),{currentQty:10,minimumQty:0}));
+ const loader=async scope=>(await scope.getDoc(ref)).data();
+ await resource.load(loader);
+ await sdk.updateDoc(sdk.doc(admin,'eggStock/global'),{currentQty:20});
+ await resource.prepare('default',loader,{force:true});
+ assert.equal(resource.model.currentQty,10);
+ let writes=0;
+ const {withReadCommand}=await vm.load('src/services/readCommand.js');
+ await assert.rejects(()=>withReadCommand(resource,command=>command.commit({commit:async()=>writes++})),/원본이 변경/);
+ assert.equal(writes,0);
+ (await vm.load('src/state/sessionStore.js')).sessionStore.clear();
+});
 test('shared rules retain production role access and deny another app',async()=>{
   await env.withSecurityRulesDisabled(async context=>sdk.setDoc(sdk.doc(context.firestore(),'eggStock/global'),{currentQty:10,minimumQty:0}));
   for(const role of ['admin','office','production'])await assertSucceeds(sdk.getDocFromServer(sdk.doc(env.authenticatedContext('reader-'+role,claims(role)).firestore(),'eggStock/global')));

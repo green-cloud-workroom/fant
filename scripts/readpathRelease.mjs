@@ -13,11 +13,14 @@ export function requireClean() {
 }
 export function validateFlags(flags,{summaryVerified=false}={}) {
   const keys=['VITE_PERF_SHELL','VITE_PERF_STORE','VITE_PERF_ROUTES','VITE_PRODUCTION_VIEW_MODE'];
+  if(Object.hasOwn(flags,'VITE_INSTANT_PAGE_ROUTES'))keys.push('VITE_INSTANT_PAGE_ROUTES');
   if(JSON.stringify(Object.keys(flags).sort())!==JSON.stringify(keys.sort()))throw Error('Release flags missing or unknown.');
   if(!['true','false'].includes(flags.VITE_PERF_SHELL)||!['true','false'].includes(flags.VITE_PERF_STORE)||!['legacy','session','summary'].includes(flags.VITE_PRODUCTION_VIEW_MODE))throw Error('Unsupported release flags.');
   if(flags.VITE_PRODUCTION_VIEW_MODE==='summary'&&!summaryVerified)throw Error('Summary was not independently verified.');
   const routes=flags.VITE_PERF_ROUTES?flags.VITE_PERF_ROUTES.split(','):[];
   if(new Set(routes).size!==routes.length||routes.some(route=>!VERIFIED_ROUTES.includes(route)))throw Error('Unverified route activation.');
+  const instant=(flags.VITE_INSTANT_PAGE_ROUTES||'').split(',').filter(Boolean);
+  if(new Set(instant).size!==instant.length||instant.some(route=>!routes.includes(route)))throw Error('Invalid instant route activation.');
 }
 export function validateSummaryAcceptance(acceptance,now=Date.now()) {
   const verifiedAt=Date.parse(acceptance?.verifiedAt),hash=/^[a-f0-9]{64}$/;

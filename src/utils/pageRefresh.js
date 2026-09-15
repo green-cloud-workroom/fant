@@ -10,7 +10,7 @@ export function pageRefresh(resource,refresh,{draftSelector}={}) {
     clearTimeout(timer);
     if(!host?.isConnected || (page&&!page.isCurrent()))return;
     if(error?.code==='permission-denied'){host.replaceChildren();return;}
-    const draft = draftSelector && [...host.querySelectorAll(draftSelector)].some(hasDirtyFields);
+    const draft = draftSelector ? [...host.querySelectorAll(draftSelector)].some(hasDirtyFields) : resource.prepare && hasDirtyFields(host);
     if(error || resource.busy || draft || host.contains(document.activeElement) || document.querySelector('.modal-overlay')) {
       if(host.querySelector('[data-refresh-notice]'))return;
       const notice=document.createElement('p');notice.dataset.refreshNotice='true';
