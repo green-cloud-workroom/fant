@@ -1,0 +1,1 @@
+function e(e){return typeof e!=`number`||isNaN(e)?0:Math.round(e*100)/100}function t(t){return e(t*4/9)}function n(t){return e(t*4)}function r(e,t){let n=Number(e)||0,r=t===`kg`?n/1e3:n,i=t===`kg`?2:1;return Number.isInteger(r)?String(r):r.toLocaleString(`ko-KR`,{maximumFractionDigits:i})}export{e as i,n,r,t};
