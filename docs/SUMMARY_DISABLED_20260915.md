@@ -22,4 +22,9 @@ Node VM 측정으로 인증·번들 다운로드·DOM paint·데이터 전송량
 
 ## 배포 확인
 
-최종 서버 제거 수·Control revision·프런트 source와 운영 자산 검증은 작업 완료 후 기록한다.
+- 2026-09-15 00:59:29 UTC 서버 대조: 전용 함수23개·정기 작업2개 제거, 관련 Eventarc trigger0·Cloud Run service0. 다른 함수18개의 state/updateTime과 정기 작업6개의 state/schedule은 변경 없음.
+- Control off revision7, 9/14 및9/15 공개 root 모두 off. off 전환은 업무 원본쓰기0, projection2회 쓰기였다. 증거 `C:/dev/fant-production/output/summary-disable-cloud-verification.json`.
+- 프런트 source `5cb5a2a30f741ad9d8a42dbc47be19a6dcc2c37d`, gh-pages `62c6f0707fbff4d59ce429438dc546f11b3affe5`, Pages 실행 `34915382644` 성공. 운영45/45 파일 HTTP200/SHA-256 일치.
+- 릴리스/요약 계약 테스트8개 통과, 프런트 재빌드 manifest 일치, backend TypeScript build 성공. 선택 배포 dry-run은 operator gate로 ready=false인 것을 확인했다.
+- 사무실 계정 Chrome에서 현재9/15 메인의 생산·재고·로그 본문과 최신 번들 `index-BvUufXtY.js`를 확인했다. 검증 중 업무 저장 버튼은 사용하지 않았다.
+- backend 비활성 소스 커밋 `9d65c5b`. 소스/이전 요약/빌드 저장물을 보존했으므로 기존 발생액과 잔존 저장비는 별개다.
