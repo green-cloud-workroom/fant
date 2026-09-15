@@ -1,0 +1,1 @@
+import{r as e}from"./closing-D-euex3d.js";async function t(t,n){if(!/^\d{4}-\d{2}-\d{2}$/.test(t||``))return alert(`처리 날짜를 확인할 수 없습니다. 화면을 다시 불러온 뒤 시도해주세요.`),!0;try{return await e(t,n)?(alert(`${t}는 이미 마감된 날짜입니다.\n수정하려면 마감해제하세요.`),!0):!1}catch(e){return console.error(`blockIfClosed error:`,e),alert(`마감 상태를 서버에서 확인하지 못했습니다. 연결을 확인한 뒤 다시 시도해주세요.`),!0}}export{t};

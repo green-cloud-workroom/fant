@@ -1,0 +1,1 @@
+import{b as e}from"./index.esm-rHmxwfvm.js";import{n as t}from"./firebase-qGjqjNvO.js";async function n(n){let r=[`senior`,`lead`,`office`],i=await Promise.all(r.map(r=>n.getDoc(e(t,`staffGroups`,r))));return Object.fromEntries(r.map((e,t)=>[e,i[t].exists()&&i[t].data().members||[]]))}export{n as t};
