@@ -3,5 +3,5 @@
   "VITE_PERF_STORE": "true",
   "VITE_PERF_ROUTES": "main,recipe,settings,production,bag,equipment,supplement,schedule,egg,frozenProduct,frozenPan,freezeOp,frozenSep,meat,stats",
   "VITE_PRODUCTION_VIEW_MODE": "session",
-  "VITE_INSTANT_PAGE_ROUTES": "production,meat,stats,settings"
+  "VITE_INSTANT_PAGE_ROUTES": "main,recipe,settings,production,bag,equipment,supplement,schedule,egg,frozenProduct,frozenPan,freezeOp,frozenSep,meat,stats"
 }
