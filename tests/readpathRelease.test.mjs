@@ -2,6 +2,35 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertArtifacts, validateFlags, validateSummaryAcceptance, VERIFIED_ROUTES } from '../scripts/readpathRelease.mjs';
 import { DASHBOARD_LOGIC_VERSION } from '../src/config/dashboardCompatibility.js';
+import {selectRetainedAssets,restoreRetainedAssets} from '../scripts/releaseAssets.mjs';
+import {isModuleLoadError} from '../src/utils/moduleLoadError.js';
+import {mkdtemp,readFile,writeFile,mkdir,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+
+test('deploy keeps old lazy modules and rejects changed bytes or unsafe paths',async()=>{
+  const a='a'.repeat(40),b='b'.repeat(40),line=(blob,path)=>`100644 blob ${blob}\t${path}`;
+  const files=selectRetainedAssets([line(a,'assets/old.js'),line(a,'assets/old.js')+'\n'+line(b,'assets/new.js')]);
+  assert.equal(files.length,2);
+  assert.throws(()=>selectRetainedAssets([line(a,'../index.html')]));
+  assert.throws(()=>selectRetainedAssets([line(a,'assets/old.js'),line(b,'assets/old.js')]));
+  const dir=await mkdtemp(join(tmpdir(),'fant-assets-'));
+  try{
+    await mkdir(join(dir,'assets'));await writeFile(join(dir,'index.html'),'current entry');
+    const readBlob=blob=>Buffer.from(blob===a?'export const old=true':'export const current=true');
+    await restoreRetainedAssets(files,dir,readBlob);
+    assert.equal(await readFile(join(dir,'assets/old.js'),'utf8'),'export const old=true');
+    assert.equal(await readFile(join(dir,'index.html'),'utf8'),'current entry');
+    await restoreRetainedAssets(files,dir,readBlob);
+    await writeFile(join(dir,'assets/old.js'),'overwritten');
+    await assert.rejects(()=>restoreRetainedAssets(files,dir,readBlob),/collision/);
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('module load failures require document reload; data failures retain in-page retry',()=>{
+  for(const message of ['Failed to fetch dynamically imported module: https://example.invalid/old.js','Importing a module script failed.','Unable to preload CSS for /assets/old.css'])assert.equal(isModuleLoadError(new Error(message)),true);
+  for(const message of ['permission-denied','서버 응답을 확인하지 못했습니다.'])assert.equal(isModuleLoadError(new Error(message)),false);
+});
 test('release refuses missing, extra or changed assets',()=>{
   assert.doesNotThrow(()=>assertArtifacts({a:'1',b:'2'},{b:'2',a:'1'}));
   for(const files of [{a:'1'},{a:'1',b:'2',c:'3'},{a:'changed',b:'2'}])assert.throws(()=>assertArtifacts({a:'1',b:'2'},files));

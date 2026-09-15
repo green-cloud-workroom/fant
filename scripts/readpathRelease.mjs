@@ -3,6 +3,7 @@ import { readdir, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { resolve, relative } from 'node:path';
 import { DASHBOARD_LOGIC_VERSION } from '../src/config/dashboardCompatibility.js';
+import { captureRetainedAssets, restoreRetainedAssets } from './releaseAssets.mjs';
 export const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 export const source = () => execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
 export const VERIFIED_ROUTES=['main','recipe','settings','production','bag','equipment','supplement','schedule','egg','frozenProduct','frozenPan','freezeOp','frozenSep','meat','stats'];
@@ -36,7 +37,7 @@ export async function artifacts(dir='dist') {
 export function assertArtifacts(expected,actual) {
   if(JSON.stringify(Object.entries(expected).sort())!==JSON.stringify(Object.entries(actual).sort()))throw Error('Asset hashes or file list differ; deployment stopped.');
 }
-export async function buildRelease(commit,flags) {
+export async function buildRelease(commit,flags,retainedAssets=[]) {
   let summaryVerified=false;
   if(flags.VITE_PRODUCTION_VIEW_MODE==='summary'){
     const acceptance=JSON.parse(await readFile('readpath.summary-acceptance.json','utf8'));
@@ -51,12 +52,14 @@ export async function buildRelease(commit,flags) {
     const file=resolve('dist',path),text=await readFile(file,'utf8');
     if(text.includes('\r\n'))await writeFile(file,text.replaceAll('\r\n','\n'));
   }
+  await restoreRetainedAssets(retainedAssets);
   const hashes=await artifacts();
   await writeFile('dist/release.json',JSON.stringify({schemaVersion:1,source:commit,flags,assets:hashes},null,2));
   return artifacts();
 }
 export async function prepare() {
   requireClean();const commit=source();const flags=JSON.parse(await readFile('readpath.release.json','utf8'));
-  const hashes=await buildRelease(commit,flags);const manifest={source:commit,flags,assets:hashes};
+  const retained=captureRetainedAssets();
+  const hashes=await buildRelease(commit,flags,retained.files);const manifest={source:commit,flags,retained,assets:hashes};
   await mkdir('output/readpath',{recursive:true});await writeFile('output/readpath/release-manifest.json',JSON.stringify(manifest,null,2));return manifest;
 }

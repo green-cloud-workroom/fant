@@ -2,6 +2,7 @@ import { currentMenu } from './app.js';
 import { startNavigation, finishNavigation } from './perf/metrics.js';
 import { beginPage } from './utils/pageLifecycle.js';
 import { setModalOwner } from './utils/modalManager.js';
+import { isModuleLoadError } from './utils/moduleLoadError.js';
 
 const pages = {
   settings: () => import('./pages/settings.js').then(module => module.renderSettings),
@@ -41,8 +42,9 @@ export async function renderPage(menuId, options = {}) {
   } catch (err) {
     console.error('[페이지 로딩 실패]', menuId, err);
     if (document.getElementById('mainContent') !== content || currentMenu !== menuId) return;
-    content.innerHTML = '<div style="padding:24px;"><p>화면을 불러오지 못했습니다. 다시 시도해주세요.</p><button class="btn-secondary" id="retryPageLoad">다시 불러오기</button></div>';
-    document.getElementById('retryPageLoad').addEventListener('click', () => renderPage(menuId));
+    const reloadApp=isModuleLoadError(err);
+    content.innerHTML = '<div style="padding:24px;"><p>'+ (reloadApp?'업데이트된 화면을 불러오려면 앱을 새로고침해주세요.':'화면을 불러오지 못했습니다. 다시 시도해주세요.') +'</p><button class="btn-secondary" id="retryPageLoad">'+(reloadApp?'앱 새로고침':'다시 불러오기')+'</button></div>';
+    document.getElementById('retryPageLoad').addEventListener('click', () => reloadApp?window.location.reload():renderPage(menuId));
   }
 }
 
