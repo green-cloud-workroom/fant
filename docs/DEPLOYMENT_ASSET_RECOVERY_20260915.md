@@ -20,4 +20,9 @@
 
 프런트101개 테스트 통과. 이전 lazy 파일 보존, 현재 진입 파일 유지, 파일 충돌/경로 이탈 차단, 모듈 실패와 데이터 오류 구분 회귀를 포함한다. 최초 오류 탭 새로고침으로 생산 입력 정상 본문을 확인했다.
 
-배포 source·gh-pages·운영 파일 검사와 배포 전 열린 탭 검증은 완료 후 기록한다.
+- 운영 source `03acbb90ad74835001a2e0d6b7bb56cfdf7d9cfb`, gh-pages `0e7153df8658b7371d65dd89569c2e942cb7db62`, Pages 실행 `34916163838` 성공.
+- 복원된 이전 파일을 포함한194/194개가 운영 HTTP200/SHA-256 일치. 실패했던 production-DzHW_yOy.js 및 meat-CptlvwxP.js도 포함한다.
+- 배포 전에 설정 화면으로 열어 둔 Chrome 탭(index-BvUufXtY.js)을 새로고침하지 않고, 배포 완료 후 처음 생산 입력/원료 재고로 이동했다. 생산 카드와 원료 카테고리/재고 본문이 정상 표시됐고 해당 탭의 페이지 로딩 실패 로그0을 확인했다.
+- 이후 최신 index-DRMzawyA.js로 다시 접속해 생산 본문 정상 표시를 확인했다. 실제 업무 저장은 실행하지 않았다.
+- 이전에 이미 import 실패가 기록된 직원 탭은 실패 결과가 브라우저에 남을 수 있으므로 이번에는 한 번 앱 새로고침이 필요하다. 이후 배포는 이전 파일을 보존한다.
+- 증거 `output/readpath/chunk-recovery-tests.txt`, `release-manifest.json`, `live-verification.json`. 프런트 build·재빌드 hash·git diff --check 통과. 이번 복구로 모든 환경의 일반적인 지연까지 해결됐다고 주장하지 않는다.
