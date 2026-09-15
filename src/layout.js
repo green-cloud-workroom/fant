@@ -1,9 +1,20 @@
-import { MENUS, currentUser, currentUserRole, currentMenu, setCurrentMenu, handleLogout } from './app.js';
-import { renderPage } from './router.js';
+import { flags, performanceDisabled } from './config/performanceFlags.js';
+import { createDisplayScope, displayPool } from './state/displayReads.js';
+import { sessionStore } from './state/sessionStore.js';
+import { disposePage } from './utils/pageLifecycle.js';
+import { dismissAllModals } from './utils/modalManager.js';
+import { canLeavePage } from './utils/formDraft.js';
+import { MENUS, currentUser, currentUserRole, currentMenu, setCurrentMenu, handleLogout, commitCurrentMenu, registerNavigationHandler } from './app.js';
+import { renderPage, preloadPage } from './router.js';
+import { requestNavigation } from './perf/metrics.js';
+import { installDiagnostics } from './perf/diagnostics.js';
 import { formatKstDate, formatKstDateWithDay, getTodayKST } from './utils/date.js';
 import { db } from './firebase.js';
 import { doc, getDoc } from 'firebase/firestore';
 import { showConfirmModal } from './utils/modal.js';
+import { loadPartAlerts } from './services/equipmentParts.js';
+import { createReadScope } from './services/readScope.js';
+import { openAction, fingerprint } from './services/actionGateway.js';
 
 // [Phase 3d] 모달 자동 오픈 1회 플래그 — 모듈 레벨에서 유지
 let blockingModalAutoShown = false;
@@ -26,7 +37,7 @@ function registerHashListener() {
     }
     setCurrentMenu(menuId);
     renderLayout();
-    renderPage(menuId);
+
   });
 }
 
@@ -42,9 +53,47 @@ function getUserBadgeText() {
   return `${localPart} (${roleLabel})`;
 }
 
-export function renderLayout() {
-  const visibleMenus = MENUS.filter(m => m.roles.includes(currentUserRole));
+let navigationPending = false;
+let nextMenu = null;
+let shellIdentity = null;
+let shellRefreshTimer;
+registerNavigationHandler(navigate);
+sessionStore.onClear(() => {
+  shellIdentity = null; nextMenu = null; disposePage(); dismissAllModals(); clearTimeout(shellRefreshTimer);
+  window.__blockingItems = null; blockingModalAutoShown = false;
+});
+export async function navigate(menuId) {
+  const menu = MENUS.find(item => item.id === menuId);
+  if (!menu || !menu.roles.includes(currentUserRole)) return;
+  requestNavigation(menuId);
+  nextMenu = menuId;
+  if (navigationPending) return;
+  navigationPending = true;
+  const epoch = sessionStore.epoch;
+  const previous = currentMenu;
+  try {
+    const allowed = await canLeavePage();
+    if (epoch !== sessionStore.epoch || !currentUser) return;
+    if (!allowed) { history.replaceState(null, '', '#' + previous); return; }
+    const target = nextMenu;
+    disposePage(); dismissAllModals();
+    commitCurrentMenu(target);
+    navigationPending = false;
+    renderLayout();
+  } finally { navigationPending = false; nextMenu = null; }
+}
 
+export function renderLayout() {
+  if (navigationPending) return;
+  installDiagnostics();
+  const retained = flags.shell && flags.store && !performanceDisabled();
+  const scope = retained ? createDisplayScope('shell') : createReadScope();
+  const visibleMenus = MENUS.filter(m => m.roles.includes(currentUserRole));
+  if (!visibleMenus.some(menu => menu.id === currentMenu)) commitCurrentMenu('main');
+
+  const identity = currentUser?.uid + ':' + currentUserRole;
+  const reuse = retained && shellIdentity === identity && document.querySelector('.app-wrapper');
+  if (!reuse) {
   document.getElementById('app').innerHTML = `
     <div class="app-wrapper">
       <div class="block-banner" id="blockBanner" style="display:none"></div>
@@ -78,6 +127,9 @@ export function renderLayout() {
   `;
 
   document.querySelectorAll('.nav-btn').forEach(btn => {
+    const prepare = () => preloadPage(btn.dataset.menu).catch(()=>{});
+    btn.addEventListener('pointerenter',prepare);
+    btn.addEventListener('focus',prepare);
     btn.addEventListener('click', () => {
       const menuId = btn.dataset.menu;
       if (menuId === 'settings' && currentUserRole === 'production') {
@@ -86,7 +138,7 @@ export function renderLayout() {
       }
       setCurrentMenu(menuId);
       renderLayout();
-      renderPage(menuId);
+
     });
   });
 
@@ -99,18 +151,63 @@ export function renderLayout() {
     banner.addEventListener('click', handleBannerClick);
   }
 
-  updateSubbar();
-  updateBlockingBanner();
-  updateClosingButton();
+  shellIdentity = identity;
+  } else {
+    const previous = document.getElementById('mainContent');
+    const host = document.createElement('main'); host.id = 'mainContent'; host.className = 'main-content';
+    previous.replaceWith(host);
+    document.querySelectorAll('.nav-btn').forEach(button => button.classList.toggle('active', button.dataset.menu === currentMenu));
+  }
+  updateSubbar(scope);
+  updateEquipmentBadge(scope);
+  updateBlockingBanner(scope);
+  updateClosingButton(scope);
+  if (retained) displayPool.onChange('shell', ({ error } = {}) => {
+    clearTimeout(shellRefreshTimer);
+    if (error) {
+      const button = document.getElementById('closingBtn'); if (button) button.disabled = true;
+      if (error.code === 'permission-denied') {
+        sessionStore.clear(); document.getElementById('app').innerHTML = '<p>접근 권한을 다시 확인하려면 새로고침해주세요.</p>';
+      }
+      return;
+    }
+    shellRefreshTimer = setTimeout(() => {
+      if (!currentUser || !document.getElementById('mainContent')) return;
+      const fresh = createDisplayScope('shell');
+      updateSubbar(fresh); updateEquipmentBadge(fresh); updateBlockingBanner(fresh); updateClosingButton(fresh);
+    }, 150);
+  });
   registerHashListener();
   // 현재 메뉴를 주소에 반영 (직접 접속/새로고침 시)
   if ((window.location.hash || '').replace('#', '') !== currentMenu) {
     window.location.hash = currentMenu;
   }
-  renderPage(currentMenu);
+  renderPage(currentMenu, { scope });
 }
 
-async function updateSubbar() {
+// 설비 부품 메뉴 버튼 배지 — 교체 임박·지남 + 재고 부족 건수
+async function updateEquipmentBadge(scope = createReadScope()) {
+  const btn = document.querySelector('.nav-btn[data-menu="equipment"]');
+  if (!btn) return;
+  try {
+    const today = getTodayKST();
+    const alerts = await scope.once('equipmentAlerts:' + today, () => loadPartAlerts(today, scope));
+    if (!btn.isConnected) return;
+    const stillThere = document.querySelector('.nav-btn[data-menu="equipment"]');
+    if (!stillThere) return;
+    stillThere.querySelector('.nav-count-badge')?.remove();
+    if (alerts.length === 0) return;
+    const span = document.createElement('span');
+    span.className = 'nav-count-badge';
+    span.textContent = String(alerts.length);
+    stillThere.appendChild(span);
+  } catch (err) {
+    console.error('[equipment] 배지 로드 실패:', err);
+  }
+}
+
+async function updateSubbar(scope = createReadScope()) {
+  const content = document.getElementById('mainContent');
   // KST 정확한 오늘 + 18개월 후 표시
   const todayKst = getTodayKST();
   const today = formatKstDateWithDay(todayKst);
@@ -128,13 +225,18 @@ async function updateSubbar() {
     const { db } = await import('./firebase.js');
     const { getDoc, getDocs, doc, collection } = await import('firebase/firestore');
 
-    const eggSnap = await getDoc(doc(db, 'eggStock', 'global'));
+    const [eggSnap, meatTypesSnap, meatStocksSnap, bagSnap, scheduleSnap] = await Promise.all([
+      scope.getDoc(doc(db, 'eggStock', 'global')),
+      scope.getDocs(collection(db, 'meatTypes')),
+      scope.getDocs(collection(db, 'meatStocks')),
+      scope.getDocs(collection(db, 'bagTypes')),
+      scope.getDocs(collection(db, 'schedules')),
+    ]);
+    if (document.getElementById('mainContent') !== content) return;
     const eggQty = eggSnap.exists() ? eggSnap.data().currentQty : 0;
     document.getElementById('subEgg').textContent = `🥚 ${eggQty}개`;
 
-    const meatTypesSnap = await getDocs(collection(db, 'meatTypes'));
     const meatTypes = meatTypesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const meatStocksSnap = await getDocs(collection(db, 'meatStocks'));
     const meatStocks = meatStocksSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.closed);
 
     let lowCount = 0;
@@ -146,14 +248,12 @@ async function updateSubbar() {
       if (total < mt.minimumQtyG) lowCount++;
     });
 
-    const bagSnap = await getDocs(collection(db, 'bagTypes'));
     bagSnap.docs.forEach(d => {
       const b = d.data();
       if (b.minimumQty && (b.currentQty || 0) < b.minimumQty) lowCount++;
     });
     document.getElementById('subLowStock').textContent = `⚠️ 부족재고 ${lowCount}개`;
 
-    const scheduleSnap = await getDocs(collection(db, 'schedules'));
     const pendingSchedules = scheduleSnap.docs
       .map(d => d.data())
       .filter(s => s.status === 'scheduled' && s.date <= todayKst);
@@ -180,14 +280,15 @@ async function updateSubbar() {
  *   - updateMenuWarnings() 호출 (Phase 3c)
  *   - 첫 호출이면 모달 자동 오픈 (Phase 3d)
  */
-async function updateBlockingBanner() {
+async function updateBlockingBanner(scope = createReadScope()) {
   const banner = document.getElementById('blockBanner');
   if (!banner) return;
 
   try {
     const { findActionableClosingDate } = await import('./services/closingChecks.js');
     const today = getTodayKST();
-    const actionable = await findActionableClosingDate(today);
+    const actionable = await findActionableClosingDate(today, null, scope);
+    if (!banner.isConnected) return;
 
     if (!actionable || actionable.date >= today) {
       banner.style.display = 'none';
@@ -211,6 +312,7 @@ async function updateBlockingBanner() {
       showBlockingModal();
     }
   } catch (err) {
+    if (!banner.isConnected) return;
     console.error('배너 업데이트 오류:', err);
     banner.style.display = 'none';
     window.__blockingItems = null;
@@ -382,7 +484,7 @@ function showBlockingModal(options = {}) {
           overlay.remove();
           setCurrentMenu(menuId);
           renderLayout();
-          renderPage(menuId);
+
           resolve(false);
         });
       });
@@ -405,7 +507,7 @@ window.openBlockingModal = showBlockingModal;
  * earliest === today → "오늘 마감"
  * earliest < today → "어제 마감" (실제로는 가장 빠른 미마감 영업일)
  */
-async function updateClosingButton() {
+async function updateClosingButton(scope = createReadScope()) {
   const btn = document.getElementById('closingBtn');
   if (!btn) return;
 
@@ -413,7 +515,8 @@ async function updateClosingButton() {
     const { getEarliestUnclosedWorkday } = await import('./closing.js');
     const { findActionableClosingDate } = await import('./services/closingChecks.js');
     const today = getTodayKST();
-    const actionable = await findActionableClosingDate(today);
+    const actionable = await findActionableClosingDate(today, null, scope);
+    if (!btn.isConnected) return;
 
     if (actionable?.date < today) {
       btn.textContent = actionable.closed ? '미처리 마감해제' : '이전 날짜 마감';
@@ -423,7 +526,8 @@ async function updateClosingButton() {
       return;
     }
 
-    const earliest = await getEarliestUnclosedWorkday();
+    const earliest = await scope.once('earliestUnclosed', () => getEarliestUnclosedWorkday(null, scope));
+    if (!btn.isConnected) return;
 
     if (earliest === null) {
       btn.textContent = '마감해제';
@@ -530,6 +634,7 @@ async function handleLogoutClick() {
  * 전체 담당자(senior+lead+office) 선택 가능.
  */
 async function showCloseConfirmModal(targetDate) {
+  const action = await openAction({ refs: ['closings/' + targetDate], reusableConfirm:true });
   // 기존 모달 제거
   const existing = document.getElementById('closeConfirmOverlay');
   if (existing) existing.remove();
@@ -591,8 +696,20 @@ async function showCloseConfirmModal(targetDate) {
     okBtn.textContent = '처리 중...';
 
     try {
+      await action.confirm();
+      const { assertAutomaticAlertsReady } = await import('./pages/main.js');
+      await assertAutomaticAlertsReady();
+      const { getAllBlockingItems } = await import('./services/closingChecks.js');
+      const latest = await getAllBlockingItems(targetDate);
+      if (latest.totalBlocked > 0) throw new Error('처리하지 않은 항목이 생겼습니다. 메인에서 확인해주세요.');
+      if (latest.totalWarnings > 0 && !await showBlockingModal({ variant: 'warning', data: latest })) {
+        okBtn.disabled = false; okBtn.textContent = '마감'; return;
+      }
+      await action.confirm();
+      const finalBlocks = await getAllBlockingItems(targetDate);
+      if (fingerprint(finalBlocks) !== fingerprint(latest)) throw new Error('마감 확인 중 처리 항목이 변경되었습니다. 다시 확인해주세요.');
       const { closeDate } = await import('./closing.js');
-      await closeDate(targetDate, staffName);
+      await action.submit(()=>closeDate(targetDate, staffName));
       overlay.remove();
       alert(`${dateLabel} 마감 완료`);
       // 라벨/배너 갱신
@@ -612,6 +729,7 @@ async function showCloseConfirmModal(targetDate) {
  * 전체 담당자(senior+lead+office) 선택 가능.
  */
 async function showReleaseConfirmModal(targetDate) {
+  const action = await openAction({ refs: ['closings/' + targetDate], reusableConfirm:true });
   // 기존 모달 제거
   const existing = document.getElementById('releaseConfirmOverlay');
   if (existing) existing.remove();
@@ -683,8 +801,9 @@ async function showReleaseConfirmModal(targetDate) {
     okBtn.textContent = '처리 중...';
 
     try {
+      await action.confirm();
       const { releaseClosing } = await import('./closing.js');
-      await releaseClosing(targetDate, staffName, reason);
+      await action.submit(()=>releaseClosing(targetDate, staffName, reason));
       overlay.remove();
       alert(`${dateLabel} 마감해제 완료`);
       // 라벨/배너 갱신

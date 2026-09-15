@@ -1,30 +1,50 @@
+import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, where, writeBatch
+  collection, getDocsFromServer as getDocs, doc, query, orderBy, getDocFromServer as getDoc, where, writeBatch
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { showConfirmModal } from '../utils/modal.js';
-import Sortable from 'sortablejs';
+import Sortable from '../utils/sortable.js';
+
+import {pageResource} from '../state/pageResources.js';
+import {withReadCommand} from '../services/readCommand.js';
+import {pageRefresh} from '../utils/pageRefresh.js';
+import {getPageContext} from '../utils/pageLifecycle.js';
+const bagResource=pageResource('bag');
+async function runBagCommand(callback,roles=['admin','office']) {
+  const page=getPageContext();
+  try{return await withReadCommand(bagResource,command=>{command.isCurrent=()=>!page||page.isCurrent();return callback(command);},{roles});}
+  catch(error){console.error('[봉투 저장]',error);alert(error.message);}
+}
+async function saveBagStockChange(bag,patch,log,activity,date) {
+  return runBagCommand(async command=>{
+    if(await blockIfClosed(date,command))return false;
+    const target=doc(db,'bagTypes',bag.id),logRef=doc(collection(db,'bagLogs'));
+    await command.transaction(db,async transaction=>{
+      const snap=await transaction.get(target);
+      if(!snap.exists()||Number(snap.data().currentQty||0)!==Number(bag.currentQty||0))throw new Error('다른 작업으로 봉투 재고가 변경되었습니다. 최신 자료를 다시 확인해주세요.');
+      transaction.update(target,patch);transaction.set(logRef,log);await recordActivity(activity,{batch:transaction});
+    },{targets:[target,logRef]});
+    return true;
+  },['admin','office','production']);
+}
 
 let bagTypes = [];
 
-export async function renderBag() {
-  const content = document.getElementById('mainContent');
-  content.innerHTML = `<div style="padding:24px;"><p>봉투 재고 로딩 중...</p></div>`;
-  [bagTypes] = await Promise.all([
-    loadBagTypes(),
-    loadStaffCache(),
-  ]);
-  renderBagLayout();
+export async function renderBag({force=false}={}) {
+  const content=document.getElementById('mainContent');
+  content.innerHTML='<div style="padding:24px;"><p>봉투 재고 로딩 중...</p></div>';
+  const data=await bagResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(bagResource,renderBag)});
+  if(!data||!content.isConnected)return;
+  bagTypes=data.bags;staffCache=data.staff;renderBagLayout();
 }
-
-async function loadBagTypes() {
-  const q = query(collection(db, 'bagTypes'), orderBy('sortOrder'));
-  const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+async function loadBagTypes(scope={getDocs}) {
+  const snap=await scope.getDocs(query(collection(db,'bagTypes'),orderBy('sortOrder')));
+  return snap.docs.map(d=>({id:d.id,...d.data()}));
 }
 
 let selectedBagId = null;
@@ -131,7 +151,8 @@ function initBagSortables() {
   });
 }
 
-async function persistBagOrder(category) {
+async function persistBagOrder(category) {return runBagCommand(command=>persistBagOrderWithCommand(category,command));}
+async function persistBagOrderWithCommand(category,command) {
   const listEl = document.getElementById(category === 'raw' ? 'bagListRaw' : 'bagListFreezeDry');
   if (!listEl) return;
 
@@ -151,15 +172,19 @@ async function persistBagOrder(category) {
   });
 
   try {
-    await batch.commit();
+    await command.commit(batch,{targets:orderedIds.map(id=>doc(db,'bagTypes',id))});
+    if(!command.isCurrent())return;
     const orderMap = new Map(orderedIds.map((id, idx) => [id, offset + idx]));
     bagTypes = bagTypes
       .map(b => orderMap.has(b.id) ? { ...b, sortOrder: orderMap.get(b.id), updatedAt: now } : b)
       .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    await renderBag({force:true});
   } catch (err) {
     console.error('[bag] reorder save failed:', err);
     alert('순번 저장 실패: ' + (err.message || err));
-    bagTypes = await loadBagTypes();
+    const latest=await loadBagTypes();
+    if(!command.isCurrent())return;
+    bagTypes=latest;
     renderBagLayout();
     if (selectedBagId) {
       const selected = bagTypes.find(b => b.id === selectedBagId);
@@ -193,11 +218,12 @@ function bindBagListEvents() {
       const target = bagTypes.find(b => b.id === id);
       const previousActive = target?.active !== false;
       try {
-        await updateDoc(doc(db, 'bagTypes', id), {
+        await withReadCommand(bagResource,async command=>{
+        const page=getPageContext(),batch=writeBatch(db);
+        batch.update(doc(db, 'bagTypes', id), {
           active,
           updatedAt: new Date(),
         });
-        if (target) target.active = active;
         if (previousActive !== active) {
           await recordActivity({
             action: 'bag',
@@ -210,16 +236,20 @@ function bindBagListEvents() {
               bagName: target?.name || null,
               active,
             },
-          });
+          },{batch});
         }
-        renderBagLayout();
+        await command.commit(batch,{targets:[doc(db,'bagTypes',id)]});
+        if (target) target.active = active;
+        if(page&&!page.isCurrent())return;
+        await renderBag({force:true});
         if (selectedBagId) {
           const selected = bagTypes.find(b => b.id === selectedBagId);
           if (selected) await showBagDetail(selected);
         }
+        });
       } catch (err) {
         console.error('[bag] active save failed:', err);
-        alert('활성 상태 저장 중 오류가 발생했습니다.');
+        alert(err.message||'활성 상태 저장 중 오류가 발생했습니다.');
         e.target.checked = !active;
       }
     });
@@ -231,12 +261,14 @@ async function showBagDetail(bag) {
   const canManageBagTypes = currentUserRole === 'admin' || currentUserRole === 'office';
 
   // 입고 이력 로드
-  const q = query(collection(db, 'bagLogs'), orderBy('timestamp', 'desc'));
+  const q = query(collection(db, 'bagLogs'), where('bagTypeId','==',bag.id));
   const snap = await getDocs(q);
   const logs = snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
-    .filter(l => l.bagTypeId === bag.id)
+    .filter(l => l.timestamp !== undefined)
+    .sort((a,b)=>{const ms=v=>v?.toMillis?.()??(v?.seconds? v.seconds*1000:new Date(v).getTime()||0);return ms(b.timestamp)-ms(a.timestamp)||b.id.localeCompare(a.id);})
     .slice(0, 30);
+  if(!detail.isConnected || selectedBagId!==bag.id)return;
 
   detail.innerHTML = `
     <div class="detail-header">
@@ -291,7 +323,7 @@ async function showBagDetail(bag) {
                   <tr>
                     <td>${l.date || '-'}</td>
                     <td>
-                      <span class="tag ${l.type === 'incoming' ? 'tag-raw' : l.type === 'autoDeduct' ? '' : 'tag-cat'}" 
+                      <span class="tag ${l.type === 'incoming' ? 'tag-raw' : l.type === 'autoDeduct' ? '' : 'tag-cat'}"
                             style="${l.type === 'autoDeduct' ? 'background:#f0f0f0;color:#666' : ''}">
                         ${l.type === 'incoming' ? '입고' : l.type === 'autoDeduct' ? '자동차감' : '수동조정'}
                       </span>
@@ -314,7 +346,8 @@ async function showBagDetail(bag) {
   document.getElementById('btnDeleteBag')?.addEventListener('click', () => deleteBagType(bag));
 }
 
-async function loadBagDeleteContext(bag) {
+async function loadBagDeleteContext(bag,scope={getDocs}) {
+  const {getDocs}=scope;
   const [recipeSnap, frozenProductSnap, logSnap] = await Promise.all([
     getDocs(query(collection(db, 'recipes'), where('bagTypeId', '==', bag.id))),
     getDocs(query(collection(db, 'frozenProducts'), where('bagTypeId', '==', bag.id))),
@@ -339,14 +372,15 @@ function getBagDeleteMessage(bag, logCount) {
   return `${bag.name} 봉투를 삭제하시겠습니까?`;
 }
 
-async function deleteBagType(bag) {
+async function deleteBagType(bag) {return runBagCommand(command=>deleteBagTypeWithCommand(bag,command));}
+async function deleteBagTypeWithCommand(bag,command) {
   if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
     alert('봉투 삭제는 대표/사무실 계정만 가능합니다.');
     return;
   }
 
   try {
-    const { linkedRecipes, linkedProducts, logDocs } = await loadBagDeleteContext(bag);
+    const { linkedRecipes, linkedProducts, logDocs } = await loadBagDeleteContext(bag,command);
     const linkedNames = [
       ...linkedRecipes.map(r => r.displayName || r.name || r.id),
       ...linkedProducts.map(p => p.name || p.id),
@@ -365,10 +399,10 @@ async function deleteBagType(bag) {
     });
     if (!confirmed) return;
 
+    if(logDocs.length>498)throw new Error('삭제할 이력이 너무 많습니다. 관리자에게 문의해주세요.');
     const batch = writeBatch(db);
     batch.delete(doc(db, 'bagTypes', bag.id));
     logDocs.forEach(logDoc => batch.delete(doc(db, 'bagLogs', logDoc.id)));
-    await batch.commit();
 
     await recordActivity({
       action: 'bag',
@@ -383,15 +417,16 @@ async function deleteBagType(bag) {
         currentQty: Number(bag.currentQty || 0),
         logCount,
       },
-    });
+    },{batch});
+    await command.commit(batch,{targets:[doc(db,'bagTypes',bag.id)]});
+    if(!command.isCurrent())return;
 
     selectedBagId = null;
-    bagTypes = await loadBagTypes();
-    renderBagLayout();
+    await renderBag({force:true});
     alert('봉투가 삭제되었습니다.');
   } catch (err) {
     console.error('[bag] delete failed:', err);
-    alert('봉투 삭제 중 오류가 발생했습니다.');
+    alert(err.message||'봉투 삭제 중 오류가 발생했습니다.');
   }
 }
 
@@ -431,7 +466,8 @@ function showBagModal(bag) {
     </div>
   `);
 
-  document.getElementById('btnSaveBag').addEventListener('click', async () => {
+  document.getElementById('btnSaveBag').addEventListener('click', () => runBagCommand(async command => {
+    const batch=writeBatch(db);
     if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
       alert('봉투 등록/수정은 대표/사무실 계정만 가능합니다.');
       return;
@@ -457,16 +493,17 @@ function showBagModal(bag) {
     if (isNew) {
       data.currentQty = 0;
       data.createdAt = new Date();
-      await addDoc(collection(db, 'bagTypes'), data);
+      batch.set(target, data);
     } else {
-      await updateDoc(doc(db, 'bagTypes', bag.id), data);
+      batch.update(doc(db, 'bagTypes', bag.id), data);
     }
 
-    bagTypes = await loadBagTypes();
+    await command.commit(batch,{targets:[target]});
+    if(!command.isCurrent())return;
     closeModal();
-    renderBagLayout();
+    await renderBag({force:true});
     alert(isNew ? '봉투 추가 완료!' : '수정 완료!');
-  });
+  }));
 }
 
 function showEditBagModal(bag) {
@@ -513,6 +550,7 @@ function showBagIncomingModal(bag) {
   });
 
   document.getElementById('btnSaveBagIncoming').addEventListener('click', async () => {
+    const page=getPageContext();
     const qty = parseInt(document.getElementById('m_qty').value);
     const date = document.getElementById('m_date').value;
     const staff = document.getElementById('m_staff').value;
@@ -521,16 +559,17 @@ function showBagIncomingModal(bag) {
     if (!qty || !date) { alert('수량과 날짜는 필수입니다.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (await blockIfClosed(date)) return;
+    if(page&&!page.isCurrent())return;
 
     const before = bag.currentQty || 0;
     const after = before + qty;
 
-    await updateDoc(doc(db, 'bagTypes', bag.id), {
+    const patch = {
       currentQty: after,
       updatedAt: new Date(),
-    });
+    };
 
-    await addDoc(collection(db, 'bagLogs'), {
+    const log = {
       date,
       timestamp: new Date(),
       bagTypeId: bag.id,
@@ -541,10 +580,10 @@ function showBagIncomingModal(bag) {
       after,
       staffName: staff,
       note,
-    });
+    };
 
     // [묶음 5A] 사무 로그 발행 — 봉투 입고 (운영자가 메인 화면에서 변동 추적 가능하게)
-    await recordActivity({
+    const activity = {
       action: 'bag',
       subAction: 'incoming',
       date,
@@ -558,15 +597,14 @@ function showBagIncomingModal(bag) {
         after,
         note: note || null,
       },
-    });
+    };
 
-    bagTypes = await loadBagTypes();
+    if(!await saveBagStockChange(bag,patch,log,activity,date))return;
+    if(page&&!page.isCurrent())return;
     closeModal();
-    const updatedBag = bagTypes.find(b => b.id === bag.id);
-    showBagDetail(updatedBag);
-    renderBagList();
-    document.getElementById('bagList').innerHTML = renderBagList();
-    bindBagListEvents();
+    await renderBag({force:true});
+    const updatedBag=bagTypes.find(b=>b.id===bag.id);
+    if(updatedBag)await showBagDetail(updatedBag);
     alert('입고 등록 완료!');
   });
 }
@@ -606,6 +644,7 @@ function showBagAdjustModal(bag) {
   `);
 
   document.getElementById('btnSaveAdjust').addEventListener('click', async () => {
+    const page=getPageContext();
     const type = document.getElementById('m_adjustType').value;
     const qty = parseInt(document.getElementById('m_qty').value);
     const reason = document.getElementById('m_reason').value.trim();
@@ -625,12 +664,12 @@ function showBagAdjustModal(bag) {
       return;
     }
 
-    await updateDoc(doc(db, 'bagTypes', bag.id), {
+    const patch = {
       currentQty: after,
       updatedAt: new Date(),
-    });
+    };
 
-    await addDoc(collection(db, 'bagLogs'), {
+    const log = {
       date: getToday(),
       timestamp: new Date(),
       bagTypeId: bag.id,
@@ -641,10 +680,10 @@ function showBagAdjustModal(bag) {
       after,
       staffName: staff,
       reason,
-    });
-    
+    };
+
     const sign = delta >= 0 ? '+' : '';
-    await recordActivity({
+    const activity = {
       action: 'bag',
       subAction: 'adjust',
       date: today,
@@ -658,14 +697,14 @@ function showBagAdjustModal(bag) {
         after,
         reason,
       },
-    });
+    };
 
-    bagTypes = await loadBagTypes();
+    if(!await saveBagStockChange(bag,patch,log,activity,today))return;
+    if(page&&!page.isCurrent())return;
     closeModal();
-    const updatedBag = bagTypes.find(b => b.id === bag.id);
-    showBagDetail(updatedBag);
-    document.getElementById('bagList').innerHTML = renderBagList();
-    bindBagListEvents();
+    await renderBag({force:true});
+    const updatedBag=bagTypes.find(b=>b.id===bag.id);
+    if(updatedBag)await showBagDetail(updatedBag);
     alert('조정 완료!');
   });
 }
@@ -673,13 +712,6 @@ function showBagAdjustModal(bag) {
 // 유틸
 
 let staffCache = {};
-async function loadStaffCache() {
-  if (Object.keys(staffCache).length > 0) return;
-  for (const key of ['senior', 'lead', 'office']) {
-    const snap = await getDoc(doc(db, 'staffGroups', key));
-    if (snap.exists()) staffCache[key] = snap.data().members || [];
-  }
-}
 
 function getStaffOptions(groups) {
   let options = '';
@@ -714,7 +746,15 @@ function getRoleStaffLabel() {
   return '시스템';
 }
 
-window.closeModal = function() {
+registerCloseModal('bag', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
-};
+});
+
+// Read-only model construction shared by activation and idle preparation.
+async function loadInitialModel(scope) {
+    const keys=['senior','lead','office'];
+    const [bags,...groups]=await Promise.all([loadBagTypes(scope),...keys.map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
+    return {bags,staff:Object.fromEntries(keys.map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
+}
+export function preparePage({cacheOnly=true}={}) { return bagResource.prepare?.('default',loadInitialModel,{cacheOnly}); }

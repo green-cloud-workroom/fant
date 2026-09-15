@@ -1,13 +1,27 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, getDoc, doc, updateDoc, query, orderBy, where, writeBatch, serverTimestamp
+  collection, getDocsFromServer as getDocs, getDocFromServer as getDoc, doc, updateDoc, query, orderBy, where, writeBatch, serverTimestamp
 } from 'firebase/firestore';
 import { currentUser, currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { makeSupplementId, makeSupplementName, makeSupplementSortOrder } from '../utils/supplement.js';
 import { showConfirmModal } from '../utils/modal.js';
-import Sortable from 'sortablejs';
+import Sortable from '../utils/sortable.js';
+import { pageResource } from '../state/pageResources.js';
+import { withReadCommand } from '../services/readCommand.js';
+import { hasDirtyFields, canLeavePage, markFieldsSaved } from '../utils/formDraft.js';
+import { registerPageCleanup, getPageContext } from '../utils/pageLifecycle.js';
+const recipeResource=pageResource('recipe');
+let recipeRefreshTimer;
+const cleanupRecipe=()=>clearTimeout(recipeRefreshTimer);
+async function runRecipeCommand(callback){
+  const page=getPageContext();
+  let committed=false;
+  try{return await withReadCommand(recipeResource,async command=>{command.isCurrent=()=>!page||page.isCurrent();try{return await callback(command);}finally{committed=command.committed;}});}
+  catch(error){console.error('[레시피 저장 검증]',error);alert(committed?'저장은 완료됐지만 후속 화면 갱신을 확인하지 못했습니다. 최신 자료를 다시 확인해주세요.':error.message);error.recipeReported=true;throw error;}
+  finally{if(committed){recipeResource.disconnect();if(!page||page.isCurrent()){const detail=document.querySelector('.recipe-detail-panel');if(!detail||!hasDirtyFields(detail))await renderRecipe({force:true});}}}
+}
 
 let recipes = [];
 let selectedRecipeId = null;
@@ -23,31 +37,46 @@ const PRODUCTION_METHOD_OPTIONS = [
   { methodKey: 'manual', label: '수동' },
 ];
 
-async function loadMeatTypes() {
+async function loadMeatTypes(scope={getDocs}) {
   const q = query(collection(db, 'meatTypes'), orderBy('sortOrder'));
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 // [봉투 연동] 봉투 목록 로드 (drag-drop 순번 유지하려고 sortOrder 정렬, active만)
-async function loadBagTypes() {
+async function loadBagTypes(scope={getDocs}) {
   const q = query(collection(db, 'bagTypes'), orderBy('sortOrder'));
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-export async function renderRecipe() {
+export async function renderRecipe({force=false}={}) {
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>레시피 로딩 중...</p></div>`;
 
-  recipes = await loadRecipes();
-  meatTypes = await loadMeatTypes();
-  bagTypes = await loadBagTypes();  // [봉투 연동] raw 카테고리 봉투 선택용
+  registerPageCleanup(cleanupRecipe);
+  const onChange=({error}={})=>{
+    clearTimeout(recipeRefreshTimer);
+    if(!content.isConnected)return;
+    if(error?.code==='permission-denied'){content.replaceChildren();return;}
+    const detail=content.querySelector('.recipe-detail-panel');
+    if(error||recipeResource.busy||document.querySelector('.modal-overlay')||detail?.contains(document.activeElement)||(detail&&hasDirtyFields(detail))){
+      if(!content.querySelector('[data-recipe-refresh]')){const notice=document.createElement('p');notice.dataset.recipeRefresh='true';notice.textContent=error?'최신 자료를 확인하지 못했습니다. 입력은 유지됩니다.':'다른 작업에서 자료가 변경되었습니다. 작성 중인 입력은 유지됩니다.';const button=document.createElement('button');button.className='btn-secondary';button.textContent='최신 자료 다시 불러오기';button.addEventListener('click',async()=>{if(await canLeavePage())await renderRecipe({force:true});});notice.append(button);content.prepend(notice);}return;
+    }
+    recipeRefreshTimer=setTimeout(()=>renderRecipe().catch(error=>onChange({error})),120);
+  };
+  const data = await recipeResource.load(loadInitialModel,{onChange,force});
+  if (!data||!content.isConnected) return;
+  [recipes, meatTypes, bagTypes] = data;
   renderRecipeLayout();
+  if(selectedRecipeId){const selected=recipes.find(r=>r.id===selectedRecipeId);if(selected)showRecipeDetail(selected);}
 }
 
-async function loadRecipes() {
+function loadInitialModel(scope) { return Promise.all([loadRecipes(scope),loadMeatTypes(scope),loadBagTypes(scope)]); }
+export function preparePage({cacheOnly=true}={}) { return recipeResource.prepare?.('default',loadInitialModel,{cacheOnly}); }
+
+async function loadRecipes(scope={getDocs}) {
   const q = query(collection(db, 'recipes'), orderBy('sortOrder'));
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
@@ -329,7 +358,8 @@ function getSupplementBaseDoc(recipeId, recipeData, unit, unitIndex) {
   };
 }
 
-async function loadRecipeDeleteContext(recipe) {
+async function loadRecipeDeleteContext(recipe, scope={getDocs,getDoc}) {
+  const {getDocs,getDoc}=scope;
   const [productionSnap, scheduleSnap, supplementTypeSnap] = await Promise.all([
     getDocs(query(collection(db, 'productions'), where('recipeId', '==', recipe.id))),
     getDocs(query(collection(db, 'schedules'), where('recipeId', '==', recipe.id))),
@@ -359,7 +389,8 @@ async function loadRecipeDeleteContext(recipe) {
   };
 }
 
-async function loadSupplementDeleteSummaries(recipe, removedUnits) {
+async function loadSupplementDeleteSummaries(recipe, removedUnits, scope={getDocs,getDoc}) {
+  const {getDocs,getDoc}=scope;
   const summaries = [];
   for (const unit of removedUnits) {
     const supplementTypeId = makeSupplementId(recipe.id, unit);
@@ -381,10 +412,10 @@ async function loadSupplementDeleteSummaries(recipe, removedUnits) {
   return summaries;
 }
 
-async function confirmSupplementPresetDeletion(recipe, removedUnits) {
+async function confirmSupplementPresetDeletion(recipe, removedUnits, scope={getDocs,getDoc}) {
   if (removedUnits.length === 0) return true;
 
-  const summaries = await loadSupplementDeleteSummaries(recipe, removedUnits);
+  const summaries = await loadSupplementDeleteSummaries(recipe, removedUnits, scope);
   const hasStock = summaries.some(s => s.stockQty > 0);
 
   if (hasStock && typeof window.openBlockingModal === 'function') {
@@ -415,7 +446,7 @@ async function confirmSupplementPresetDeletion(recipe, removedUnits) {
       : `생산단위 ${s.unit}을 프리셋에서 삭제합니다. 영양제 SKU도 함께 삭제됩니다.`
     ).join('\n')
     : summaries.map(s => `생산단위 ${s.unit}을 프리셋에서 삭제합니다. 영양제 SKU도 함께 삭제됩니다.`).join('\n');
-  return window.confirm(`${message}\n진행하시겠습니까?`) ? summaries : false;
+  return await showConfirmModal({title:'생산단위 삭제',message:`${message}\n진행하시겠습니까?`,confirmText:'삭제',danger:true}) ? summaries : false;
 }
 
 function bindRecipeListEvents() {
@@ -440,12 +471,13 @@ function bindRecipeListEvents() {
       const recipe = recipes.find(r => r.id === id);
       const previousActive = recipe?.active !== false;
       try {
+        await runRecipeCommand(async command=>{
         const batch = writeBatch(db);
         batch.update(doc(db, 'recipes', id), {
           active,
           updatedAt: new Date(),
         });
-        const skuSnap = await getDocs(query(
+        const skuSnap = await command.getDocs(query(
           collection(db, 'supplementTypes'),
           where('recipeId', '==', id)
         ));
@@ -456,7 +488,7 @@ function bindRecipeListEvents() {
             updatedBy: currentUser?.uid || null,
           });
         });
-        await batch.commit();
+        await command.commit(batch,{targets:[doc(db,'recipes',id)]});
         if (recipe) recipe.active = active;
         if (previousActive !== active) {
           await recordActivity({
@@ -472,10 +504,11 @@ function bindRecipeListEvents() {
             },
           });
         }
+        });
       } catch (err) {
         console.error('[recipe] active save failed:', err);
-        alert('활성 상태 저장 중 오류가 발생했습니다.');
-        e.target.checked = !active;
+        if(!err.recipeReported)alert(err.message||'활성 상태 저장 중 오류가 발생했습니다.');
+        e.target.checked = previousActive;
       }
     });
   });
@@ -503,7 +536,8 @@ function initRecipeSortables() {
   });
 }
 
-async function persistRecipeOrder(category) {
+async function persistRecipeOrder(category) {return runRecipeCommand(command=>persistRecipeOrderWithCommand(category,command)).catch(()=>{const list=document.getElementById('recipeList');if(list){list.innerHTML=renderRecipeList();bindRecipeListEvents();initRecipeSortables();}});}
+async function persistRecipeOrderWithCommand(category, command) {
   const rawItems = Array.from(document.getElementById('recipeListRaw')?.querySelectorAll('.recipe-list-item') || []);
   const freezeDryItems = Array.from(document.getElementById('recipeListFreezeDry')?.querySelectorAll('.recipe-list-item') || []);
   const ordered = [
@@ -522,7 +556,7 @@ async function persistRecipeOrder(category) {
   const affectedRecipes = recipes.filter(recipe => sortMap.has(recipe.id));
   const supplementSnapshots = await Promise.all(affectedRecipes.map(async recipe => ({
     recipe,
-    snap: await getDocs(query(collection(db, 'supplementTypes'), where('recipeId', '==', recipe.id))),
+    snap: await command.getDocs(query(collection(db, 'supplementTypes'), where('recipeId', '==', recipe.id))),
   })));
   let opCount = 0;
 
@@ -555,19 +589,14 @@ async function persistRecipeOrder(category) {
   }
 
   try {
-    await batch.commit();
+    await command.commit(batch,{targets:ordered.map(row=>doc(db,'recipes',row.id))});
+    if(!command.isCurrent())return;
     recipes = recipes
       .map(recipe => sortMap.has(recipe.id) ? { ...recipe, sortOrder: sortMap.get(recipe.id), updatedAt: now } : recipe)
       .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   } catch (err) {
     console.error('[recipe] reorder save failed:', err);
-    alert('순번 저장 실패: ' + (err.message || err));
-    recipes = await loadRecipes();
-    renderRecipeLayout();
-    if (selectedRecipeId) {
-      const selected = recipes.find(r => r.id === selectedRecipeId);
-      if (selected) showRecipeDetail(selected);
-    }
+    throw err;
   }
 }
 
@@ -762,6 +791,7 @@ function showRecipeDetail(recipe) {
 
   // 삭제
   document.getElementById('btnDeleteRecipe')?.addEventListener('click', () => deleteRecipe(recipe));
+  markFieldsSaved(detail,{extra:()=>currentUnitPresets});
 }
 
 function getRecipeDeleteMessage(recipe, supplementSummaries) {
@@ -784,7 +814,8 @@ function getRecipeDeleteMessage(recipe, supplementSummaries) {
   return `${getDisplayName(recipe)} 레시피를 삭제하시겠습니까?`;
 }
 
-async function deleteRecipe(recipe) {
+async function deleteRecipe(recipe) {return runRecipeCommand(command=>deleteRecipeWithCommand(recipe,command)).catch(()=>{});}
+async function deleteRecipeWithCommand(recipe, command) {
   if (!recipe?.id) return;
   if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
     alert('레시피 삭제는 대표/사무실 계정만 가능합니다.');
@@ -792,7 +823,7 @@ async function deleteRecipe(recipe) {
   }
 
   try {
-    const context = await loadRecipeDeleteContext(recipe);
+    const context = await loadRecipeDeleteContext(recipe,command);
     if (context.productionCount > 0) {
       alert(`이 레시피로 만든 생산 기록이 ${context.productionCount}건 있어 삭제할 수 없습니다.\n비활성화로 처리해주세요.`);
       return;
@@ -821,7 +852,7 @@ async function deleteRecipe(recipe) {
         batch.delete(doc(db, 'supplementLogs', logDoc.id));
       });
     });
-    await batch.commit();
+    await command.commit(batch,{targets:[doc(db,'recipes',recipe.id)]});
 
     const supplementSkuCount = context.supplementSummaries.length;
     const supplementTotalQty = context.supplementSummaries.reduce((sum, s) => sum + s.stockQty, 0);
@@ -842,13 +873,16 @@ async function deleteRecipe(recipe) {
       },
     });
 
+    if(!command.isCurrent())return;
     selectedRecipeId = null;
-    recipes = await loadRecipes();
+    const latestRecipes = await loadRecipes();
+    if(!command.isCurrent())return;
+    recipes = latestRecipes;
     renderRecipeLayout();
     alert('레시피가 삭제되었습니다.');
   } catch (err) {
     console.error('[recipe] delete failed:', err);
-    alert('레시피 삭제 중 오류가 발생했습니다.');
+    alert(err.message||'레시피 삭제 중 오류가 발생했습니다.');
   }
 }
 
@@ -1090,7 +1124,9 @@ function getIngredients() {
   }).filter(ing => ing.name);
 }
 
-async function saveRecipe(id) {
+async function saveRecipe(id) {return runRecipeCommand(command=>saveRecipeWithCommand(id,command)).catch(()=>{});}
+async function saveRecipeWithCommand(id, command) {
+  const {getDoc}=command;
   if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
     alert('레시피 저장은 대표/사무실 계정만 가능합니다.');
     return;
@@ -1162,7 +1198,7 @@ async function saveRecipe(id) {
   try {
     if (id) {
       const removedUnits = previousUnitPresets.filter(unit => !supplementUnits.includes(unit));
-      const deleteSummaries = await confirmSupplementPresetDeletion({ id, ...existingRecipe }, removedUnits);
+      const deleteSummaries = await confirmSupplementPresetDeletion({ id, ...existingRecipe }, removedUnits,command);
       if (deleteSummaries === false) {
         currentUnitPresets = [...previousUnitPresets];
         refreshUnitPresetChips();
@@ -1198,7 +1234,7 @@ async function saveRecipe(id) {
             createdBy: currentUser?.uid || null,
           });
         }
-        if (!previousUnitPresets.includes(unit) || !skuState?.hasStock) {
+        if (!skuState?.hasStock) {
           batch.set(doc(db, 'supplementStock', supplementTypeId), {
             id: supplementTypeId,
             supplementTypeId,
@@ -1218,7 +1254,8 @@ async function saveRecipe(id) {
         });
       });
 
-      await batch.commit();
+      await command.commit(batch,{targets:[doc(db,'recipes',id)]});
+      if(!command.isCurrent())return;
       selectedRecipeId = id;
     } else {
       data.createdAt = new Date();
@@ -1244,12 +1281,13 @@ async function saveRecipe(id) {
           updatedAt: new Date(),
         });
       });
-      await batch.commit();
+      await command.commit(batch,{targets:[ref]});
+      if(!command.isCurrent())return;
       selectedRecipeId = ref.id;
     }
   } catch (err) {
     console.error('[recipe] save failed:', err);
-    alert('레시피 저장 중 오류가 발생했습니다.');
+    alert(err.message||'레시피 저장 중 오류가 발생했습니다.');
     return;
   }
 
@@ -1272,7 +1310,9 @@ async function saveRecipe(id) {
     }
   }
 
-  recipes = await loadRecipes();
+  const latestRecipes = await loadRecipes();
+  if(!command.isCurrent())return;
+  recipes = latestRecipes;
   renderRecipeLayout();
 
   // 저장 후 해당 레시피 선택 상태 유지

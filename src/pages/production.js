@@ -1,7 +1,7 @@
+import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, updateDoc, query, orderBy, getDoc, where, writeBatch,
-  runTransaction, serverTimestamp
+  collection, getDocsFromServer as getDocs, doc, query, orderBy, getDocFromServer as getDoc, where, serverTimestamp
 } from 'firebase/firestore';
 import { getTodayKST as getToday, getHolidayInfo, getHolidayInfoCache } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
@@ -10,7 +10,21 @@ import { showConfirmModal } from '../utils/modal.js';
 import { makeSupplementId } from '../utils/supplement.js';
 import { formatIngredientQtyValue, round2 } from '../utils/number.js';
 import { buildChickenOrderText } from '../utils/orderCopy.js';
-import Sortable from 'sortablejs';
+import Sortable from '../utils/sortable.js';
+import {pageResource} from '../state/pageResources.js';
+import {withReadWorkflow} from '../services/readCommand.js';
+import {commandWrites} from '../services/commandWrites.js';
+import {pageRefresh} from '../utils/pageRefresh.js';
+import {getPageContext,registerPageCleanup} from '../utils/pageLifecycle.js';
+import {canLeavePage,markFieldsSaved} from '../utils/formDraft.js';
+const productionResource=pageResource('production');
+let productionResourceDate='';
+async function runProductionCommand(callback) {
+  const page=getPageContext();let committed=false;
+  try{return await withReadWorkflow(productionResource,async command=>{command.isCurrent=()=>!page||page.isCurrent();try{return await callback(command);}finally{committed=command.committed;}});}
+  catch(error){console.error('[생산 저장]',error);alert((committed?'일부 저장이 완료되었습니다. 중복 저장하지 말고 최신 자료를 확인해주세요. ':'')+error.message);}
+  finally{if(committed && (!page||page.isCurrent()) && !productionResource.blocked)await renderProduction({force:true});}
+}
 
 let recipes = [];
 let productions = [];
@@ -76,9 +90,10 @@ function normalizeProductionMethods(methods) {
 async function loadConversionHistory(recipeId) {
   if (!recipeId) return [];
   if (conversionHistoryCache.has(recipeId)) return conversionHistoryCache.get(recipeId);
+  const page=getPageContext();
   const snap = await getDocs(collection(db, 'recipes', recipeId, 'conversionHistory'));
   const history = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  conversionHistoryCache.set(recipeId, history);
+  if(!page||page.isCurrent())conversionHistoryCache.set(recipeId, history);
   return history;
 }
 
@@ -132,7 +147,8 @@ function getSupplementTypeError(code, supplementName) {
   return err;
 }
 
-async function calculateSupplementRefunds(productionId) {
+async function calculateSupplementRefunds(productionId,scope={getDocs}) {
+  const {getDocs}=scope;
   const logQuery = query(
     collection(db, 'supplementLogs'),
     where('relatedProductionId', '==', productionId)
@@ -164,27 +180,38 @@ async function calculateSupplementRefunds(productionId) {
   return refunds;
 }
 
-export async function renderProduction() {
-  const content = document.getElementById('mainContent');
+export async function renderProduction({force=false}={}) {
+  const content = document.getElementById('mainContent'),date=selectedDate;
   content.innerHTML = `<div style="padding:24px;"><p>생산 입력 로딩 중...</p></div>`;
-  await loadStaffCache();
-  recipes = await loadRecipes();
-  productions = await loadProductions(selectedDate);
+  force ||= !productionResource.prepare && productionResourceDate!==date;productionResourceDate=date;
+  conversionHistoryCache.clear();registerPageCleanup(()=>conversionHistoryCache.clear());
+  const data=await productionResource.load(scope=>loadInitialModel(scope, date),{key:date,force,onChange:pageRefresh(productionResource,renderProduction,{draftSelector:'#productionForm'})});
+  if(!data||!content.isConnected||date!==selectedDate)return;
+  recipes=data.recipes;productions=data.productions;staffCache=data.staff;
   renderProductionLayout();
+  const selected=productions.find(p=>p.id===selectedProductionId);if(selected)await showProductionForm(selected);
 }
 
-async function loadRecipes() {
+async function loadRecipes(scope={getDocs}) {
   const q = query(collection(db, 'recipes'), orderBy('sortOrder'));
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.active !== false);
 }
 
-async function loadProductions(date) {
-  const q = query(collection(db, 'productions'), orderBy('sortOrder'));
-  const snap = await getDocs(q);
+async function loadProductions(date,scope={getDocs}) {
+  // Date equality needs no new composite index. Keep the former orderBy's
+  // exclusion of missing sortOrder fields and sort only this day's cards.
+  const q = query(collection(db, 'productions'), where('date', '==', date));
+  const snap = await scope.getDocs(q);
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
-    .filter(p => p.date === date && p.status !== 'deleted');
+    .filter(p => p.status !== 'deleted' && p.sortOrder !== undefined)
+    .sort((a, b) => {
+      if (a.sortOrder === b.sortOrder) return 0;
+      if (a.sortOrder === null) return -1;
+      if (b.sortOrder === null) return 1;
+      return a.sortOrder - b.sortOrder;
+    });
 }
 
 // [묶음 4A] 회차/차수 재계산 (B안: round + batchNo 둘 다 DB 저장)
@@ -216,20 +243,15 @@ function recalcRoundsAndBatches(list) {
   return updates;
 }
 
-async function applyRoundsAndBatches(date) {
-  productions = await loadProductions(date);
-  const updates = recalcRoundsAndBatches(productions);
-  if (updates.length > 0) {
-    const batch = writeBatch(db);
-    updates.forEach(u => {
-      batch.update(doc(db, 'productions', u.id), {
-        round: u.round,
-        batchNo: u.batchNo,
-      });
-    });
-    await batch.commit();
-    productions = await loadProductions(date);
+async function applyRoundsAndBatches(date,command) {
+  let rows=await loadProductions(date,command);
+  const updates=recalcRoundsAndBatches(rows);
+  if(updates.length){
+    const batch=commandWrites(command).writeBatch(db);
+    updates.forEach(u=>batch.update(doc(db,'productions',u.id),{round:u.round,batchNo:u.batchNo}));
+    await batch.commit();rows=await loadProductions(date,command);
   }
+  if(command.isCurrent()&&date===selectedDate)productions=rows;
 }
 
 // [묶음 4A] 회차/차수 표시 헬퍼
@@ -277,12 +299,10 @@ function renderProductionLayout() {
 
   // 날짜 변경
   document.getElementById('productionDate').addEventListener('change', async (e) => {
-    selectedDate = e.target.value;
-    productions = await loadProductions(selectedDate);
-    refreshProductionCardsView();
-    document.getElementById('holidayBadge').innerHTML = renderHolidayBadge(selectedDate);
-    document.getElementById('holidayMonthList').innerHTML = renderHolidaysOfMonth(selectedDate);
-    await refreshProductionFormConversion?.();
+    const page=getPageContext(),input=e.target,next=input.value,previous=selectedDate;
+    input.disabled=true;
+    try{if(!await canLeavePage()){input.value=previous;return;}if(page&&!page.isCurrent())return;selectedDate=next;selectedProductionId=null;await renderProduction({force:true});}
+    finally{input.disabled=false;}
   });
 
   document.getElementById('btnNewProduction')?.addEventListener('click', () => showProductionForm(null));
@@ -418,19 +438,20 @@ function bindCardEvents() {
   });
 
   document.querySelectorAll('.card-del').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
+    btn.addEventListener('click', e => {
+      e.stopPropagation();return runProductionCommand(async command=>{
+      const {runTransaction}=commandWrites(command);
       if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
         alert('생산 카드 삭제는 대표/사무실 계정만 가능합니다.');
         return;
       }
       const __c = await showConfirmModal({ title:'삭제 확인', message:'정말 삭제하시겠습니까?', confirmText:'삭제', danger:true }); if (!__c) return;
-      if (await blockIfClosed(selectedDate)) return;
+      if (await blockIfClosed(selectedDate,command)) return;
       const deletedId = btn.dataset.id;
       const targetProduction = productions.find(p => p.id === deletedId);
       let refunds = [];
       try {
-        refunds = await calculateSupplementRefunds(deletedId);
+        refunds = await calculateSupplementRefunds(deletedId,command);
       } catch (err) {
         if (err.message === 'INVALID_SUPPLEMENT_LOG_STATE') {
           console.error('[production] invalid supplement log state:', err);
@@ -441,9 +462,10 @@ function bindCardEvents() {
       }
 
       await runTransaction(db, async (transaction) => {
-        for (const refund of refunds) {
+        const stocks=await Promise.all(refunds.map(refund=>transaction.get(doc(db,'supplementStock',refund.supplementTypeId))));
+        for (const [index,refund] of refunds.entries()) {
           const stockRef = doc(db, 'supplementStock', refund.supplementTypeId);
-          const stockSnap = await transaction.get(stockRef);
+          const stockSnap = stocks[index];
           if (!stockSnap.exists()) {
             console.warn('[production] supplement stock missing during delete refund:', refund.supplementTypeId);
             continue;
@@ -475,12 +497,14 @@ function bindCardEvents() {
         });
       });
       // [묶음 4A] 삭제 후 회차/차수 재정렬
-      await applyRoundsAndBatches(selectedDate);
+      await applyRoundsAndBatches(selectedDate,command);
+      if(!command.isCurrent())return;
       refreshProductionCardsView();
       if (selectedProductionId === deletedId) {
         selectedProductionId = null;
         document.getElementById('productionForm').innerHTML = `<div style="color:#aaa;font-size:12px;text-align:center;padding:20px;">카드를 선택하거나 아래에서 새 생산을 추가하세요</div>`;
       }
+      });
     });
   });
 }
@@ -508,7 +532,10 @@ function initProductionCardsSortable() {
   });
 }
 
-async function persistProductionCardOrder() {
+async function persistProductionCardOrder() {return runProductionCommand(command=>persistProductionCardOrderWithCommand(command));}
+async function persistProductionCardOrderWithCommand(command) {
+  const {writeBatch}=commandWrites(command);
+  if(await blockIfClosed(selectedDate,command))return;
   const containerEl = document.getElementById('productionCards');
   if (!containerEl) return;
 
@@ -519,6 +546,7 @@ async function persistProductionCardOrder() {
     .sort((a, b) => a - b);
 
   if (items.length !== currentSortOrders.length) {
+    if(!command.isCurrent())return;
     refreshProductionCardsView();
     return;
   }
@@ -533,12 +561,16 @@ async function persistProductionCardOrder() {
 
   try {
     await batch.commit();
-    await applyRoundsAndBatches(selectedDate);
+    await applyRoundsAndBatches(selectedDate,command);
+    if(!command.isCurrent())return;
     refreshProductionCardsView();
   } catch (err) {
     console.error('[production] card reorder failed:', err);
     alert('카드 순서 저장 실패: ' + err.message);
-    productions = await loadProductions(selectedDate);
+    const rows=await loadProductions(selectedDate);
+    if(!command.isCurrent())return;
+    productions=rows;
+    if(!command.isCurrent())return;
     refreshProductionCardsView();
   }
 }
@@ -822,7 +854,7 @@ async function showProductionForm(production) {
   recipeSelect.addEventListener('change', async () => {
     const recipe = recipes.find(r => r.id === recipeSelect.value);
     renderProductionUnitControl(recipe);
-    await renderProductionConversionControl(recipe);
+    renderProductionConversionControl(recipe);
     updateIngredients();
   });
   qtySelect.addEventListener('change', handleQtyModeChange);
@@ -835,10 +867,12 @@ async function showProductionForm(production) {
   });
 
   renderProductionUnitControl(recipes.find(r => r.id === recipeSelect.value));
-  await renderProductionConversionControl(recipes.find(r => r.id === recipeSelect.value));
+  renderProductionConversionControl(recipes.find(r => r.id === recipeSelect.value));
   updateIngredients();
+  markFieldsSaved(form);
 
-  document.getElementById('btnSaveProduction')?.addEventListener('click', async () => {
+  document.getElementById('btnSaveProduction')?.addEventListener('click', () => runProductionCommand(async command => {
+    const {runTransaction,updateDoc}=commandWrites(command);
     if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
       alert('생산 입력은 대표/사무실 계정만 가능합니다.');
       return;
@@ -858,7 +892,7 @@ async function showProductionForm(production) {
       return;
     }
     if (!qty || qty <= 0) { alert('레시피와 생산단위는 필수입니다.'); return; }
-    if (await blockIfClosed(selectedDate)) return;
+    if (await blockIfClosed(selectedDate,command)) return;
 
     // [spec_v27] 입력 시점엔 방식/실제박스를 받지 않음. 방식·판수·실제박스는 메인 생산완료(제품입고) 모달에서 기록.
 
@@ -1139,10 +1173,11 @@ async function showProductionForm(production) {
 
     // [묶음 4A] 저장 후 같은 날 productions의 round/batchNo 일괄 재계산
     // 수량 수정으로 동일 수량 묶음이 새로 생기거나 깨지는 경우도 자동 반영
-    await applyRoundsAndBatches(selectedDate);
+    await applyRoundsAndBatches(selectedDate,command);
+    if(!command.isCurrent())return;
     refreshProductionCardsView();
     alert(isNew ? '저장 완료!' : '수정 완료!');
-  });
+  }));
 }
 
 function checkShortages(recipe, qty) {
@@ -1309,13 +1344,6 @@ function showBigViewModal() {
 // 유틸
 
 let staffCache = {};
-async function loadStaffCache() {
-  if (Object.keys(staffCache).length > 0) return;
-  for (const key of ['senior', 'lead', 'office']) {
-    const snap = await getDoc(doc(db, 'staffGroups', key));
-    if (snap.exists()) staffCache[key] = snap.data().members || [];
-  }
-}
 
 function getStaffOptions(groups) {
   let options = '';
@@ -1343,7 +1371,15 @@ function showModal(html) {
   });
 }
 
-window.closeModal = function() {
+registerCloseModal('production', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
-};
+});
+
+// Read-only model construction shared by activation and idle preparation.
+async function loadInitialModel(scope, date) {
+    const keys=['senior','lead','office'];
+    const [recipes,productions,...groups]=await Promise.all([loadRecipes(scope),loadProductions(date,scope),...keys.map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
+    return {recipes,productions,staff:Object.fromEntries(keys.map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
+}
+export function preparePage({cacheOnly=true,date=getToday()}={}) { return productionResource.prepare?.(date,scope=>loadInitialModel(scope,date),{cacheOnly}); }

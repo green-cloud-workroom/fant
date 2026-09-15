@@ -1,6 +1,7 @@
+import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, addDoc, updateDoc, query, orderBy, getDoc, writeBatch
+  collection, getDocsFromServer as getDocs, doc, addDoc, updateDoc, query, orderBy, getDocFromServer as getDoc, writeBatch
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
@@ -9,57 +10,53 @@ import { currentUserRole } from '../app.js';
 import { round2, breadToSilicon, breadToFrozenPan } from '../utils/number.js';
 import { showPromptModal, showConfirmModal } from '../utils/modal.js';
 import { recordActivity } from '../services/activityLogs.js';
-import { renderFreezeOpInTab } from './freezeOp.js';
+import { renderFreezeOpInTab,disposeFreezeOpTab } from './freezeOp.js';
 
 
 let freezeDryRecipes = [];
 let activeTab = 'breadPan';  // 'breadPan' | 'frozenPan' — 묶음 3D 추가
 
-export async function renderFrozenPan() {
-  const content = document.getElementById('mainContent');
-  content.innerHTML = `<div style="padding:24px;"><p>동결판 재고 로딩 중...</p></div>`;
-  freezeDryRecipes = await getActiveFreezeDryRecipes();
-  await loadStaffCache();
-  activeTab = 'breadPan';  // 진입 시 default 탭 리셋
-  await refreshFrozenPanLayout();
+export async function renderFrozenPan({force=false}={}) {
+ activeTab='breadPan';
+ document.getElementById('mainContent').innerHTML='<p style="padding:24px">동결판 재고 로딩 중...</p>';
+ await refreshFrozenPanLayout({force});
 }
 
-async function loadFrozenPanRows() {
+async function loadFrozenPanRows(scope={getDocs,getDoc}) {
   const q = query(collection(db, 'frozenPanStock'), orderBy('date', 'desc'));
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-async function loadFrozenPanLots() {
-  const snap = await getDocs(collection(db, 'frozenPanLots'));
+async function loadFrozenPanLots(scope={getDocs,getDoc}) {
+  const snap = await scope.getDocs(collection(db, 'frozenPanLots'));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }))
     .filter(l => !l.closed && Number(l.remaining || 0) > 0);
 }
 
-async function loadBreadPanLots() {
-  const snap = await getDocs(collection(db, 'breadPanLots'));
+async function loadBreadPanLots(scope={getDocs,getDoc}) {
+  const snap = await scope.getDocs(collection(db, 'breadPanLots'));
   return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(l => !l.closed);
 }
 
-async function loadBreadPanLogs() {
+async function loadBreadPanLogs(scope={getDocs,getDoc}) {
   const q = query(collection(db, 'breadPanLogs'), orderBy('timestamp', 'desc'));
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-async function loadFrozenPanLogs() {
+async function loadFrozenPanLogs(scope={getDocs,getDoc}) {
   const q = query(collection(db, 'frozenPanLogs'), orderBy('timestamp', 'desc'));
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-async function refreshFrozenPanLayout() {
-  const rows = await loadFrozenPanRows();
-  const lots = await loadFrozenPanLots();
-  const breadPanLots = await loadBreadPanLots();
-  const breadPanLogs = await loadBreadPanLogs();
-  const frozenPanLogs = await loadFrozenPanLogs();
-  renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPanLogs);
+async function refreshFrozenPanLayout({force=false}={}) {
+ const content=document.getElementById('mainContent');
+ const data=await frozenPanResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(frozenPanResource,refreshFrozenPanLayout)});
+ if(!data||!content?.isConnected)return;
+ freezeDryRecipes=data.recipes;staffCache=data.staff;
+ renderFrozenPanLayout(data.rows,data.lots,data.breadPanLots,data.breadPanLogs,data.frozenPanLogs);
 }
 
 function renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPanLogs) {
@@ -147,12 +144,17 @@ function renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPan
   });
 
   // 탭별 이벤트 바인딩
+  if(activeTab!=='freezeOp')disposeFreezeOpTab();
   if (activeTab === 'breadPan') {
     bindBreadPanTabEvents(rows, lots);
   } else if (activeTab === 'frozenPan') {
     bindFrozenPanTabEvents(rows, lots);
   } else {
-    renderFreezeOpInTab();
+    const page=getPageContext();
+    renderFreezeOpInTab().catch(error=>{
+      const host=document.getElementById('freezeOpContent');
+      if(host&&(!page||page.isCurrent())){host.textContent='동결가동 자료를 불러오지 못했습니다. 탭을 다시 선택해주세요.';console.error(error);}
+    });
   }
 }
 
@@ -422,12 +424,18 @@ function bindFrozenPanTabEvents(rows, lots) {
   // 발주 삭제 버튼
   document.querySelectorAll('.btn-order-delete').forEach(btn => {
     btn.addEventListener('click', async () => {
+ return runPageCommand(frozenPanResource,async command=>{
+  const {updateDoc}=commandWrites(command);
+
       const __c = await showConfirmModal({ title:'발주 행 삭제', message:'발주 행을 삭제하시겠습니까?', confirmText:'삭제', danger:true }); if (!__c) return;
       const targetRow = rows.find(r => r.id === btn.dataset.id);
-      if (targetRow && await blockIfClosed(targetRow.date)) return;
+      if (targetRow && await blockIfClosed(targetRow.date, command)) return;
       await updateDoc(doc(db, 'frozenPanStock', btn.dataset.id), { status: 'cancelled' });
+      if(!command.isCurrent())return;
       await refreshFrozenPanLayout();
-    });
+
+ },{roles:['admin','office']});
+});
   });
 
   // 발주 취소 버튼
@@ -500,6 +508,9 @@ function showTenderInModal() {
   `);
 
   document.getElementById('btnSaveTenderIn').addEventListener('click', async () => {
+ return runPageCommand(frozenPanResource,async command=>{
+  const {addDoc,updateDoc}=commandWrites(command);
+
     const productName = document.getElementById('m_recipe').value.trim();
     const qty = parseInt(document.getElementById('m_qty').value) || 0;
     const date = document.getElementById('m_date').value;
@@ -511,7 +522,7 @@ function showTenderInModal() {
     if (!date) { alert('날짜를 입력해주세요.'); return; }
     if (!staffName) { alert('담당자를 선택해주세요.'); return; }
 
-    if (await blockIfClosed(date)) return;
+    if (await blockIfClosed(date, command)) return;
 
     const now = new Date();
 
@@ -574,7 +585,9 @@ function showTenderInModal() {
         }],
       });
 
+      if(!command.isCurrent())return;
       closeModal();
+      if(!command.isCurrent())return;
       await refreshFrozenPanLayout();
       alert('텐더동결 입고 완료!');
 
@@ -582,7 +595,9 @@ function showTenderInModal() {
       console.error('showTenderInModal 저장 에러:', err);
       alert(`저장 중 오류가 발생했습니다.\n\n${err.message}`);
     }
-  });
+
+ },{roles:['admin','office','production']});
+});
 }
 
 function showBreadPanIncomingModal() {
@@ -632,6 +647,9 @@ function showBreadPanIncomingModal() {
   `);
 
   document.getElementById('btnSaveBreadPanIncoming').addEventListener('click', async () => {
+ return runPageCommand(frozenPanResource,async command=>{
+  const {addDoc}=commandWrites(command);
+
     const productName = document.getElementById('m_recipe').value.trim();
     const qty = round2(parseFloat(document.getElementById('m_qty').value) || 0);
     const date = document.getElementById('m_date').value;
@@ -643,7 +661,7 @@ function showBreadPanIncomingModal() {
     if (!date) { alert('날짜를 입력해주세요.'); return; }
     if (!staffName) { alert('담당자를 선택해주세요.'); return; }
 
-    if (await blockIfClosed(date)) return;
+    if (await blockIfClosed(date, command)) return;
 
     const now = new Date();
 
@@ -682,10 +700,14 @@ function showBreadPanIncomingModal() {
       timestamp: now,
     });
 
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     await refreshFrozenPanLayout();
     alert('빵판 입고 완료!');
-  });
+
+ },{roles:['admin','office','production']});
+});
 }
 
 async function showBreadPanAdjustModal() {
@@ -747,6 +769,9 @@ async function showBreadPanAdjustModal() {
   `);
 
   document.getElementById('btnSaveBreadPanAdjust').addEventListener('click', async () => {
+ return runPageCommand(frozenPanResource,async command=>{
+  const {getDoc,addDoc,updateDoc}=commandWrites(command);
+
     const lotId = document.getElementById('m_lot').value;
     const adjustType = document.getElementById('m_adjustType').value;
     const qtyInput = round2(parseFloat(document.getElementById('m_qty').value) || 0);
@@ -767,7 +792,7 @@ async function showBreadPanAdjustModal() {
     const lot = lotSnap.data();
     const lotDate = lot.date;
 
-    if (await blockIfClosed(getToday())) return;
+    if (await blockIfClosed(getToday(), command)) return;
 
     const before = lot.remaining || 0;
     const after = round2(before + delta);
@@ -810,10 +835,14 @@ async function showBreadPanAdjustModal() {
       timestamp: now,
     });
 
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     await refreshFrozenPanLayout();
     alert('수동 조정 완료!');
-  });
+
+ },{roles:['admin','office','production']});
+});
 }
 
 async function showFrozenPanAdjustModal() {
@@ -873,6 +902,9 @@ async function showFrozenPanAdjustModal() {
   `);
 
   document.getElementById('btnSaveFrozenPanAdjust').addEventListener('click', async () => {
+ return runPageCommand(frozenPanResource,async command=>{
+  const {getDoc,writeBatch}=commandWrites(command);
+
     const lotId = document.getElementById('m_lot').value;
     const adjustType = document.getElementById('m_adjustType').value;
     const qtyInput = parseInt(document.getElementById('m_qty').value, 10);
@@ -889,7 +921,7 @@ async function showFrozenPanAdjustModal() {
     if (!lotSnap.exists()) { alert('lot을 찾을 수 없습니다.'); return; }
 
     const lot = lotSnap.data();
-    if (await blockIfClosed(getToday())) return;
+    if (await blockIfClosed(getToday(), command)) return;
 
     const before = Number(lot.remaining || 0);
     const after = before + delta;
@@ -926,10 +958,14 @@ async function showFrozenPanAdjustModal() {
     });
 
     await batch.commit();
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     await refreshFrozenPanLayout();
     alert('수동 조정 완료!');
-  });
+
+ },{roles:['admin','office','production']});
+});
 }
 
 function renderPanRow(r) {
@@ -1052,6 +1088,9 @@ async function showWorkRowModal(rows, lots) {
 }
 
 async function handleWorkRowSave() {
+ return runPageCommand(frozenPanResource,async command=>{
+  const {addDoc,updateDoc}=commandWrites(command);
+
   const date = document.getElementById('m_date').value;
   const staffName = document.getElementById('m_staff').value;
   const note = document.getElementById('m_note').value.trim();
@@ -1080,7 +1119,7 @@ async function handleWorkRowSave() {
   }
 
   // 2. 마감 가드
-  if (await blockIfClosed(date)) return;
+  if (await blockIfClosed(date, command)) return;
 
   // 3. 빵판 lot 재로드 (저장 직전 최신 잔량 확인)
   const allBreadLots = await loadBreadPanLots();
@@ -1227,7 +1266,9 @@ async function handleWorkRowSave() {
       items: ledgerItems,
     });
 
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     await refreshFrozenPanLayout();
     alert('전처리 작업 저장 완료!');
 
@@ -1235,6 +1276,8 @@ async function handleWorkRowSave() {
     console.error('handleWorkRowSave 에러:', err);
     alert(`저장 중 오류가 발생했습니다.\n\n${err.message}\n\n일부 데이터가 저장되었을 수 있으니 화면을 새로고침해서 확인해주세요.`);
   }
+
+ },{roles:['admin','office','production']});
 }
 
 function renderWorkItemRow(breadPanRecipes, productSummary) {
@@ -1376,6 +1419,9 @@ function recalcRow(item) {
 
 
 async function confirmOrder(row, lots, staff) {
+ return runPageCommand(frozenPanResource,async command=>{
+  const {addDoc,updateDoc,recordActivity}=commandWrites(command);
+
   const items = row.items || [];
 
   // 발주 확인 시점 재고 재검증 (등록 후 시간 경과로 재고 변동 가능)
@@ -1467,11 +1513,17 @@ async function confirmOrder(row, lots, staff) {
     },
   });
 
+  if(!command.isCurrent())return;
   await refreshFrozenPanLayout();
   alert('발주 확인 완료!');
+
+ },{roles:['admin','office','production']});
 }
 
 async function cancelOrder(row, lots, staff) {
+ return runPageCommand(frozenPanResource,async command=>{
+  const {getDoc,updateDoc,recordActivity}=commandWrites(command);
+
   // [권한 매트릭스] production은 발주 취소 불가
   if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
     alert('발주 취소는 대표/사무실 계정만 가능합니다.');
@@ -1567,8 +1619,11 @@ async function cancelOrder(row, lots, staff) {
     },
   });
 
+  if(!command.isCurrent())return;
   await refreshFrozenPanLayout();
   alert('발주 취소 완료!');
+
+ },{roles:['admin','office']});
 }
 
 // 유틸
@@ -1623,10 +1678,10 @@ async function showStaffPickerModal({ title, message, groups }) {
 let staffCache = {};
 async function loadStaffCache() {
   if (Object.keys(staffCache).length > 0) return;
-  for (const key of ['senior', 'lead', 'office']) {
+  await Promise.all(['senior', 'lead', 'office'].map(async key => {
     const snap = await getDoc(doc(db, 'staffGroups', key));
     if (snap.exists()) staffCache[key] = snap.data().members || [];
-  }
+  }));
 }
 
 function getStaffOptions(groups) {
@@ -1654,7 +1709,25 @@ function showModal(html) {
   // 명시적인 취소/저장 버튼으로만 닫힘
 }
 
-window.closeModal = function() {
+registerCloseModal('frozenPan', function() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) overlay.remove();
-};
+});
+
+import {pageResource} from '../state/pageResources.js';
+import {pageRefresh} from '../utils/pageRefresh.js';
+import {getPageContext} from '../utils/pageLifecycle.js';
+import {loadPageStaff} from '../services/pageStaff.js';
+const frozenPanResource=pageResource('frozenPan');
+frozenPanResource.refresh=refreshFrozenPanLayout;
+
+import {runPageCommand} from '../services/pageCommand.js';
+import {commandWrites} from '../services/commandWrites.js';
+
+// Read-only model construction shared by activation and idle preparation.
+async function loadInitialModel(scope) {
+  const [rows,lots,breadPanLots,breadPanLogs,frozenPanLogs,recipes,staff]=await Promise.all([
+   loadFrozenPanRows(scope),loadFrozenPanLots(scope),loadBreadPanLots(scope),loadBreadPanLogs(scope),loadFrozenPanLogs(scope),getActiveFreezeDryRecipes(scope),loadPageStaff(scope)]);
+  return {rows,lots,breadPanLots,breadPanLogs,frozenPanLogs,recipes,staff};
+}
+export function preparePage({cacheOnly=true}={}) { return frozenPanResource.prepare?.('default',loadInitialModel,{cacheOnly}); }
