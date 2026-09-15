@@ -56,6 +56,7 @@ async function loadBagTypes(scope={getDocs}) {
 
 function renderScheduleLayout(schedules) {
   const content = document.getElementById('mainContent');
+  const page = getPageContext();
   const today = getToday();
   const canManageSchedule = isScheduleStaffRole();
 
