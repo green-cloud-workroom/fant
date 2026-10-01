@@ -15,6 +15,26 @@ async function setup() {
   return { ...e, routes, lifecycle, resources, ref, loader };
 }
 
+test('a change during the first read schedules a fresh model', async () => {
+  const e = await setup(), resource = e.resources.pageResource('production');
+  e.lifecycle.beginPage(e.nodes.mainContent, 'production');
+  let changed = false, refreshed;
+  const refreshedPromise = new Promise(resolve => { refreshed = resolve; });
+  const loader = async scope => {
+    const rows = (await scope.getDocs(e.ref)).docs.map(d => ({ id: d.id, ...d.data() }));
+    if (!changed) {
+      changed = true;
+      e.state.rows.recipes[0].name = 'new server value';
+      await e.state.notify('recipes');
+    }
+    return rows;
+  };
+  const first = await resource.load(loader, { onChange: refreshed });
+  assert.notEqual(first[0].name, 'new server value');
+  await refreshedPromise;
+  assert.equal((await resource.load(loader))[0].name, 'new server value');
+});
+
 test('repeated equal reads compare once while distinct date queries remain separate', async () => {
   const e=await setup(),resource=e.resources.pageResource('production');
   e.lifecycle.beginPage(e.nodes.mainContent,'production');

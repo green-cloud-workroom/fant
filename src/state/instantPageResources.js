@@ -197,7 +197,17 @@ export function instantPageResource(route) {
       const revision = await this.prepare(key, loader, { force: force || this.blocked });
       if (loadId !== this.loadId) return null;
       this.blocked = !!this.pending;
-      return this.activate(context, revision);
+      const model = this.activate(context, revision);
+      // A live listener can change while the first model is being built. The
+      // initial path must reconcile that dirty model just like a warm entry.
+      if (model && this.entries.get(key)?.dirty) {
+        this.prepare(key, loader).then(next => {
+          if (next && loadId === this.loadId && (!context || context.isCurrent())) this.onChange?.({});
+        }).catch(error => {
+          if (loadId === this.loadId && (!context || context.isCurrent())) this.onChange?.({ error });
+        });
+      }
+      return model;
     },
   };
   resources.set(route, resource);
