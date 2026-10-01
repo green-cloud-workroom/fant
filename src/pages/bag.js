@@ -1,7 +1,7 @@
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocsFromServer as getDocs, doc, query, orderBy, getDocFromServer as getDoc, where, writeBatch
+  collection, getDocsFromServer as getDocs, doc, query, orderBy, limit, getDocFromServer as getDoc, where, writeBatch
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
@@ -256,18 +256,30 @@ function bindBagListEvents() {
   });
 }
 
+let bagHistoryIndexAvailable = true;
+async function loadBagDetailLogs(bagTypeId, read=getDocs) {
+  let snap;
+  if (bagHistoryIndexAvailable) {
+    try {
+      snap=await read(query(collection(db, 'bagLogs'), where('bagTypeId','==',bagTypeId),
+        orderBy('timestamp','desc'), limit(30)));
+    } catch(error) {
+      if (error.code !== 'failed-precondition') throw error;
+      bagHistoryIndexAvailable=false;
+    }
+  }
+  if (!snap) snap=await read(query(collection(db, 'bagLogs'), where('bagTypeId','==',bagTypeId)));
+  const ms=v=>v?.toMillis?.()??(v?.seconds? v.seconds*1000:new Date(v).getTime()||0);
+  return snap.docs.map(d=>({id:d.id,...d.data()})).filter(row=>row.timestamp !== undefined)
+    .sort((a,b)=>ms(b.timestamp)-ms(a.timestamp)||b.id.localeCompare(a.id)).slice(0,30);
+}
+
 async function showBagDetail(bag) {
   const detail = document.getElementById('bagDetail');
   const canManageBagTypes = currentUserRole === 'admin' || currentUserRole === 'office';
 
   // 입고 이력 로드
-  const q = query(collection(db, 'bagLogs'), where('bagTypeId','==',bag.id));
-  const snap = await getDocs(q);
-  const logs = snap.docs
-    .map(d => ({ id: d.id, ...d.data() }))
-    .filter(l => l.timestamp !== undefined)
-    .sort((a,b)=>{const ms=v=>v?.toMillis?.()??(v?.seconds? v.seconds*1000:new Date(v).getTime()||0);return ms(b.timestamp)-ms(a.timestamp)||b.id.localeCompare(a.id);})
-    .slice(0, 30);
+  const logs = await loadBagDetailLogs(bag.id);
   if(!detail.isConnected || selectedBagId!==bag.id)return;
 
   detail.innerHTML = `

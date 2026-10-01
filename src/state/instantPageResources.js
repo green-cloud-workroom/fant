@@ -2,6 +2,7 @@ import { createDisplayScope, displayPool } from './displayReads.js';
 import { sessionStore } from './sessionStore.js';
 import { getPageContext, registerPageCleanup } from '../utils/pageLifecycle.js';
 import { fingerprint } from '../services/actionGateway.js';
+import { createReadScope } from '../services/readScope.js';
 
 const resources = new Map();
 const MAX_BYTES = 64 * 1024 * 1024;
@@ -28,7 +29,7 @@ function trim() {
   const entries = [...resources.values()].flatMap(resource => [...resource.entries.values()].map(entry => ({ resource, entry })));
   let bytes = entries.reduce((sum, { entry }) => sum + (entry.bytes || 0), 0);
   for (const { resource, entry } of entries.sort((a, b) => a.entry.access - b.entry.access)) {
-    if (resource.active && resource.viewRevision?.key === entry.key || entry.promise) continue;
+    if ((resource.active && (resource.viewRevision?.key === entry.key || resource.activeKey === entry.key)) || entry.promise) continue;
     if (bytes <= MAX_BYTES && resource.entries.size <= MAX_KEYS_PER_ROUTE) continue;
     bytes -= entry.bytes || 0;
     discard(resource, entry);
@@ -39,6 +40,7 @@ sessionStore.onClear(() => {
     for (const entry of resource.entries.values()) discard(resource, entry);
     resource.viewRevision = null;
     resource.active = false;
+    resource.activeKey = null;
     resource.context = null;
     resource.boundContext = null;
     resource.onChange = null;
@@ -50,7 +52,7 @@ sessionStore.onClear(() => {
 export function instantPageResource(route) {
   if (resources.has(route)) return resources.get(route);
   const resource = {
-    route, entries: new Map(), viewRevision: null, active: false, context: null,
+    route, entries: new Map(), viewRevision: null, active: false, activeKey: null, context: null,
     busy: false, blocked: false, pending: null, loadId: 0,
     get observations() { return this.viewRevision?.observations || []; },
     get model() { return this.viewRevision?.model || null; },
@@ -110,7 +112,10 @@ export function instantPageResource(route) {
         return task;
       };
       const request = (async () => {
-        const model = await loader({ ...reader, getDoc: track('getDoc'), getDocs: track('getDocs') });
+        // Deduplicate before recording comparisons: cached network reads alone
+        // do not prevent repeated serialization of the same large snapshot.
+        const scope = createReadScope({ getDoc: track('getDoc'), getDocs: track('getDocs') });
+        const model = await loader({ ...reader, ...scope });
         await Promise.allSettled(readTasks);
         if(readFailure)throw readFailure;
         if (epoch !== sessionStore.epoch || generation !== entry.generation) return null;
@@ -154,18 +159,21 @@ export function instantPageResource(route) {
         context.host.dataset.viewObservedAt=String(revision.observedAt);
       }
       if (entry) { clearTimeout(entry.timer); entry.access = ++sequence; }
+      trim();
       return copy(revision.model);
     },
     async load(loader, { key = 'default', onChange, force = false } = {}) {
       const context = getPageContext(), loadId = ++this.loadId;
       this.context = context;
       this.active = true;
+      this.activeKey = key;
       this.onChange = onChange;
       if (this.boundContext !== context) {
         this.boundContext = context;
         registerPageCleanup(() => {
           if (this.context !== context) return;
           this.active = false;
+          this.activeKey = null;
           this.context = null;
           this.boundContext = null;
           this.onChange = null;

@@ -114,7 +114,7 @@ export function renderLayout() {
       </nav>
 
       <div class="subbar">
-        <span class="subbar-item" id="subToday">📅 --</span>
+        <button type="button" class="subbar-item subbar-date-button" id="subToday" title="생산 날짜 선택">📅 --</button>
         <span class="subbar-item" id="sub18months">⏳ --</span>
         <span class="subbar-item" id="subEgg">🥚 --개</span>
         <span class="subbar-item" id="subLowStock">⚠️ 부족재고 --개</span>
@@ -143,6 +143,10 @@ export function renderLayout() {
   });
 
   document.getElementById('logoutBtn').addEventListener('click', handleLogoutClick);
+  document.getElementById('subToday').addEventListener('click', async () => {
+    if (currentMenu !== 'main') return;
+    (await import('./pages/main.js')).showProductionDatePicker();
+  });
   document.getElementById('closingBtn').addEventListener('click', handleClosingClick);
 
   // 배너 클릭 핸들러 — Phase 3d에서 window.openBlockingModal 등록되면 모달, 없으면 fallback alert
@@ -219,6 +223,7 @@ async function updateSubbar(scope = createReadScope()) {
   const futureStr = `${String(fy).slice(2)}/${fm}/${fd}`;
 
   document.getElementById('subToday').textContent = `📅 ${today}`;
+  document.getElementById('subToday').disabled = currentMenu !== 'main';
   document.getElementById('sub18months').textContent = `⏳ ${futureStr}`;
 
   try {

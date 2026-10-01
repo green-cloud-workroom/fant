@@ -1,7 +1,7 @@
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocsFromServer as getDocs, doc, getDocFromServer as getDoc, query, orderBy
+  collection, getDocsFromServer as getDocs, doc, getDocFromServer as getDoc, query, orderBy, limit
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
@@ -32,20 +32,26 @@ async function runEggSave(callback) {
 }
 
 let eggFifoExpanded = false;
+let eggFifoLogs = null;
 
 export async function renderEgg({force=false}={}) {
   const content=document.getElementById('mainContent');
   content.innerHTML='<div style="padding:24px;"><p>계란 로딩 중...</p></div>';
   const data=await eggResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(eggResource,renderEgg)});
   if(!data||!content.isConnected)return;
+  eggFifoLogs = null;
+  if (eggFifoExpanded) eggFifoLogs = await loadEggLogs({getDocs},null);
+  if (!getPageContext()?.isCurrent()) return;
   staffCache=data.staff;renderEggLayout(data.stock,data.logs);
 }
 async function loadEggStock(scope={getDoc}) {
   const snap=await scope.getDoc(doc(db,'eggStock','global'));
   return snap.exists()?snap.data():{currentQty:0,minimumQty:0};
 }
-async function loadEggLogs(scope={getDocs}) {
-  const snap=await scope.getDocs(query(collection(db,'eggLogs'),orderBy('timestamp','desc')));
+async function loadEggLogs(scope={getDocs}, maxRows=50) {
+  const constraints=[orderBy('timestamp','desc')];
+  if(maxRows!==null)constraints.push(limit(maxRows));
+  const snap=await scope.getDocs(query(collection(db,'eggLogs'),...constraints));
   return snap.docs.map(d=>({id:d.id,...d.data()}));
 }
 
@@ -54,7 +60,7 @@ function renderEggLayout(eggStock, logs) {
   const currentQty = Number(eggStock.currentQty || 0);
   const minimumQty = Number(eggStock.minimumQty || 0);
   const isLow = currentQty < minimumQty;
-  const fifo = buildEggFifoBreakdown(logs, currentQty);
+  const fifo = eggFifoExpanded ? buildEggFifoBreakdown(eggFifoLogs, currentQty) : null;
   const recentLogs = sortEggLogsDesc(logs).slice(0, 50);
 
   content.innerHTML = `
@@ -140,8 +146,23 @@ function renderEggLayout(eggStock, logs) {
   document.getElementById('btnEggOut').addEventListener('click', () => showEggModal('out', eggStock));
   document.getElementById('btnAdjustEgg').addEventListener('click', () => showEggAdjustModal(eggStock));
   document.getElementById('btnSetMinEgg').addEventListener('click', () => showSetMinModal(eggStock));
-  document.getElementById('btnToggleEggFifo').addEventListener('click', () => {
-    eggFifoExpanded = !eggFifoExpanded;
+  document.getElementById('btnToggleEggFifo').addEventListener('click', async event => {
+    if (!eggFifoExpanded) {
+      const button=event.currentTarget;
+      if (button.disabled) return;
+      button.disabled=true;
+      const page=getPageContext();
+      try {
+        eggFifoLogs = await loadEggLogs({getDocs},null);
+        if (!page?.isCurrent()) return;
+        eggFifoExpanded=true;
+      } catch(error) {
+        button.disabled=false;
+        console.error('[계란 FIFO 이력]',error);
+        alert('잔량 이력을 불러오지 못했습니다. 다시 시도해주세요.');
+        return;
+      }
+    } else eggFifoExpanded=false;
     renderEggLayout(eggStock, logs);
   });
 }
