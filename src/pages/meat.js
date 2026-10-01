@@ -1,13 +1,14 @@
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocsFromServer as getDocs, doc, addDoc, updateDoc, query, orderBy, getDocFromServer as getDoc, where, writeBatch, setDoc
+  collection, getDocsFromServer as getDocs, doc, addDoc, updateDoc, query, orderBy, limit, startAfter, getDocFromServer as getDoc, where, writeBatch, setDoc
 } from 'firebase/firestore';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { recordMeatLog } from '../services/meatLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
+import { sessionStore } from '../state/sessionStore.js';
 import Sortable from '../utils/sortable.js';
 
 let meatTypes = [];
@@ -17,10 +18,22 @@ let meatTypesSortable = null;
 let stockSummarySortables = [];
 let stockSummaryCategorySortable = null;
 let collapsedStockSummaryIds = new Set();
+let visibleStockGroups = new Map();
 let expandedMeatLogTypeIds = new Set();
+const MEAT_LOG_PAGE_SIZE = 100;
+const meatLogHistory = new Map();
+const meatLogCursors = new Map();
+const meatLogVisible = new Map();
+let meatLogPageContext = null;
+let meatLogRequest = 0;
+function resetMeatLogHistory() { meatLogHistory.clear(); meatLogVisible.clear(); meatLogRequest++; }
+sessionStore.onClear(() => { resetMeatLogHistory(); meatLogCursors.clear(); meatLogPageContext = null; });
 
 export async function renderMeat({force=false}={}) {
  const content=document.getElementById('mainContent');
+ const pageContext=getPageContext();
+ if (meatLogPageContext !== pageContext) meatLogPageContext=pageContext;
+ resetMeatLogHistory();
  content.innerHTML='<p style="padding:24px">원료 재고 로딩 중...</p>';
  await loadMeatPage({force});
  if(!getPageContext()?.isCurrent())return;
@@ -103,9 +116,11 @@ async function loadMeatLogs(stage, scope={getDocs,getDoc}) {
   const q = query(
     collection(db, 'meatLogs'),
     where('stage', '==', stage),
-    orderBy('timestamp', 'desc')
+    orderBy('timestamp', 'desc'),
+    limit(MEAT_LOG_PAGE_SIZE)
   );
   const snap = await scope.getDocs(q);
+  meatLogCursors.set(stage, snap.docs.at(-1) || null);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
@@ -397,6 +412,7 @@ function renderStockSummaryCell(g) {
 function renderStockSummary(stocks) {
   const byType = buildTotalByType(stocks);
   const groups = buildStockSummaryGroups(byType);
+  visibleStockGroups = new Map([...byType.values()].map(group => [group.meatTypeId || group.name, group]));
   const canManage = currentUserRole === 'admin' || currentUserRole === 'office';
 
   return `
@@ -711,15 +727,19 @@ function initStockSummarySortable() {
   const canManage = currentUserRole === 'admin' || currentUserRole === 'office';
 
   document.getElementById('btnMeatStockCategories')?.addEventListener('click', () => showMeatStockCategoriesModal());
-  document.querySelectorAll('.stock-summary-main').forEach(row => {
-    row.addEventListener('click', (e) => {
-      if (e.target.closest('.stock-summary-drag-handle')) return;
-      const cell = row.closest('.stock-summary-cell');
-      const id = cell?.dataset.summaryId;
-      if (!id) return;
-      if (collapsedStockSummaryIds.has(id)) collapsedStockSummaryIds.delete(id);
-      else collapsedStockSummaryIds.add(id);
-      renderTab(currentTab);
+  document.querySelector('.stock-summary-wrap')?.addEventListener('click', event => {
+    if (!event.target.closest('.stock-summary-main') || event.target.closest('.stock-summary-drag-handle')) return;
+    const cell = event.target.closest('.stock-summary-cell');
+    const id = cell?.dataset.summaryId, group = visibleStockGroups.get(id);
+    if (!group) return;
+    if (collapsedStockSummaryIds.has(id)) collapsedStockSummaryIds.delete(id);
+    else collapsedStockSummaryIds.add(id);
+    // Keep the rest of the tab, including its history and Sortable instances.
+    cell.insertAdjacentHTML('afterend', renderStockSummaryCell(group));
+    const nextCell = cell.nextElementSibling;
+    cell.remove();
+    nextCell.querySelectorAll('.btn-adjust').forEach(btn => {
+      btn.addEventListener('click', () => showAdjustModal(btn.dataset.id, btn.dataset.name, parseFloat(btn.dataset.remaining)));
     });
   });
   if (!canManage) return;
@@ -797,27 +817,139 @@ async function renderMeatLayout() {
   await renderTab(currentTab);
 }
 
-async function renderTab(tab) {
-  const tabContent = document.getElementById('tabContent');
-  tabContent.innerHTML = `<div style="padding:24px;"><p>로딩 중...</p></div>`;
-
-  const data = await loadMeatPage();
-  if(!data)return;
-  const {stocks,logs}=data;
-  if (!tabContent.isConnected || tab !== currentTab) return;
-
-  if (tab === 'frozen') {
-    renderFrozenTab(stocks, logs);
-  } else if (tab === 'processed') {
-    renderProcessedTab(stocks, logs);
-  } else if (tab === 'produce') {
-    renderProduceTab(stocks, logs);
-  } else {
-    renderRepackedTab(stocks, logs);
+function currentMeatLogHistory(stage, firstPage) {
+  const firstIds = firstPage.map(log => log.id).join('\u0000');
+  let history = meatLogHistory.get(stage);
+  if (!history || history.firstIds !== firstIds) {
+    history = { firstIds, rows: [...firstPage], ids: new Set(firstPage.map(log => log.id)),
+      cursorId: firstPage.at(-1)?.id || null,
+      cursor: meatLogCursors.get(stage)?.id === firstPage.at(-1)?.id ? meatLogCursors.get(stage) : null,
+      exhausted: firstPage.length < MEAT_LOG_PAGE_SIZE };
+    meatLogHistory.set(stage, history);
   }
+  return history;
+}
 
-  initStockSummarySortable();
-  initMeatLogGroups();
+function meatLogMatchesTab(log, tab) {
+  return tab === 'produce' ? isProduceCategoryLog(log)
+    : tab === 'frozen' ? isMeatCategoryLog(log) : true;
+}
+
+async function fillMeatLogHistory(stage, tab, count, history, isCurrent) {
+  while (!history.exhausted && history.rows.filter(log => meatLogMatchesTab(log, tab)).length < count) {
+    if (!isCurrent()) return;
+    const cursor = history.cursor || await getDoc(doc(db, 'meatLogs', history.cursorId));
+    if (!cursor.exists()) throw new Error('이력 위치가 변경되었습니다. 화면을 다시 불러와주세요.');
+    const snap = await getDocs(query(collection(db, 'meatLogs'), where('stage', '==', stage),
+      orderBy('timestamp', 'desc'), startAfter(cursor), limit(MEAT_LOG_PAGE_SIZE)));
+    if (!isCurrent()) return;
+    for (const item of snap.docs) {
+      if (history.ids.has(item.id)) continue;
+      history.ids.add(item.id);
+      history.rows.push({ id:item.id, ...item.data() });
+    }
+    history.cursorId = snap.docs.at(-1)?.id || history.cursorId;
+    history.cursor = snap.docs.at(-1) || history.cursor;
+    history.exhausted = snap.docs.length < MEAT_LOG_PAGE_SIZE;
+  }
+}
+
+async function renderTab(tab, {moreFrom=null}={}) {
+  const tabContent = document.getElementById('tabContent');
+  if (!tabContent) return;
+  const page = getPageContext(), request = ++meatLogRequest;
+  const isCurrent = () => page?.isCurrent() && request === meatLogRequest &&
+    currentTab === tab && tabContent.isConnected && document.getElementById('tabContent') === tabContent;
+  if (moreFrom === null) tabContent.innerHTML = `<div style="padding:24px;"><p>로딩 중...</p></div>`;
+
+  try {
+    const data = await loadMeatPage();
+    if (!data || !isCurrent()) return;
+    const {stocks,logs}=data, stage = tab === 'produce' ? 'frozen' : tab;
+    const history = currentMeatLogHistory(stage, logs);
+    const visibleCount = meatLogVisible.get(tab) || MEAT_LOG_PAGE_SIZE;
+    const initial = history.rows.filter(log => meatLogMatchesTab(log, tab)).slice(0, visibleCount);
+    if (moreFrom === null) {
+      if (tab === 'frozen') renderFrozenTab(stocks, initial);
+      else if (tab === 'processed') renderProcessedTab(stocks, initial);
+      else if (tab === 'produce') renderProduceTab(stocks, initial);
+      else renderRepackedTab(stocks, initial);
+      initStockSummarySortable();
+      initMeatLogGroups();
+    }
+    const historySection = tabContent.querySelector('[data-meat-history-section]');
+    if (!historySection) return;
+    const showHistory = () => {
+      if (!isCurrent()) return;
+      const matching = history.rows.filter(log => meatLogMatchesTab(log, tab));
+      if (moreFrom !== null || needsOlder) {
+        historySection.querySelector('[data-meat-history-content]').innerHTML = renderMeatLogGroups(matching.slice(0, visibleCount));
+        initMeatLogGroups();
+      }
+      historySection.dataset.meatHistoryState = 'ready';
+      historySection.querySelector('[data-meat-log-more]')?.remove();
+      historySection.querySelector('[data-meat-log-error]')?.remove();
+      historySection.querySelector('[data-meat-history-retry]')?.remove();
+      if (history.exhausted && matching.length <= visibleCount) return;
+      const more = document.createElement('button');
+      more.className = 'btn-secondary';
+      more.dataset.meatLogMore = stage;
+      more.textContent = `이전 이력 더 보기 (${MEAT_LOG_PAGE_SIZE}건씩)`;
+      more.style.cssText = 'display:block;margin:16px auto;';
+      more.addEventListener('click', async () => {
+        if (more.disabled) return;
+        more.disabled = true;
+        meatLogVisible.set(tab, visibleCount + MEAT_LOG_PAGE_SIZE);
+        await renderTab(tab, {moreFrom:visibleCount});
+      });
+      historySection.appendChild(more);
+    };
+    const needsOlder = !history.exhausted && initial.length < visibleCount;
+    if (!needsOlder) { showHistory(); return; }
+    historySection.dataset.meatHistoryState = 'loading';
+    if (moreFrom === null) historySection.querySelector('[data-meat-history-content]').innerHTML = '<p role="status">이전 이력 조회 중...</p>';
+    else historySection.querySelector('[data-meat-history-content]').insertAdjacentHTML('beforeend','<p role="status" data-meat-history-loading>이전 이력 조회 중...</p>');
+    const pending = fillMeatLogHistory(stage, tab, visibleCount, history, isCurrent)
+      .then(showHistory)
+      .catch(error => {
+        if (moreFrom !== null) meatLogVisible.set(tab, moreFrom);
+        if (!isCurrent()) return;
+        console.error('[원료 이력]', error);
+        historySection.dataset.meatHistoryState = 'error';
+        historySection.querySelector('[data-meat-history-loading]')?.remove();
+        historySection.insertAdjacentHTML('beforeend','<p role="alert" data-meat-log-error>이전 이력을 불러오지 못했습니다.</p>');
+        const retry = document.createElement('button');
+        retry.className = 'btn-secondary'; retry.textContent = '이력 다시 시도';
+        retry.dataset.meatHistoryRetry = 'true';
+        retry.addEventListener('click', () => {
+          if (moreFrom !== null) meatLogVisible.set(tab, moreFrom + MEAT_LOG_PAGE_SIZE);
+          renderTab(tab, {moreFrom});
+        });
+        historySection.appendChild(retry);
+      });
+    // A normal tab visit is usable as soon as stock appears. The "more" action
+    // still awaits the requested history page and reports its own failure.
+    if (moreFrom !== null) await pending;
+  } catch (error) {
+    if (moreFrom !== null) meatLogVisible.set(tab, moreFrom);
+    if (!isCurrent()) return;
+    console.error('[원료 이력]', error);
+    if (moreFrom !== null) {
+      const more = tabContent.querySelector('[data-meat-log-more]');
+      if (more) more.disabled = false;
+      const status = document.createElement('p');
+      status.dataset.meatLogError = 'true'; status.setAttribute('role', 'alert');
+      status.textContent = '이전 이력을 불러오지 못했습니다. 다시 시도해주세요.';
+      tabContent.querySelector('[data-meat-log-error]')?.remove();
+      tabContent.appendChild(status);
+    } else {
+      tabContent.innerHTML = '<p role="alert">원료 자료를 불러오지 못했습니다.</p>';
+      const retry = document.createElement('button');
+      retry.className = 'btn-secondary'; retry.textContent = '다시 시도';
+      retry.addEventListener('click', () => renderTab(tab));
+      tabContent.appendChild(retry);
+    }
+  }
 }
 
 // 냉동창고 탭
@@ -845,66 +977,13 @@ function renderFrozenTab(stocks, logs) {
         typeTotals: meatTotals,
         useTypeColor: true,
       })}
-      <div class="table-wrap" style="display:none;">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>원육명</th>
-              <th>작업일</th>
-              <th>잔량</th>
-              <th>수동조정</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${meatStocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">등록된 재고 없음</td></tr>` :
-              meatStocks.map(s => {
-                const typeTotal = meatTotals.get(s.meatTypeId || s.meatNameSnapshot || s.id)?.totalG ?? s.remaining;
-                const color = getStockColor(typeTotal, s.meatTypeId);
-                return `
-                <tr>
-                  <td>${s.meatNameSnapshot}</td>
-                  <td>${s.incomingDate || '-'}</td>
-                  <td style="font-weight:600;color:${color}">${(s.remaining / 1000).toFixed(2)}kg</td>
-                  <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
-                </tr>`;
-              }).join('')}
-          </tbody>
-        </table>
-      </div>
     </div>
 
-    <div class="form-section">
+    <div class="form-section" data-meat-history-section data-meat-history-state="ready">
       <div class="section-header">
         <span class="section-title">이력</span>
       </div>
-      ${renderMeatLogGroups(meatLogs)}
-      <div class="table-wrap" style="display:none;">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>날짜</th>
-              <th>원료명</th>
-              <th>구분</th>
-              <th>수량</th>
-              <th>담당자</th>
-              <th>사유</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${meatLogs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
-              meatLogs.map(l => `
-                <tr>
-                  <td>${formatMeatLogTimestamp(l.timestamp)}</td>
-                  <td>${l.meatNameSnapshot || '-'}</td>
-                  <td>${getMeatLogTypeLabel(l.type)}</td>
-                  <td style="color:${l.delta < 0 ? '#e53e3e' : '#2d7a3a'};font-weight:600;">${formatMeatLogQty(l.delta)}</td>
-                  <td>${l.staff || '-'}</td>
-                  <td>${l.reason || '-'}</td>
-                </tr>
-              `).join('')}
-          </tbody>
-        </table>
-      </div>
+      <div data-meat-history-content>${renderMeatLogGroups(meatLogs)}</div>
     </div>
   `;
 
@@ -949,72 +1028,13 @@ function renderProduceTab(stocks, logs) {
         typeTotals: produceTotals,
         useTypeColor: true,
       })}
-      <div class="table-wrap" style="display:none;">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>이름</th>
-              <th>입고일</th>
-              <th>초기량</th>
-              <th>잔량</th>
-              <th>담당</th>
-              <th>비고</th>
-              <th>조정</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${produceStocks.length === 0 ? `<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">등록된 채소/과일 재고 없음</td></tr>` :
-              produceStocks.map(s => {
-                const typeTotal = produceTotals.get(s.meatTypeId || s.meatNameSnapshot || s.id)?.totalG ?? s.remaining;
-                const color = getStockColor(typeTotal, s.meatTypeId);
-                return `
-                <tr>
-                  <td>${s.meatNameSnapshot}</td>
-                  <td>${s.incomingDate || '-'}</td>
-                  <td>${((s.initialQtyG || 0) / 1000).toFixed(2)}kg</td>
-                  <td style="font-weight:600;color:${color}">${(s.remaining / 1000).toFixed(2)}kg</td>
-                  <td>${s.staffName || '-'}</td>
-                  <td>${s.note || '-'}</td>
-                  <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
-                </tr>`;
-              }).join('')}
-          </tbody>
-        </table>
-      </div>
     </div>
 
-    <div class="form-section">
+    <div class="form-section" data-meat-history-section data-meat-history-state="ready">
       <div class="section-header">
         <span class="section-title">이력</span>
       </div>
-      ${renderMeatLogGroups(produceLogs)}
-      <div class="table-wrap" style="display:none;">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>날짜</th>
-              <th>원료명</th>
-              <th>구분</th>
-              <th>수량</th>
-              <th>담당자</th>
-              <th>사유</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${produceLogs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
-              produceLogs.map(l => `
-                <tr>
-                  <td>${formatMeatLogTimestamp(l.timestamp)}</td>
-                  <td>${l.meatNameSnapshot || '-'}</td>
-                  <td>${getMeatLogTypeLabel(l.type)}</td>
-                  <td style="color:${l.delta < 0 ? '#e53e3e' : '#2d7a3a'};font-weight:600;">${formatMeatLogQty(l.delta)}</td>
-                  <td>${l.staff || '-'}</td>
-                  <td>${l.reason || '-'}</td>
-                </tr>
-              `).join('')}
-          </tbody>
-        </table>
-      </div>
+      <div data-meat-history-content>${renderMeatLogGroups(produceLogs)}</div>
     </div>
   `;
 
@@ -1055,63 +1075,13 @@ function renderProcessedTab(stocks, logs) {
         dateField: 'processedDate',
         dateLabel: '작업일',
       })}
-      <div class="table-wrap" style="display:none;">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>원육명</th>
-              <th>작업일</th>
-              <th>잔량</th>
-              <th>수동조정</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${stocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">등록된 전처리 재고 없음</td></tr>` :
-              stocks.map(s => `
-                <tr style="background:${s.batchColor || 'white'}11">
-                  <td>${s.meatNameSnapshot}</td>
-                  <td>${s.processedDate || '-'}</td>
-                  <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(2)}kg</td>
-                  <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
-                </tr>
-              `).join('')}
-          </tbody>
-        </table>
-      </div>
     </div>
 
-    <div class="form-section">
+    <div class="form-section" data-meat-history-section data-meat-history-state="ready">
       <div class="section-header">
         <span class="section-title">이력</span>
       </div>
-      ${renderMeatLogGroups(logs)}
-      <div class="table-wrap" style="display:none;">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>날짜</th>
-              <th>원료명</th>
-              <th>구분</th>
-              <th>수량</th>
-              <th>담당자</th>
-              <th>사유</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${logs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
-              logs.map(l => `
-                <tr>
-                  <td>${formatMeatLogTimestamp(l.timestamp)}</td>
-                  <td>${l.meatNameSnapshot || '-'}</td>
-                  <td>${getMeatLogTypeLabel(l.type)}</td>
-                  <td style="color:${l.delta < 0 ? '#e53e3e' : '#2d7a3a'};font-weight:600;">${formatMeatLogQty(l.delta)}</td>
-                  <td>${l.staff || '-'}</td>
-                  <td>${l.reason || '-'}</td>
-                </tr>
-              `).join('')}
-          </tbody>
-        </table>
-      </div>
+      <div data-meat-history-content>${renderMeatLogGroups(logs)}</div>
     </div>
   `;
 
@@ -1139,63 +1109,13 @@ function renderRepackedTab(stocks, logs) {
         dateField: 'repackedDate',
         dateLabel: '작업일',
       })}
-      <div class="table-wrap" style="display:none;">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>원육명</th>
-              <th>작업일</th>
-              <th>잔량</th>
-              <th>수동조정</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${stocks.length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">등록된 재포장 재고 없음</td></tr>` :
-              stocks.map(s => `
-                <tr style="background:${s.batchColor || 'white'}11">
-                  <td>${s.meatNameSnapshot}</td>
-                  <td>${s.repackedDate || '-'}</td>
-                  <td style="font-weight:600;color:${s.remaining < 0 ? '#e53e3e' : '#1a1a1a'}">${(s.remaining / 1000).toFixed(2)}kg</td>
-                  <td><button class="btn-adjust" data-id="${s.id}" data-name="${s.meatNameSnapshot}" data-remaining="${s.remaining}">조정</button></td>
-                </tr>
-              `).join('')}
-          </tbody>
-        </table>
-      </div>
     </div>
 
-    <div class="form-section">
+    <div class="form-section" data-meat-history-section data-meat-history-state="ready">
       <div class="section-header">
         <span class="section-title">이력</span>
       </div>
-      ${renderMeatLogGroups(logs)}
-      <div class="table-wrap" style="display:none;">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>날짜</th>
-              <th>원료명</th>
-              <th>구분</th>
-              <th>수량</th>
-              <th>담당자</th>
-              <th>사유</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${logs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
-              logs.map(l => `
-                <tr>
-                  <td>${formatMeatLogTimestamp(l.timestamp)}</td>
-                  <td>${l.meatNameSnapshot || '-'}</td>
-                  <td>${getMeatLogTypeLabel(l.type)}</td>
-                  <td style="color:${l.delta < 0 ? '#e53e3e' : '#2d7a3a'};font-weight:600;">${formatMeatLogQty(l.delta)}</td>
-                  <td>${l.staff || '-'}</td>
-                  <td>${l.reason || '-'}</td>
-                </tr>
-              `).join('')}
-          </tbody>
-        </table>
-      </div>
+      <div data-meat-history-content>${renderMeatLogGroups(logs)}</div>
     </div>
   `;
 
@@ -2320,9 +2240,10 @@ meatResource.refresh=renderMeat;
 
 let meatModelKey=null;
 async function loadMeatPage({force=false}={}) {
- const key=currentTab==='produce'?'frozen':currentTab;
+ const stage=currentTab==='produce'?'frozen':currentTab;
+ const key=JSON.stringify([stage,MEAT_LOG_PAGE_SIZE]);
  if(key!==meatModelKey){meatModelKey=key;force ||= !meatResource.prepare;}
- const data=await meatResource.load(scope=>loadInitialModel(scope, key),{key,force,onChange:pageRefresh(meatResource,renderMeat)});
+ const data=await meatResource.load(scope=>loadInitialModel(scope, stage),{key,force,onChange:pageRefresh(meatResource,renderMeat)});
  if(data){meatTypes=data.types;meatStockCategories=data.categories;staffCache=data.staff;}
  return data;
 }
@@ -2331,8 +2252,8 @@ import {runPageCommand} from '../services/pageCommand.js';
 import {commandWrites} from '../services/commandWrites.js';
 
 // Read-only model construction shared by activation and idle preparation.
-async function loadInitialModel(scope, key) {
-  const [types,categories,staff,stocks,logs]=await Promise.all([loadMeatTypes(scope),loadMeatStockCategories(scope),loadPageStaff(scope),loadMeatStocks(key,scope),loadMeatLogs(key,scope)]);
+async function loadInitialModel(scope, stage) {
+  const [types,categories,staff,stocks,logs]=await Promise.all([loadMeatTypes(scope),loadMeatStockCategories(scope),loadPageStaff(scope),loadMeatStocks(stage,scope),loadMeatLogs(stage,scope)]);
   return {types,categories,staff,stocks,logs};
 }
-export function preparePage({cacheOnly=true,stage='frozen'}={}) { return meatResource.prepare?.(stage,scope=>loadInitialModel(scope,stage),{cacheOnly}); }
+export function preparePage({cacheOnly=true,stage='frozen'}={}) { return meatResource.prepare?.(JSON.stringify([stage,MEAT_LOG_PAGE_SIZE]),scope=>loadInitialModel(scope,stage),{cacheOnly}); }

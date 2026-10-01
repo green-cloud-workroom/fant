@@ -236,6 +236,8 @@ function scheduleRefresh({immediate=false}={}) {
   // Invalidate immediately, before the debounce period. Otherwise an older
   // response can be interpreted as the newly selected tab's data.
   queryToken++;
+  const statsHost=document.getElementById('mainContent');
+  if(statsHost?.dataset)delete statsHost.dataset.statsReadyTab;
   loadedStatsKey=null;
   clearTimeout(statsRefreshTimer);
   if (refreshTimer) clearTimeout(refreshTimer);
@@ -594,6 +596,10 @@ async function refreshStats() {
       renderSupplementTab(agg);
     }
     loadedStatsKey=statsKey();
+    if(statsHost?.dataset){
+      statsHost.dataset.statsReadyTab=tab;
+      statsHost.dataset.statsReadyKey=key;
+    }
   } catch (err) {
     console.error('[stats] 로드 실패:', err);
     if (myToken !== queryToken) return;

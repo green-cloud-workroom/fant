@@ -14,6 +14,52 @@ async function setup() {
   const loader = async scope => (await scope.getDocs(ref)).docs.map(d => ({ id: d.id, ...d.data() }));
   return { ...e, routes, lifecycle, resources, ref, loader };
 }
+
+test('a change during the first read schedules a fresh model', async () => {
+  const e = await setup(), resource = e.resources.pageResource('production');
+  e.lifecycle.beginPage(e.nodes.mainContent, 'production');
+  let changed = false, refreshed;
+  const refreshedPromise = new Promise(resolve => { refreshed = resolve; });
+  const loader = async scope => {
+    const rows = (await scope.getDocs(e.ref)).docs.map(d => ({ id: d.id, ...d.data() }));
+    if (!changed) {
+      changed = true;
+      e.state.rows.recipes[0].name = 'new server value';
+      await e.state.notify('recipes');
+    }
+    return rows;
+  };
+  const first = await resource.load(loader, { onChange: refreshed });
+  assert.notEqual(first[0].name, 'new server value');
+  await refreshedPromise;
+  assert.equal((await resource.load(loader))[0].name, 'new server value');
+});
+
+test('repeated equal reads compare once while distinct date queries remain separate', async () => {
+  const e=await setup(),resource=e.resources.pageResource('production');
+  e.lifecycle.beginPage(e.nodes.mainContent,'production');
+  await resource.load(async scope=>{
+    await Promise.all(Array.from({length:61},()=>scope.getDocs(e.api.collection({},'recipes'))));
+    await scope.getDocs(e.api.query(e.api.collection({},'productions'),e.api.where('date','==','2026-09-01')));
+    await scope.getDocs(e.api.query(e.api.collection({},'productions'),e.api.where('date','==','2026-09-02')));
+    return {ok:true};
+  });
+  assert.equal(resource.observations.length,3);
+  assert.equal(e.state.reads.length,3);
+});
+
+test('active preparation above budget survives activation and trims once inactive',async()=>{
+  const e=await setup(),resource=e.resources.pageResource('production');
+  e.state.rows.recipes[0].payload='x'.repeat(34*1024*1024);
+  e.lifecycle.beginPage(e.nodes.mainContent,'production');
+  await resource.load(e.loader);
+  assert.ok(resource.entries.get('default')?.revision);
+  await resource.load(e.loader,{key:'another-date'});
+  assert.equal(resource.entries.has('default'),false);
+  assert.ok(resource.entries.get('another-date')?.revision);
+  e.lifecycle.beginPage({isConnected:true},'other');
+  assert.equal(resource.entries.size,0);
+});
 test('every basic menu survives a full loop without extra reads or mutable cache contamination', async () => {
   const e = await setup();
   for (const route of e.routes) {
@@ -140,10 +186,34 @@ test('main pure preparation matches the original full model and never flushes au
  const page=await e.load('src/pages/main.js');
  const scope=(await e.load('src/services/serverReadScope.js')).createServerReadScope();
  const prepared=await page.prepareMainModel(scope);
+ assert.equal(e.state.reads.filter(r=>r.path==='productions'&&r.kind==='query'&&r.conditions.length===0).length,0);
+ assert.ok(e.state.reads.some(r=>r.path==='productions'&&r.conditions.some(c=>c.type==='where'&&c.field==='date'&&c.op==='in')));
+ assert.equal(e.state.reads.filter(r=>r.path==='productions'&&r.conditions.some(c=>c.type==='order'&&c.field==='sortOrder')).length,0);
  await page.loadAllData((await e.load('src/services/serverReadScope.js')).createServerReadScope(),{autoLogsEnabled:false});
  const expected=page.testState();
  for(const [key,value] of Object.entries(expected))assert.equal(JSON.stringify(prepared[key]),JSON.stringify(value),key);
  assert.equal(e.state.writes.length,0);
+});
+
+test('main shared production read keeps unordered historical rows in closing checks',async()=>{
+ const e=await environment({session:true,instantRoutes:['main'],instrument:{'src/pages/main.js':'\nexport {prepareMainModel};'}});
+ e.state.rows.productions.push({id:'old-unordered',date:e.dates[5],status:'completed',received:false,category:'raw'});
+ const page=await e.load('src/pages/main.js');
+ const scope=(await e.load('src/services/serverReadScope.js')).createServerReadScope();
+ const model=await page.prepareMainModel(scope);
+ assert.equal(model.overdueClosingDate,e.dates[5]);
+ assert.equal(model.overdueProductions.some(row=>row.id==='old-unordered'),false);
+ assert.equal(e.state.reads.filter(r=>r.path==='productions'&&r.kind==='query'&&r.conditions.length===0).length,0);
+});
+
+test('main keeps Firestore document order when production sort orders tie',async()=>{
+ const e=await environment({session:true,instantRoutes:['main'],instrument:{'src/pages/main.js':'\nexport {prepareMainModel};'}});
+ const original=e.state.rows.productions.find(row=>row.date===e.today);
+ e.state.rows.productions=e.state.rows.productions.filter(row=>row.date!==e.today);
+ e.state.rows.productions.push({...original,id:'Z',sortOrder:1},{...original,id:'a',sortOrder:1});
+ const page=await e.load('src/pages/main.js');
+ const model=await page.prepareMainModel((await e.load('src/services/serverReadScope.js')).createServerReadScope());
+ assert.deepEqual(Array.from(model.productions,row=>row.id),['Z','a']);
 });
 
 test('all eight setting sections retain real values without additional reads on revisit',async()=>{

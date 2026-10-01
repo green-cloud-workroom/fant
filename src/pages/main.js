@@ -5,6 +5,7 @@ import { buildMainViewModel, copyMainModel } from '../domain/mainViewModel.js';
 import { createAutoLogCoordinator } from '../services/autoLogCoordinator.js';
 import { loadSummary,summaryEnabled,summaryStillCurrent } from '../services/mainViewSource.js';
 import { openAction, fingerprint } from '../services/actionGateway.js';
+import { saveProductReceipt } from '../services/productReceipt.js';
 import { sessionStore } from '../state/sessionStore.js';
 import { createDisplayScope, displayPool } from '../state/displayReads.js';
 import { useSessionReads } from '../config/performanceFlags.js';
@@ -21,7 +22,7 @@ sessionStore.onClear(() => { mainModelDirty = true; autoLogCoordinator.clear(); 
 import { createAutoLogBatch } from '../services/autoLogs.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocsFromServer as getDocs, doc, addDoc, updateDoc, getDocFromServer as getDoc, query, orderBy, setDoc, where, deleteDoc, serverTimestamp, limit, startAfter, writeBatch
+  collection, getDocsFromServer as getDocs, doc, addDoc, updateDoc, getDocFromServer as getDoc, onSnapshot, query, orderBy, setDoc, where, deleteDoc, serverTimestamp, limit, startAfter, writeBatch
 } from 'firebase/firestore';
 import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDayByType as getNextBusinessDay, loadHolidaysCache, ensureHolidaysCache, getHolidaysCache, getHolidayInfoCache, getHolidayDataNotice } from '../utils/date.js';
 import { findActionableClosingDate, getAllBlockingItems } from '../services/closingChecks.js';
@@ -62,6 +63,109 @@ let calendarWeekOffset = 0;  // 0=오늘 포함 주, +1=한 주 앞으로, -1=�
 let selectedProductionDate = null;
 let selectedDateProductions = [];
 let selectedDateBlockingData = null;
+let selectedDateRequest = 0;
+let selectedDatePage = null;
+let selectedDateWatcher = null;
+let pendingSelectedDateWatcher = null;
+let refreshSelectedDate = null;
+
+function stopSelectedDateWatcher(watcher) {
+  if (!watcher) return;
+  watcher.closed = true;
+  watcher.unsubscribe?.();
+  if (selectedDateWatcher === watcher) selectedDateWatcher = null;
+  if (pendingSelectedDateWatcher === watcher) pendingSelectedDateWatcher = null;
+}
+
+function watchSelectedDate(date, page, epoch) {
+  const watcher = { date, closed: false, version: 0, loading: true, displayedSignature: null, latestSignature: null };
+  const dateQuery = query(collection(db, 'productions'), where('date', '==', date));
+  watcher.unsubscribe = onSnapshot(dateQuery, { includeMetadataChanges: false }, snapshot => {
+    if (watcher.closed || epoch !== sessionStore.epoch || !page?.isCurrent()) return;
+    if (snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
+    watcher.latestSignature = fingerprint(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
+    watcher.version++;
+    if (selectedDateWatcher === watcher && !watcher.loading && watcher.latestSignature !== watcher.displayedSignature) {
+      refreshSelectedDate?.({});
+    }
+  }, error => {
+    if (watcher.closed || epoch !== sessionStore.epoch || !page?.isCurrent()) return;
+    const wasSelected = selectedDateWatcher === watcher;
+    watcher.error = error;
+    stopSelectedDateWatcher(watcher);
+    if (error.code === 'permission-denied') {
+      sessionStore.clear();
+      page.host.replaceChildren();
+      page.host.textContent = '접근 권한을 다시 확인하려면 새로고침해주세요.';
+    }
+    else if (wasSelected) refreshSelectedDate?.({ error });
+  });
+  return watcher;
+}
+sessionStore.onClear(() => {
+  selectedDateRequest++;
+  stopSelectedDateWatcher(pendingSelectedDateWatcher);
+  stopSelectedDateWatcher(selectedDateWatcher);
+  selectedProductionDate = null;
+  selectedDateProductions = [];
+  selectedDateBlockingData = null;
+});
+
+async function selectProductionDate(date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date) throw new Error('날짜를 확인해주세요.');
+  const request = ++selectedDateRequest, page = getPageContext(), epoch = sessionStore.epoch;
+  const isCurrent = () => request === selectedDateRequest && epoch === sessionStore.epoch && (!page || page.isCurrent()) && currentMenu === 'main';
+  stopSelectedDateWatcher(pendingSelectedDateWatcher);
+  const watcher = selectedDateWatcher?.date === date ? selectedDateWatcher : watchSelectedDate(date, page, epoch);
+  const newWatcher = watcher !== selectedDateWatcher;
+  if (newWatcher) pendingSelectedDateWatcher = watcher;
+  const observedVersion = watcher.version;
+  const scope = createServerReadScope();
+  let snapshot, blocks;
+  try {
+    [snapshot, blocks] = await Promise.all([
+      scope.getDocs(query(collection(db, 'productions'), where('date', '==', date))),
+      getAllBlockingItems(date, scope),
+    ]);
+  } catch (error) { if (newWatcher) stopSelectedDateWatcher(watcher); if (!isCurrent()) return false; throw error; }
+  if (!isCurrent()) { if (newWatcher) stopSelectedDateWatcher(watcher); return false; }
+  if (watcher.closed) throw watcher.error || new Error('선택 날짜 조회를 다시 시도해주세요.');
+  if (newWatcher) {
+    stopSelectedDateWatcher(selectedDateWatcher);
+    selectedDateWatcher = watcher;
+    pendingSelectedDateWatcher = null;
+  }
+  watcher.displayedSignature = fingerprint(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
+  watcher.loading = false;
+  selectedProductionDate = date;
+  selectedDateProductions = snapshot.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => p.status !== 'deleted')
+    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || a.id.localeCompare(b.id));
+  selectedDateBlockingData = blocks;
+  renderMainLayout();
+  if (watcher.version > observedVersion && watcher.latestSignature !== watcher.displayedSignature) {
+    setTimeout(() => { if (selectedDateWatcher === watcher) refreshSelectedDate?.({}); }, 0);
+  }
+  return true;
+}
+
+export function showProductionDatePicker() {
+  if (currentMenu !== 'main') return;
+  showModal(`<h3 class="modal-title">생산 날짜 선택</h3>
+    <p>선택한 날짜의 생산과 입고 내역을 조회합니다. 마감과 상단 재고 현황은 오늘 기준입니다.</p>
+    <input type="date" id="productionDateInput" value="${selectedProductionDate || getToday()}" aria-label="생산 조회 날짜" />
+    <p id="productionDateError" role="alert"></p>
+    <div class="modal-actions"><button class="btn-secondary" id="productionDateCancel">취소</button><button class="btn-primary" id="productionDateConfirm">조회</button></div>`);
+  const overlay = document.getElementById('modalOverlay');
+  document.getElementById('productionDateCancel').addEventListener('click', () => { selectedDateRequest++; stopSelectedDateWatcher(pendingSelectedDateWatcher); overlay.remove(); });
+  document.getElementById('productionDateConfirm').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    button.disabled = true;
+    try { if (await selectProductionDate(document.getElementById('productionDateInput').value)) overlay.remove(); }
+    catch (error) { if (overlay.isConnected) document.getElementById('productionDateError').textContent = error.message; }
+    finally { button.disabled = false; }
+  });
+}
 
 function isTenderFreezeDryProduction(item) {
   return item?.category === 'freezeDry' && item.requiresSeparation === false;
@@ -131,11 +235,34 @@ function showRefreshError(content) {
   const status = document.createElement('div'); status.dataset.refreshError = 'true';
   status.textContent = '최신 정보를 확인하지 못했습니다. 표시된 내용은 이전 자료입니다. ';
   const button = document.createElement('button'); button.className = 'btn-secondary'; button.textContent = '다시 불러오기';
-  button.addEventListener('click', () => { mainModelDirty = true; renderLayout(); });
+  button.addEventListener('click', async () => {
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+      mainModelDirty = true;
+      if (mainResource.prepare) await renderInstantMain({ force: true });
+      else renderLayout();
+    } catch (error) {
+      if (status.isConnected) status.firstChild.textContent = `최신 정보를 확인하지 못했습니다: ${error.message} `;
+    } finally { button.disabled = false; }
+  });
   status.appendChild(button); content.prepend(status);
 }
 
 let mainLoadVersion = 0;
+function orderMainProductions(rows) {
+  return rows.filter(row => row.sortOrder !== undefined)
+    .sort((a, b) => a.sortOrder < b.sortOrder ? -1 : a.sortOrder > b.sortOrder ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+async function loadMainProductions(dates, scope) {
+  const selected = [...new Set(dates.filter(Boolean))];
+  if (!selected.length) return [];
+  const snap = await scope.getDocs(query(collection(db, 'productions'), where('date', 'in', selected)));
+  return orderMainProductions(snap.docs.map(d => ({ id:d.id, ...d.data() })));
+}
+function combineMainProductions(...groups) {
+  return orderMainProductions([...new Map(groups.flat().map(row => [row.id, row])).values()]);
+}
 // Closing must not accept an incomplete automatic-alert evaluation as an empty list.
 // This check only reads; existing main visit semantics still own alert creation.
 export async function assertAutomaticAlertsReady() {
@@ -183,26 +310,29 @@ async function loadAllData(scope = createServerReadScope(), { autoLogsEnabled = 
   scope.getDocs(query(collection(db, 'supplementTypes'), where('active', '==', true))).catch(() => {});
   scope.getDocs(collection(db, 'supplementStock')).catch(() => {});
   const nextBizDay = getNextBusinessDay(today);
+  const productionsRead = loadMainProductions([today,nextBizDay],scope);
+  const overdueClosingRead = findActionableClosingDate(today, null, scope);
 
-  const [prodSnap, recipeSnap, meatTypeSnap, meatSnap, eggSnap, compSnap,
+  const [productionRows, recipeSnap, meatTypeSnap, meatSnap, eggSnap, compSnap,
     overdueClosing, calendar, alerts] = await Promise.all([
-    scope.getDocs(query(collection(db, 'productions'), orderBy('sortOrder'))),
+    productionsRead,
     scope.getDocs(collection(db, 'recipes')),
     scope.getDocs(collection(db, 'meatTypes')),
     scope.getDocs(collection(db, 'meatStocks')),
     scope.getDoc(doc(db, 'eggStock', 'global')),
     scope.getDoc(doc(db, 'productionCompletion', today)),
-    findActionableClosingDate(today, null, scope),
+    overdueClosingRead,
     fetchCalendarData(calendarWeekOffset, scope),
     scope.once('equipmentAlerts:' + today, () => loadPartAlerts(today, scope)),
   ]);
   if (!isCurrent()) return false;
-  const allProds = prodSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   const overdueDate = overdueClosing?.date || null;
-  const [overdueCompSnap, blocks] = await Promise.all([
+  const [overdueCompSnap, blocks, overdueProductionRows] = await Promise.all([
     overdueDate ? scope.getDoc(doc(db, 'productionCompletion', overdueDate)) : null,
     overdueClosing?.blockingData || getAllBlockingItems(today, scope),
+    overdueDate ? loadMainProductions([overdueDate,getNextBusinessDay(overdueDate)],scope) : [],
   ]);
+  const allProds = combineMainProductions(productionRows, overdueProductionRows);
   if (!isCurrent()) return false;
 
   // Build alerts with a refresh-local snapshot; no mutable page state is read
@@ -295,7 +425,7 @@ function renderMainLayout() {
     <div class="main-layout">
       <div class="main-panel-left">
         <div class="main-panel-header">
-          <span class="main-panel-title">📅 ${todayStr} 생산${isViewingSelectedDate ? ' <span style="font-size:11px;color:#3182ce;font-weight:normal;">(선택 날짜)</span>' : ''}${isOverdueClosingMode ? ` <span style="font-size:11px;color:#c53030;font-weight:normal;">(${overdueStatusText})</span>` : ''}</span>
+          <button type="button" id="btnProductionDate" class="main-panel-title main-date-button" title="생산 날짜 선택">📅 ${todayStr} 생산${isViewingSelectedDate ? ' <span style="font-size:11px;color:#3182ce;font-weight:normal;">(선택 날짜)</span>' : ''}${isOverdueClosingMode ? ` <span style="font-size:11px;color:#c53030;font-weight:normal;">(${overdueStatusText})</span>` : ''}</button>
           <div style="display:flex;gap:6px;align-items:center;">
             <button class="btn-secondary" id="btnBigView" style="font-size:11px;padding:3px 10px;">크게보기</button>
             <button class="btn-secondary" id="btnTodayReceiptSummary" style="font-size:11px;padding:3px 10px;">입고 현황 전체 보기</button>
@@ -372,6 +502,7 @@ function renderMainLayout() {
   // [묶음 6E-3] 새로고침 버튼 — 마감 후 다음 영업일 생산 변경됐을 때 롤백+재차감
   document.getElementById('btnRefreshCompletion')?.addEventListener('click', handleRefreshCompletion);
   // [묶음 6E-4] 오늘로 돌아가기 버튼 — selectedDate 모드 해제
+  document.getElementById('btnProductionDate')?.addEventListener('click', showProductionDatePicker);
   document.getElementById('btnBackToToday')?.addEventListener('click', handleBackToToday);
 
   // [spec_v27 P2] 생산 카드 클릭 → 제품 입고 모달 (생식 한정)
@@ -746,20 +877,8 @@ function showDateModal(date) {
 
   // [묶음 6E-4] 이 날짜로 보기 버튼 — selectedDate 모드 진입
   document.getElementById('btnViewThisDate')?.addEventListener('click', async () => {
-    if (overdueClosingDate && date > overdueClosingDate) {
-      alert(`${overdueClosingDate} 처리가 아직 끝나지 않았습니다.\n먼저 해당 날짜를 처리한 뒤 다음 날짜를 확인하세요.`);
-      selectedProductionDate = null;
-      selectedDateProductions = [];
-      selectedDateBlockingData = null;
-      closeModal();
-      renderMainLayout();
-      return;
-    }
-    selectedProductionDate = date;
-    selectedDateProductions = calendarProductions.filter(p => p.date === date);
-    selectedDateBlockingData = await getAllBlockingItems(date);
-    closeModal();
-    renderMainLayout();
+    try { if (await selectProductionDate(date)) closeModal(); }
+    catch (error) { alert(error.message); }
   });
 }
 
@@ -961,6 +1080,7 @@ const PRODUCTION_LOG_ACTIONS = ['production', 'repackaging', 'pretreat', 'event'
 // [묶음 6C-2] action:subAction 단위 카테고리 오버라이드
 // action만으로 결정 안 되는 경우. meat은 사무(입출고)+생산(adjust) 혼재 → adjust만 생산으로.
 const LOG_CATEGORY_OVERRIDE = {
+  'production:receiptEmergencyEdit': 'office',
   'meat:adjust': 'production',  // 원육 수동 조정 (3개 탭 모두) — 운영자 결정 ① A
 };
 
@@ -2054,13 +2174,19 @@ async function prepareReceiptAction(productionId) {
     const initial = await createServerReadScope().getDoc(doc(db, 'productions', productionId));
     if (!initial.exists()) throw new Error('생산 자료가 삭제되었습니다.');
     const first = initial.data();
-    const action = await openAction({ refs: [
-      'productions/' + productionId, 'recipes/' + first.recipeId,
-      'settings/systemValues', 'closings/' + first.date,
-    ] });
+    const refs = ['productions/' + productionId, 'recipes/' + first.recipeId,
+      'settings/systemValues', 'closings/' + first.date];
+    if (first.receivedRevision) refs.push(`productTransferRequests/productions:${productionId}:${first.receivedRevision}`);
+    const history = await createServerReadScope().getDocs(query(collection(db, 'productTransferRequests'), where('sourceId', '==', productionId)));
+    for (const item of history.docs) {
+      const data = item.data();
+      const path = `productTransferRequests/${item.id}`;
+      if (data.sourceApp === 'production' && data.sourceCollection === 'productions' && !refs.includes(path)) refs.push(path);
+    }
+    const action = await openAction({ refs });
     const [p, recipe, sysVals] = action.values;
-    if (!p || p.status === 'deleted' || p.recipeId !== first.recipeId || p.date !== first.date) throw new Error('생산 정보가 변경되었습니다. 다시 열어주세요.');
-    return { action, p, recipe, sysVals: sysVals || {} };
+    if (!p || p.status === 'deleted' || p.recipeId !== first.recipeId || p.date !== first.date || (p.receivedRevision || 0) !== (first.receivedRevision || 0)) throw new Error('생산 정보가 변경되었습니다. 다시 열어주세요.');
+    return { action, refs, p, recipe, sysVals: sysVals || {} };
   } catch (error) { alert(error.message); return null; }
 }
 
@@ -2099,7 +2225,7 @@ async function gateClosedReceiptEdit(dateStr) {
   }
   const reason = await showPromptModal({
     title: '마감된 입고 수량 긴급 수정',
-    message: `${dateStr}는 마감된 날짜입니다. 마감 해제 없이 입고 수량만 고칩니다.<br>재고 스냅샷에는 영향이 없고, 사무 로그에 긴급 수정으로 남습니다.<br>재고앱에 이미 입고 완료된 건이면 재고앱에서 되돌리기 후 정정 건을 받아야 합니다.`,
+    message: `${dateStr}는 마감된 날짜입니다. 마감 해제 없이 입고 수량만 고칩니다.<br>재고 스냅샷에는 영향이 없고, 사무 로그에 긴급 수정으로 남습니다.<br>재고앱에 이미 입고 완료된 건이면 재고앱에서 기존 입고와의 차이만 정정 처리해야 합니다.`,
     label: '사유',
     placeholder: '예: 판수 오입력 정정',
     required: true,
@@ -2120,7 +2246,7 @@ function getMainRoleStaffLabel() {
 async function openProductReceiptModal(productionId) {
   const prepared = await prepareReceiptAction(productionId);
   if (!prepared) return;
-  const { action, p, recipe, sysVals } = prepared;
+  const { action, refs, p, recipe, sysVals } = prepared;
   if (!p || p.category !== 'raw') return; // 동결건조 제품입고는 Phase 3
   if (p.date > getToday()) {
     alert('미래 날짜의 제품 입고는 입력할 수 없습니다.');
@@ -2129,6 +2255,11 @@ async function openProductReceiptModal(productionId) {
   const closedGate = await gateClosedReceiptEdit(p.date);
   if (!closedGate.allowed) return;
   const emergency = closedGate.emergency;
+  let correctionReason = emergency?.reason;
+  if (!correctionReason && action.values.slice(4).some(item => item?.status === 'completed' || item?.status === '입고완료')) {
+    correctionReason = await showPromptModal({ title: '입고 수량 정정', message: '재고앱에서 이미 입고된 생산입니다. 정정 수량과 기존 입고의 차이만 재고앱에 반영합니다.', label: '사유', required: true, confirmText: '정정 진행' });
+    if (correctionReason === null) return;
+  }
   if (p.received) {
     const ok = await showConfirmModal({
       title: '입고완료 수정',
@@ -2197,13 +2328,14 @@ async function openProductReceiptModal(productionId) {
   const cleanup = () => overlay?.remove();
 
   function compute() {
-    const plates = parseInt(platesEl.value, 10);
-    const loose = parseInt(looseEl.value, 10) || 0;
-    if (!Number.isInteger(plates) || plates < 0 || loose < 0) {
-      resultEl.textContent = '판수를 입력하세요.';
+    const plates = platesEl.value.trim() === '' ? NaN : Number(platesEl.value);
+    const loose = Number(looseEl.value || 0);
+    if (!Number.isInteger(plates) || plates < 0 || !Number.isInteger(loose) || loose < 0) {
+      resultEl.textContent = '판수와 낱개는 0 이상의 정수로 입력하세요.';
       return null;
     }
     const totalPacks = plates * packsPerPlate + loose;
+    if (!Number.isSafeInteger(totalPacks)) { resultEl.textContent = '총 팩수를 확인해주세요.'; return null; }
     const boxes = Math.floor(totalPacks / 10) / 2;
     const remainder = totalPacks % 10;
     resultEl.innerHTML = `총 <b>${totalPacks}</b>팩 → <b>${boxes}</b>박스 + <b>${remainder}</b>낱개`;
@@ -2218,80 +2350,22 @@ async function openProductReceiptModal(productionId) {
     const r = compute();
     if (!r) { platesEl.focus(); return; }
     const method = document.getElementById('pr_method').value || null;
-    const revision = (p.receivedRevision || 0) + 1;
     const button = event.currentTarget;
     if (button.disabled) return;
     button.disabled = true;
+    let saved = false;
     try {
-      await action.confirm();
-      if (!emergency && await blockIfClosed(p.date)) return;
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'productions', p.id), {
-        received: true,
-        receivedMethod: method,
-        receivedPlates: r.plates,
-        receivedLoosePacks: r.loose,
-        receivedTotalPacks: r.totalPacks,
-        receivedBox: r.boxes,
-        receivedRemainder: r.remainder,
-        receivedRevision: revision,
-        receivedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      const idempotencyKey = `productions:${p.id}:${revision}`;
-      batch.set(doc(db, 'productTransferRequests', idempotencyKey), {
-        idempotencyKey,
-        sourceApp: 'production',
-        sourceCollection: 'productions',
-        sourceId: p.id,
-        eventType: 'productReceipt',
-        revision,
-        supersedesRevision: revision > 1 ? revision - 1 : null,
-        status: 'pending',
-        category: 'raw',
-        recipeId: p.recipeId,
-        recipeName: p.recipeName,
-        target,
-        plates: r.plates,
-        packs: r.totalPacks,
-        boxes: r.boxes,
-        remainderPacks: r.remainder,
-        producedDate: p.date,
-        staff: p.staffName || '',
-        createdAt: serverTimestamp(),
-      });
-      await batch.commit();
-      if (emergency) {
-        const staffLabel = getMainRoleStaffLabel();
-        await recordActivity({
-          action: 'production',
-          subAction: 'receiptEmergencyEdit',
-          date: p.date,
-          staff: staffLabel,
-          message: `마감된 입고 수량 긴급 수정 — ${p.recipeName} ${p.receivedTotalPacks ?? '-'}팩 → ${r.totalPacks}팩 (${r.boxes}박스+${r.remainder}낱개) / 사유: ${emergency.reason} / 담당: ${staffLabel}`,
-          details: {
-            productionId: p.id,
-            recipeId: p.recipeId,
-            recipeName: p.recipeName,
-            beforeTotalPacks: p.receivedTotalPacks ?? null,
-            afterTotalPacks: r.totalPacks,
-            beforePlates: p.receivedPlates ?? null,
-            afterPlates: r.plates,
-            revision,
-            reason: emergency.reason,
-          },
-        });
-      }
+      await saveProductReceipt({ action, refs, p, target, result: r, method, emergency, correctionReason, staff: getMainRoleStaffLabel() });
+      saved = true;
       cleanup();
       await loadAllData();
       if (selectedProductionDate) {
-        selectedDateProductions = calendarProductions.filter(p => p.date === selectedProductionDate);
-        selectedDateBlockingData = await getAllBlockingItems(selectedProductionDate);
+        await selectProductionDate(selectedProductionDate);
       }
       renderMainLayout();
     } catch (err) {
       console.error('[receipt] save failed:', err);
-      alert('제품 입고 저장 중 오류가 발생했습니다: ' + (err.message || err));
+      alert((saved ? '제품 입고 저장은 완료됐지만 화면을 갱신하지 못했습니다. 다시 불러와주세요: ' : '제품 입고 저장 중 오류가 발생했습니다: ') + (err.message || err));
     } finally { button.disabled = false; }
   });
 }
@@ -2311,7 +2385,7 @@ async function loadReceiptStaffOptions(groups = ['senior', 'office']) {
 async function openFreezeDryReceiptModal(productionId) {
   const prepared = await prepareReceiptAction(productionId);
   if (!prepared) return;
-  const { action, p, recipe, sysVals } = prepared;
+  const { action, refs, p, recipe, sysVals } = prepared;
   if (!p || p.category !== 'freezeDry') return;
   if (p.date > getToday()) {
     alert('미래 날짜의 동결건조 입고는 입력할 수 없습니다.');
@@ -2403,8 +2477,7 @@ async function openFreezeDryReceiptModal(productionId) {
       cleanup();
       await loadAllData();
       if (selectedProductionDate) {
-        selectedDateProductions = calendarProductions.filter(p => p.date === selectedProductionDate);
-        selectedDateBlockingData = await getAllBlockingItems(selectedProductionDate);
+        await selectProductionDate(selectedProductionDate);
       }
       renderMainLayout();
     } catch (err) {
@@ -3693,6 +3766,9 @@ async function handleRefreshCompletion() {
 
 // [묶음 6E-4] selectedDate 모드 해제 — 1번 화면을 다시 오늘 기준(또는 마감 후 다음 영업일)으로 표시
 function handleBackToToday() {
+  selectedDateRequest++;
+  stopSelectedDateWatcher(pendingSelectedDateWatcher);
+  stopSelectedDateWatcher(selectedDateWatcher);
   selectedProductionDate = null;
   selectedDateProductions = [];
   selectedDateBlockingData = null;
@@ -3741,33 +3817,49 @@ registerCloseModal('main', function() {
 
 // Preparation is display-only: no DOM installation or automatic-log flush.
 async function prepareMainModel(scope, {today=getToday(),weekOffset=0}={}) {
-  await ensureHolidaysCache(scope);
+  // These reads do not depend on the holiday calendar. Start them while it loads.
+  const guarded = pending => { pending.catch(() => {}); return pending; };
   const prefetchedLogs = fetchCombinedLogs(scope);
   prefetchedLogs.catch(() => {});
   scope.getDocs(query(collection(db, 'events'), where('date', '==', today))).catch(() => {});
   scope.getDocs(query(collection(db, 'schedules'), where('date', '==', today))).catch(() => {});
   scope.getDocs(query(collection(db, 'supplementTypes'), where('active', '==', true))).catch(() => {});
   scope.getDocs(collection(db, 'supplementStock')).catch(() => {});
+  const recipeRead = guarded(scope.getDocs(collection(db, 'recipes')));
+  const meatTypeRead = guarded(scope.getDocs(collection(db, 'meatTypes')));
+  const meatRead = guarded(scope.getDocs(collection(db, 'meatStocks')));
+  const eggRead = guarded(scope.getDoc(doc(db, 'eggStock', 'global')));
+  const completionRead = guarded(scope.getDoc(doc(db, 'productionCompletion', today)));
+  const calendarRead = guarded(fetchCalendarData(weekOffset, scope));
+  const alertsRead = guarded(scope.once('equipmentAlerts:' + today, () => loadPartAlerts(today, scope)));
+  await ensureHolidaysCache(scope);
   const nextBizDay = getNextBusinessDay(today);
+  const productionsRead = loadMainProductions([today,nextBizDay],scope);
+  const overdueClosingRead = findActionableClosingDate(today, null, scope);
+  // When there is no overdue day, today's checks are needed. Running them now
+  // removes an otherwise serial round trip from the normal main-page path.
+  const todayBlocksRead = getAllBlockingItems(today, scope);
+  todayBlocksRead.catch(() => {});
 
-  const [prodSnap, recipeSnap, meatTypeSnap, meatSnap, eggSnap, compSnap,
+  const [productionRows, recipeSnap, meatTypeSnap, meatSnap, eggSnap, compSnap,
     overdueClosing, calendar, alerts] = await Promise.all([
-    scope.getDocs(query(collection(db, 'productions'), orderBy('sortOrder'))),
-    scope.getDocs(collection(db, 'recipes')),
-    scope.getDocs(collection(db, 'meatTypes')),
-    scope.getDocs(collection(db, 'meatStocks')),
-    scope.getDoc(doc(db, 'eggStock', 'global')),
-    scope.getDoc(doc(db, 'productionCompletion', today)),
-    findActionableClosingDate(today, null, scope),
-    fetchCalendarData(weekOffset, scope),
-    scope.once('equipmentAlerts:' + today, () => loadPartAlerts(today, scope)),
+    productionsRead,
+    recipeRead,
+    meatTypeRead,
+    meatRead,
+    eggRead,
+    completionRead,
+    overdueClosingRead,
+    calendarRead,
+    alertsRead,
   ]);
-  const allProds = prodSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   const overdueDate = overdueClosing?.date || null;
-  const [overdueCompSnap, blocks] = await Promise.all([
+  const [overdueCompSnap, blocks, overdueProductionRows] = await Promise.all([
     overdueDate ? scope.getDoc(doc(db, 'productionCompletion', overdueDate)) : null,
-    overdueClosing?.blockingData || getAllBlockingItems(today, scope),
+    overdueClosing?.blockingData || todayBlocksRead,
+    overdueDate ? loadMainProductions([overdueDate,getNextBusinessDay(overdueDate)],scope) : [],
   ]);
+  const allProds = combineMainProductions(productionRows, overdueProductionRows);
   const logs=await prefetchedLogs;
   const rows=snap=>snap.docs.map(d=>({id:d.id,...d.data()}));
   const row=snap=>snap?.exists()?{id:snap.id,...snap.data()}:null;
@@ -3783,14 +3875,35 @@ export function preparePage({cacheOnly=true}={}) {
 async function renderInstantMain({force=false}={}) {
   const content=document.getElementById('mainContent'),today=getToday(),weekOffset=calendarWeekOffset;
   const key=JSON.stringify([today,weekOffset]);
-  selectedProductionDate=null;selectedDateProductions=[];selectedDateBlockingData=null;
+  const pageContext = getPageContext();
+  if (selectedDatePage !== pageContext) {
+    selectedDatePage = pageContext; selectedDateRequest++;
+    stopSelectedDateWatcher(pendingSelectedDateWatcher);
+    stopSelectedDateWatcher(selectedDateWatcher);
+    selectedProductionDate=null;selectedDateProductions=[];selectedDateBlockingData=null;
+    refreshSelectedDate = pageRefresh(mainResource, () => {
+      const date = selectedProductionDate;
+      return date ? selectProductionDate(date) : Promise.resolve();
+    });
+    registerPageCleanup(() => {
+      stopSelectedDateWatcher(pendingSelectedDateWatcher);
+      stopSelectedDateWatcher(selectedDateWatcher);
+      refreshSelectedDate = null;
+    });
+  }
   const refresh=pageRefresh(mainResource,renderInstantMain);
   const model=await mainResource.load(scope=>prepareMainModel(scope,{today,weekOffset}),{key,force,onChange:event=>{
-    if(selectedProductionDate){showRefreshError(content);return;}
+    if (event.error?.code === 'permission-denied') {
+      sessionStore.clear();
+      content.textContent = '접근 권한을 다시 확인하려면 새로고침해주세요.';
+      return;
+    }
     refresh(event);
   }});
   if(!model||!content.isConnected||currentMenu!=='main')return;
-  installMainModel(model,{detached:true});renderMainLayout();maybeShowEquipmentPopup();
+  installMainModel(model,{detached:true});
+  if (selectedProductionDate && force) await selectProductionDate(selectedProductionDate);
+  renderMainLayout();maybeShowEquipmentPopup();
   const revision=mainResource.viewRevision,page=getPageContext();
   if(mainAlertRevision===revision.id)return;
   mainAlertRevision=revision.id;

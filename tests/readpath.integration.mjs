@@ -9,7 +9,7 @@ import { createListenerPool } from '../src/state/listenerPool.js';
 import { environment } from './helpers/modules.mjs';
 const host=process.env.FIRESTORE_EMULATOR_HOST;
 if(host!=='127.0.0.1:8088'||!process.env.GCLOUD_PROJECT?.startsWith('demo-'))throw Error('Integration requires the isolated demo emulator.');
-const require=createRequire(resolve(process.env.READPATH_INVENTORY_REPO,'package.json'));
+const require=createRequire(resolve('package.json'));
 const sdk=require('firebase/firestore');
 // SDK validation rejects plain objects created in a different Node vm realm.
 // Normalize only data containers at that test boundary; retain SDK sentinels/refs.
@@ -24,6 +24,32 @@ const claims=role=>({app:['production'],roles:{production:role}});
 const admin=env.authenticatedContext('readpath-admin',claims('admin')).firestore();
 const reader=env.authenticatedContext('readpath-office',claims('office')).firestore();
 test.after(async()=>env.cleanup());
+
+test('real SDK concurrent closed receipt corrections commit exactly one revision and log',async()=>{
+  const date='2026-07-01',id='receipt-concurrent';
+  const refs=[`productions/${id}`,'recipes/receipt-recipe','settings/systemValues',`closings/${date}`,`productTransferRequests/productions:${id}:1`];
+  await env.withSecurityRulesDisabled(async context=>{
+    const db=context.firestore();
+    await Promise.all([
+      sdk.setDoc(sdk.doc(db,refs[0]),{date,recipeId:'receipt-recipe',recipeName:'검증',category:'raw',target:'cat',status:'active',received:true,receivedRevision:1,receivedTotalPacks:100}),
+      sdk.setDoc(sdk.doc(db,refs[1]),{name:'검증',packsPerPlate:100}),
+      sdk.setDoc(sdk.doc(db,refs[2]),{packsPerPlateCat:100}),
+      sdk.setDoc(sdk.doc(db,refs[3]),{status:'closed'}),
+      sdk.setDoc(sdk.doc(db,refs[4]),{status:'pending'}),
+    ]);
+  });
+  const vm=await environment();vm.synthetic('firebase/firestore',transactionSdk);
+  vm.synthetic(resolve('src/firebase.js'),{db:reader,auth:{currentUser:{uid:'readpath-office',getIdTokenResult:async()=>({claims:claims('office')})}}});
+  const {openAction}=await vm.load('src/services/actionGateway.js');
+  const {saveProductReceipt}=await vm.load('src/services/productReceipt.js');
+  const actions=await Promise.all([openAction({refs}),openAction({refs})]);
+  const results=await Promise.allSettled(actions.map(action=>saveProductReceipt({action,refs,p:action.values[0],target:'cat',result:{plates:2,loose:0,totalPacks:200,boxes:10,remainder:0},method:null,emergency:{reason:'동시 수정 검증'},staff:'사무실'})));
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  assert.equal((await sdk.getDocFromServer(sdk.doc(reader,refs[0]))).data().receivedRevision,2);
+  assert.equal((await sdk.getDocFromServer(sdk.doc(reader,`productTransferRequests/productions:${id}:2`))).data().packs,200);
+  const logs=await sdk.getDocsFromServer(sdk.query(sdk.collection(reader,'activityLogs'),sdk.where('subAction','==','receiptEmergencyEdit')));
+  assert.equal(logs.docs.filter(d=>d.data().details?.productionId===id).length,1);
+});
 test('real SDK background revision cannot authorize a stale displayed form',async()=>{
  const vm=await environment({session:true,instantRoutes:['egg']});vm.synthetic('firebase/firestore',transactionSdk);
  vm.synthetic(resolve('src/firebase.js'),{db:reader,auth:{currentUser:{uid:'readpath-office',getIdTokenResult:async()=>({claims:claims('office')})}}});
@@ -75,6 +101,35 @@ test('date IN queries preserve missing closing docs and actual server semantics'
   assert.deepEqual(s.docs.map(d=>d.id),['2026-09-11']);
 });
 
+test('real SDK supports dated production and timestamp-cursor history reads',async()=>{
+  await env.withSecurityRulesDisabled(async context=>{
+    const db=context.firestore();
+    await Promise.all([
+      sdk.setDoc(sdk.doc(db,'productions/paged-a'),{date:'2026-08-12',sortOrder:1,status:'active'}),
+      sdk.setDoc(sdk.doc(db,'productions/paged-b'),{date:'2026-08-11',sortOrder:2,status:'active'}),
+      sdk.setDoc(sdk.doc(db,'meatLogs/paged-a'),{stage:'frozen',timestamp:sdk.Timestamp.fromMillis(2000),meatTypeId:'m1'}),
+      sdk.setDoc(sdk.doc(db,'meatLogs/paged-b'),{stage:'frozen',timestamp:sdk.Timestamp.fromMillis(1000),meatTypeId:'m1'}),
+      sdk.setDoc(sdk.doc(db,'bagLogs/paged-a'),{bagTypeId:'b1',timestamp:sdk.Timestamp.fromMillis(2000)}),
+      sdk.setDoc(sdk.doc(db,'bagLogs/paged-b'),{bagTypeId:'b1',timestamp:sdk.Timestamp.fromMillis(1000)}),
+    ]);
+  });
+  const productions=sdk.collection(reader,'productions');
+  const productionQuery=sdk.query(productions,sdk.where('date','<','2026-08-13'),sdk.orderBy('date','desc'),sdk.limit(1));
+  const first=await sdk.getDocsFromServer(productionQuery);
+  assert.equal(first.docs[0].id,'paged-a');
+  const second=await sdk.getDocsFromServer(sdk.query(productions,sdk.where('date','<','2026-08-13'),sdk.orderBy('date','desc'),sdk.startAfter(first.docs[0]),sdk.limit(1)));
+  assert.equal(second.docs[0].id,'paged-b');
+  const dated=await sdk.getDocsFromServer(sdk.query(productions,sdk.where('date','in',['2026-08-11','2026-08-12'])));
+  assert.deepEqual(dated.docs.map(doc=>doc.id),['paged-a','paged-b']);
+  const meat=sdk.collection(reader,'meatLogs');
+  const recent=await sdk.getDocsFromServer(sdk.query(meat,sdk.where('stage','==','frozen'),sdk.orderBy('timestamp','desc'),sdk.limit(1)));
+  assert.equal(recent.docs[0].id,'paged-a');
+  const older=await sdk.getDocsFromServer(sdk.query(meat,sdk.where('stage','==','frozen'),sdk.orderBy('timestamp','desc'),sdk.startAfter(recent.docs[0]),sdk.limit(1)));
+  assert.equal(older.docs[0].id,'paged-b');
+  const bag=await sdk.getDocsFromServer(sdk.query(sdk.collection(reader,'bagLogs'),sdk.where('bagTypeId','==','b1'),sdk.orderBy('timestamp','desc'),sdk.limit(30)));
+  assert.equal(bag.docs[0].id,'paged-a');
+});
+
 test('real SDK query insert aborts a retained-page command with zero business writes',async()=>{
   const vm=await environment({session:true});vm.synthetic('firebase/firestore',sdk);
   vm.synthetic(resolve('src/firebase.js'),{db:reader,auth:{currentUser:{uid:'readpath-office',getIdTokenResult:async()=>({claims:claims('office')})}}});
@@ -103,4 +158,71 @@ test('real SDK supplement commands keep atomic stock/log writes and abort negati
   await refresh();await assert.rejects(()=>page.saveAdjustCell('fixture-sku','2026-09-14',-16,'fixture','fixture'),/NEGATIVE_SUPPLEMENT_STOCK/);
   assert.equal(resource.blocked,false);assert.equal((await sdk.getDocsFromServer(sdk.query(sdk.collection(reader,'supplementLogs'),sdk.where('supplementTypeId','==','fixture-sku')))).size,1);
   (await vm.load('src/state/sessionStore.js')).sessionStore.clear();
+});
+
+
+const inventoryReader=env.authenticatedContext('receipt-inventory',{app:['inventory'],roles:{inventory:'owner'}}).firestore();
+async function seedReceiptHead(id, revision=2, previousStatus='pending') {
+ await env.withSecurityRulesDisabled(async context=>{
+  const db=context.firestore();
+  await sdk.setDoc(sdk.doc(db,`productions/${id}`),{category:'raw',receivedRevision:revision});
+  for (let r=1;r<=revision;r++) await sdk.setDoc(sdk.doc(db,`productTransferRequests/productions:${id}:${r}`),{
+   category:'raw',sourceApp:'production',sourceCollection:'productions',sourceId:id,eventType:'productReceipt',revision:r,status:r===1?previousStatus:'pending',
+  });
+ });
+}
+test('shared rules deny stale and metadata-free raw completion, including an atomic companion write',async()=>{
+ const id='rule-stale';await seedReceiptHead(id);
+ const batch=sdk.writeBatch(inventoryReader);
+ batch.update(sdk.doc(inventoryReader,`productTransferRequests/productions:${id}:1`),{status:'completed'});
+ batch.update(sdk.doc(inventoryReader,`productTransferRequests/productions:${id}:2`),{reviewedBy:'atomic-probe'});
+ await assertFails(batch.commit());
+ assert.equal((await sdk.getDoc(sdk.doc(inventoryReader,`productTransferRequests/productions:${id}:2`))).data().reviewedBy,undefined);
+ await assertSucceeds(sdk.updateDoc(sdk.doc(inventoryReader,`productTransferRequests/productions:${id}:2`),{status:'completed'}));
+ await assertFails(sdk.getDoc(sdk.doc(inventoryReader,`productions/${id}`)));
+ await env.withSecurityRulesDisabled(context=>sdk.setDoc(sdk.doc(context.firestore(),'productTransferRequests/legacy-raw'),{category:'raw',status:'pending'}));
+ await assertFails(sdk.updateDoc(sdk.doc(inventoryReader,'productTransferRequests/legacy-raw'),{status:'입고완료'}));
+});
+test('completed receipt requires reversal before production correction',async()=>{
+ const id='rule-reversal';await seedReceiptHead(id,1,'입고완료');
+ const correct=()=>{
+  const batch=sdk.writeBatch(reader);
+  batch.update(sdk.doc(reader,`productions/${id}`),{receivedRevision:2});
+  batch.set(sdk.doc(reader,`productTransferRequests/productions:${id}:2`),{category:'raw',sourceApp:'production',sourceCollection:'productions',sourceId:id,eventType:'productReceipt',revision:2,status:'pending'});
+  return batch.commit();
+ };
+ await assertFails(correct());
+ await assertSucceeds(sdk.updateDoc(sdk.doc(inventoryReader,`productTransferRequests/productions:${id}:1`),{status:'pending'}));
+ await assertSucceeds(correct());
+ await assertFails(sdk.updateDoc(sdk.doc(inventoryReader,`productTransferRequests/productions:${id}:1`),{status:'completed'}));
+});
+test('production correction racing inventory completion permits exactly one commit',async()=>{
+ const id='rule-race';await seedReceiptHead(id,1);
+ const batch=sdk.writeBatch(reader);
+ batch.update(sdk.doc(reader,`productions/${id}`),{receivedRevision:2});
+ batch.set(sdk.doc(reader,`productTransferRequests/productions:${id}:2`),{category:'raw',sourceApp:'production',sourceCollection:'productions',sourceId:id,eventType:'productReceipt',revision:2,status:'pending'});
+ const results=await Promise.allSettled([batch.commit(),sdk.updateDoc(sdk.doc(inventoryReader,`productTransferRequests/productions:${id}:1`),{status:'completed'})]);
+ assert.equal(results.filter(result=>result.status==='fulfilled').length,1);
+});
+
+
+test('real production service creates a linked adjustment using inventory actual quantity as its basis', async()=>{
+ const id='receipt-actual-basis', date='2026-07-01';
+ const refs=[`productions/${id}`,'recipes/basis-recipe','settings/systemValues',`closings/${date}`,`productTransferRequests/productions:${id}:1`];
+ await env.withSecurityRulesDisabled(async context=>{
+  const db=context.firestore();
+  await sdk.setDoc(sdk.doc(db,refs[0]),{date,recipeId:'basis-recipe',recipeName:'검증',category:'raw',target:'cat',status:'active',received:true,receivedRevision:1,receivedTotalPacks:100});
+  await sdk.setDoc(sdk.doc(db,refs[1]),{packsPerPlate:100});
+  await sdk.setDoc(sdk.doc(db,refs[2]),{packsPerPlateCat:100});
+  await sdk.setDoc(sdk.doc(db,refs[3]),{status:'closed'});
+  await sdk.setDoc(sdk.doc(db,refs[4]),{category:'raw',sourceApp:'production',sourceCollection:'productions',sourceId:id,eventType:'productReceipt',revision:1,status:'completed',boxes:5,remainderPacks:0,actualBoxes:6,actualRemainderPacks:2});
+ });
+ const vm=await environment();vm.synthetic('firebase/firestore',transactionSdk);
+ vm.synthetic(resolve('src/firebase.js'),{db:reader,auth:{currentUser:{uid:'readpath-office',getIdTokenResult:async()=>({claims:claims('office')})}}});
+ const {openAction}=await vm.load('src/services/actionGateway.js');const action=await openAction({refs});
+ const {saveProductReceipt}=await vm.load('src/services/productReceipt.js');
+ await saveProductReceipt({action,refs,p:action.values[0],target:'cat',result:{plates:2,loose:0,totalPacks:200,boxes:10,remainder:0},method:null,emergency:{reason:'실측 기준 정정'},staff:'사무실'});
+ const request=(await sdk.getDocFromServer(sdk.doc(reader,`productTransferRequests/productions:${id}:2`))).data();
+ assert.equal(request.receiptMode,'adjustment');assert.equal(request.correctionOf,`productions:${id}:1`);
+ assert.equal(request.basisBoxes,6);assert.equal(request.basisRemainderPacks,2);assert.equal(request.boxes,10);
 });

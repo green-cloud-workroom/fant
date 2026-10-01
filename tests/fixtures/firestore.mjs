@@ -24,12 +24,16 @@ export function makeFirestore({ latencyMs = 0, alertCount = 80 } = {}) {
   };
   const reference = (...parts) => ({ path:parts.filter(p=>typeof p === 'string').join('/'), conditions:[] });
   const delay = () => state.latencyMs ? new Promise(resolve=>setTimeout(resolve,state.latencyMs)) : Promise.resolve();
-  const snapshot = row => ({ id:row?.id, exists:()=>Boolean(row), data:()=>{if(!row)return undefined;const {id,...data}=row;return data;}, metadata:{fromCache:false,hasPendingWrites:false} });
+  // Firestore snapshots keep their observed value when the backing row changes.
+  const snapshot = row => {
+    const saved = row ? structuredClone(row) : null;
+    return { id:saved?.id, exists:()=>Boolean(saved), data:()=>{if(!saved)return undefined;const {id,...data}=saved;return structuredClone(data);}, metadata:{fromCache:false,hasPendingWrites:false} };
+  };
   const getRow = ref => { const parts=ref.path.split('/');const id=parts.pop();return (state.rows[parts.join('/')]||[]).find(row=>row.id===id); };
   const setRow = (ref,data) => {const parts=ref.path.split('/');const id=parts.pop();const key=parts.join('/');const rows=state.rows[key]||=[];const i=rows.findIndex(r=>r.id===id);const row={id,...data};if(i<0)rows.push(row);else rows[i]=row;state.writes.push(ref.path);};
   const api = {
     collection:(_,...parts)=>reference(...parts), doc:(_,...parts)=>reference(...parts), documentId:()=> '__name__',
-    where:(field,op,value)=>({type:'where',field,op,value}), orderBy:(field,direction='asc')=>({type:'order',field,direction}), limit:n=>({type:'limit',n}), startAfter:()=>({type:'cursor'}),
+    where:(field,op,value)=>({type:'where',field,op,value}), orderBy:(field,direction='asc')=>({type:'order',field,direction}), limit:n=>({type:'limit',n}), startAfter:snap=>({type:'cursor',id:snap.id}),
     query:(ref,...conditions)=>({...ref,conditions:[...(ref.conditions||[]),...conditions]}),
     queryEqual:(a,b)=>JSON.stringify(a)===JSON.stringify(b),
     async getDoc(ref) {state.reads.push({kind:'doc',...ref});await delay();if(state.failures.has(ref.path))throw Error('fixture read failed: '+ref.path);return snapshot(getRow(ref));},
@@ -41,7 +45,8 @@ export function makeFirestore({ latencyMs = 0, alertCount = 80 } = {}) {
       for(const c of ref.conditions||[]) {
         const fieldValue=r=>c.field==='__name__'?r.id:r[c.field];
         if(c.type==='where')rows=rows.filter(r=>{const v=fieldValue(r);return c.op==='in'?c.value.includes(v):c.op==='=='?v===c.value:c.op==='>='?v>=c.value:c.op==='<='?v<=c.value:c.op==='<'?v<c.value:c.op==='>'?v>c.value:false;});
-        if(c.type==='order')rows=rows.filter(r=>fieldValue(r)!==undefined).sort((a,b)=>{const av=fieldValue(a),bv=fieldValue(b);return (av<bv?-1:av>bv?1:0)*(c.direction==='desc'?-1:1);});
+        if(c.type==='order')rows=rows.filter(r=>fieldValue(r)!==undefined).sort((a,b)=>{const av=fieldValue(a),bv=fieldValue(b),direction=c.direction==='desc'?-1:1;return ((av<bv?-1:av>bv?1:0)||(a.id<b.id?-1:a.id>b.id?1:0))*direction;});
+        if(c.type==='cursor'){const index=rows.findIndex(r=>r.id===c.id);rows=index<0?[]:rows.slice(index+1);}
         if(c.type==='limit')rows=rows.slice(0,c.n);
       }
       const docs=rows.map(snapshot);return {docs,empty:docs.length===0,size:docs.length};

@@ -1,5 +1,5 @@
 import { currentMenu } from './app.js';
-import { startNavigation, finishNavigation, failNavigation } from './perf/metrics.js';
+import { startNavigation, observeNavigationContent, finishNavigation, failNavigation } from './perf/metrics.js';
 import { beginPage } from './utils/pageLifecycle.js';
 import { setModalOwner } from './utils/modalManager.js';
 import { isModuleLoadError } from './utils/moduleLoadError.js';
@@ -21,23 +21,77 @@ export function preloadPage(menuId) {
   }
   return modules.get(menuId);
 }
-let warmTimer;
-sessionStore.onClear(()=>clearTimeout(warmTimer));
-function prepareMenuCode() {
+let warmTimer, warmRevision = 0;
+let idleQueue = [];
+let lastIntentRoute = null, lastIntentAt = 0;
+function cancelMenuCodePreparation() {
+  warmRevision++;
   clearTimeout(warmTimer);
-  const queue = MENUS.filter(menu => menu.roles.includes(currentUserRole) && flags.instantRoutes?.includes(menu.id)).map(menu => menu.id);
+  if (typeof cancelIdleCallback === 'function') cancelIdleCallback(warmTimer);
+  warmTimer = null;
+}
+sessionStore.onClear(cancelMenuCodePreparation);
+function mayPrepareMenuCode() {
+  return !document.hidden && navigator.onLine !== false && !navigator.connection?.saveData &&
+    !document.querySelector('.modal-overlay');
+}
+function canOpenRoute(route) {
+  return MENUS.some(menu => menu.id === route && menu.roles.includes(currentUserRole)) &&
+    flags.instantRoutes?.includes(route);
+}
+function scheduleIdlePreparation(revision) {
+  if (revision !== warmRevision || !idleQueue.length) return;
   const next = async () => {
-    if (document.hidden || !queue.length || navigator.onLine===false || navigator.connection?.saveData || document.querySelector('.modal-overlay')) return;
+    if (revision !== warmRevision || !mayPrepareMenuCode()) return;
+    const route = idleQueue.shift();
     try {
-      const route=queue.shift();
-      if(!MENUS.some(menu=>menu.id===route&&menu.roles.includes(currentUserRole)))return;
-      await preloadPage(route);
-      // No speculative Firestore requests: derive only from already observed data.
-      await preparations.get(route)?.({cacheOnly:true});
+      if (canOpenRoute(route)) {
+        await preloadPage(route);
+        if (revision === warmRevision) await preparations.get(route)?.({cacheOnly:true});
+      }
     } catch { /* Foreground handles misses and module errors. */ }
-    warmTimer = setTimeout(next, 100);
+    if (revision === warmRevision) scheduleIdlePreparation(revision);
   };
-  warmTimer = setTimeout(next, 100);
+  if (typeof requestIdleCallback === 'function') {
+    warmTimer = requestIdleCallback(deadline => {
+      if (deadline.timeRemaining() < 8) { scheduleIdlePreparation(revision); return; }
+      next();
+    });
+  } else {
+    warmTimer = setTimeout(next, 1200);
+  }
+}
+function prepareMenuCode() {
+  cancelMenuCodePreparation();
+  idleQueue = MENUS.filter(menu => canOpenRoute(menu.id)).map(menu => menu.id);
+  scheduleIdlePreparation(warmRevision);
+}
+function prepareIntendedRoute(route) {
+  if (!canOpenRoute(route) || !mayPrepareMenuCode()) return;
+  const at = Date.now();
+  if (lastIntentRoute === route && at - lastIntentAt < 1500) return;
+  lastIntentRoute = route; lastIntentAt = at;
+  preloadPage(route).then(() => preparations.get(route)?.({cacheOnly:true})).catch(() => {});
+}
+function resumeMenuCodeAfterInput() {
+  cancelMenuCodePreparation();
+  const revision = warmRevision;
+  warmTimer = setTimeout(() => {
+    if (revision === warmRevision && mayPrepareMenuCode()) scheduleIdlePreparation(revision);
+  }, 1000);
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('pointerover', event => {
+    const route = event.target.closest?.('[data-menu]')?.dataset.menu;
+    prepareIntendedRoute(route);
+  });
+  document.addEventListener('focusin', event => {
+    const route = event.target.closest?.('[data-menu]')?.dataset.menu;
+    prepareIntendedRoute(route);
+  });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) cancelMenuCodePreparation(); });
+  document.addEventListener('pointerdown', resumeMenuCodeAfterInput, true);
+  document.addEventListener('keydown', resumeMenuCodeAfterInput, true);
 }
 
 const pages = {
@@ -59,6 +113,7 @@ const pages = {
 };
 
 export async function renderPage(menuId, options = {}) {
+  cancelMenuCodePreparation();
   const content = document.getElementById('mainContent');
   if (!content) return;
   const context = beginPage(content, menuId);
@@ -70,6 +125,7 @@ export async function renderPage(menuId, options = {}) {
     return;
   }
   content.innerHTML = '<div style="padding:24px;"><p>' + getMenuLabel(menuId) + ' 로딩 중...</p></div>';
+  observeNavigationContent(measurement,content,context.isCurrent);
   try {
     const render = await (flags.instantRoutes?.includes(menuId) ? preloadPage(menuId) : load());
     if (document.getElementById('mainContent') !== content || currentMenu !== menuId) return;
