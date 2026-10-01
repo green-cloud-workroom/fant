@@ -25,6 +25,7 @@ import {
 } from 'firebase/firestore';
 import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDayByType as getNextBusinessDay, loadHolidaysCache, ensureHolidaysCache, getHolidaysCache, getHolidayInfoCache, getHolidayDataNotice } from '../utils/date.js';
 import { findActionableClosingDate, getAllBlockingItems } from '../services/closingChecks.js';
+import { isDateClosed } from '../closing.js';
 import { setCurrentMenu, currentUserRole, currentMenu } from '../app.js';
 import { renderLayout } from '../layout.js';
 
@@ -973,6 +974,7 @@ const REQUIRES_ACK_KEYS = new Set([
   'partDue:alert',           // 설비 부품 교체 임박/지남 (자동 — 설비 부품)
   'schedule:completeDiff',   // [묶음 6C-2] 입고 완료 차이 있음
   'closing:refresh',         // [묶음 6E-3] 마감 새로고침 (롤백+재차감)
+  'production:receiptEmergencyEdit', // 마감된 입고 수량 긴급 수정 (대표·사무실)
 ]);
 
 // 로그 → '사무'/'생산'/'무시' 분류 — action:subAction 오버라이드 우선
@@ -2075,6 +2077,45 @@ async function prepareMainCommand(roles) {
   };
 }
 
+// 마감된 입고 수량 긴급 수정 게이트
+//   생식 제품 입고 수량(판수·낱개)은 마감 스냅샷(계란·봉투·원육·동결판·분리작업) 대상이 아니라서
+//   마감 해제 없이 고쳐도 스냅샷이 틀어지지 않음. 대표·사무실만, 사유 필수, 사무 로그에 확인 필수로 기록.
+//   동결건조 입고는 동결판/빵판 lot을 바꿔 스냅샷에 걸리므로 이 게이트를 쓰지 않음(기존 blockIfClosed 유지).
+//   @returns {Promise<{allowed:boolean, emergency:null|{reason:string}}>}
+async function gateClosedReceiptEdit(dateStr) {
+  let closed;
+  try {
+    closed = await isDateClosed(dateStr);
+  } catch (err) {
+    console.error('[receipt] 마감 상태 확인 실패:', err);
+    alert('마감 상태를 서버에서 확인하지 못했습니다. 연결을 확인한 뒤 다시 시도해주세요.');
+    return { allowed: false, emergency: null };
+  }
+  if (!closed) return { allowed: true, emergency: null };
+  if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
+    alert(`${dateStr}는 이미 마감된 날짜입니다.
+수정하려면 마감해제하세요.`);
+    return { allowed: false, emergency: null };
+  }
+  const reason = await showPromptModal({
+    title: '마감된 입고 수량 긴급 수정',
+    message: `${dateStr}는 마감된 날짜입니다. 마감 해제 없이 입고 수량만 고칩니다.<br>재고 스냅샷에는 영향이 없고, 사무 로그에 긴급 수정으로 남습니다.<br>재고앱에 이미 입고 완료된 건이면 재고앱에서 되돌리기 후 정정 건을 받아야 합니다.`,
+    label: '사유',
+    placeholder: '예: 판수 오입력 정정',
+    required: true,
+    confirmText: '긴급 수정 진행',
+  });
+  if (reason === null) return { allowed: false, emergency: null };
+  return { allowed: true, emergency: { reason } };
+}
+
+function getMainRoleStaffLabel() {
+  if (currentUserRole === 'admin') return '대표';
+  if (currentUserRole === 'office') return '사무실';
+  if (currentUserRole === 'production') return '생산실';
+  return '시스템';
+}
+
 // [spec_v27 P2] 생식 제품 입고 모달 — 판수×판당팩수+낱개 → 박스/낱개 환산, productions 완료 + productTransferRequests outbox
 async function openProductReceiptModal(productionId) {
   const prepared = await prepareReceiptAction(productionId);
@@ -2085,7 +2126,9 @@ async function openProductReceiptModal(productionId) {
     alert('미래 날짜의 제품 입고는 입력할 수 없습니다.');
     return;
   }
-  if (await blockIfClosed(p.date)) return;
+  const closedGate = await gateClosedReceiptEdit(p.date);
+  if (!closedGate.allowed) return;
+  const emergency = closedGate.emergency;
   if (p.received) {
     const ok = await showConfirmModal({
       title: '입고완료 수정',
@@ -2181,7 +2224,7 @@ async function openProductReceiptModal(productionId) {
     button.disabled = true;
     try {
       await action.confirm();
-      if (await blockIfClosed(p.date)) return;
+      if (!emergency && await blockIfClosed(p.date)) return;
       const batch = writeBatch(db);
       batch.update(doc(db, 'productions', p.id), {
         received: true,
@@ -2218,6 +2261,27 @@ async function openProductReceiptModal(productionId) {
         createdAt: serverTimestamp(),
       });
       await batch.commit();
+      if (emergency) {
+        const staffLabel = getMainRoleStaffLabel();
+        await recordActivity({
+          action: 'production',
+          subAction: 'receiptEmergencyEdit',
+          date: p.date,
+          staff: staffLabel,
+          message: `마감된 입고 수량 긴급 수정 — ${p.recipeName} ${p.receivedTotalPacks ?? '-'}팩 → ${r.totalPacks}팩 (${r.boxes}박스+${r.remainder}낱개) / 사유: ${emergency.reason} / 담당: ${staffLabel}`,
+          details: {
+            productionId: p.id,
+            recipeId: p.recipeId,
+            recipeName: p.recipeName,
+            beforeTotalPacks: p.receivedTotalPacks ?? null,
+            afterTotalPacks: r.totalPacks,
+            beforePlates: p.receivedPlates ?? null,
+            afterPlates: r.plates,
+            revision,
+            reason: emergency.reason,
+          },
+        });
+      }
       cleanup();
       await loadAllData();
       if (selectedProductionDate) {
