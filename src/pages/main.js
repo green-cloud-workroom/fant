@@ -22,7 +22,7 @@ sessionStore.onClear(() => { mainModelDirty = true; autoLogCoordinator.clear(); 
 import { createAutoLogBatch } from '../services/autoLogs.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocsFromServer as getDocs, doc, addDoc, updateDoc, getDocFromServer as getDoc, query, orderBy, setDoc, where, deleteDoc, serverTimestamp, limit, startAfter, writeBatch
+  collection, getDocsFromServer as getDocs, doc, addDoc, updateDoc, getDocFromServer as getDoc, onSnapshot, query, orderBy, setDoc, where, deleteDoc, serverTimestamp, limit, startAfter, writeBatch
 } from 'firebase/firestore';
 import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDayByType as getNextBusinessDay, loadHolidaysCache, ensureHolidaysCache, getHolidaysCache, getHolidayInfoCache, getHolidayDataNotice } from '../utils/date.js';
 import { findActionableClosingDate, getAllBlockingItems } from '../services/closingChecks.js';
@@ -65,8 +65,47 @@ let selectedDateProductions = [];
 let selectedDateBlockingData = null;
 let selectedDateRequest = 0;
 let selectedDatePage = null;
+let selectedDateWatcher = null;
+let pendingSelectedDateWatcher = null;
+let refreshSelectedDate = null;
+
+function stopSelectedDateWatcher(watcher) {
+  if (!watcher) return;
+  watcher.closed = true;
+  watcher.unsubscribe?.();
+  if (selectedDateWatcher === watcher) selectedDateWatcher = null;
+  if (pendingSelectedDateWatcher === watcher) pendingSelectedDateWatcher = null;
+}
+
+function watchSelectedDate(date, page, epoch) {
+  const watcher = { date, closed: false, version: 0, loading: true, displayedSignature: null, latestSignature: null };
+  const dateQuery = query(collection(db, 'productions'), where('date', '==', date));
+  watcher.unsubscribe = onSnapshot(dateQuery, { includeMetadataChanges: false }, snapshot => {
+    if (watcher.closed || epoch !== sessionStore.epoch || !page?.isCurrent()) return;
+    if (snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
+    watcher.latestSignature = fingerprint(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
+    watcher.version++;
+    if (selectedDateWatcher === watcher && !watcher.loading && watcher.latestSignature !== watcher.displayedSignature) {
+      refreshSelectedDate?.({});
+    }
+  }, error => {
+    if (watcher.closed || epoch !== sessionStore.epoch || !page?.isCurrent()) return;
+    const wasSelected = selectedDateWatcher === watcher;
+    watcher.error = error;
+    stopSelectedDateWatcher(watcher);
+    if (error.code === 'permission-denied') {
+      sessionStore.clear();
+      page.host.replaceChildren();
+      page.host.textContent = '접근 권한을 다시 확인하려면 새로고침해주세요.';
+    }
+    else if (wasSelected) refreshSelectedDate?.({ error });
+  });
+  return watcher;
+}
 sessionStore.onClear(() => {
   selectedDateRequest++;
+  stopSelectedDateWatcher(pendingSelectedDateWatcher);
+  stopSelectedDateWatcher(selectedDateWatcher);
   selectedProductionDate = null;
   selectedDateProductions = [];
   selectedDateBlockingData = null;
@@ -76,6 +115,11 @@ async function selectProductionDate(date) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date) throw new Error('날짜를 확인해주세요.');
   const request = ++selectedDateRequest, page = getPageContext(), epoch = sessionStore.epoch;
   const isCurrent = () => request === selectedDateRequest && epoch === sessionStore.epoch && (!page || page.isCurrent()) && currentMenu === 'main';
+  stopSelectedDateWatcher(pendingSelectedDateWatcher);
+  const watcher = selectedDateWatcher?.date === date ? selectedDateWatcher : watchSelectedDate(date, page, epoch);
+  const newWatcher = watcher !== selectedDateWatcher;
+  if (newWatcher) pendingSelectedDateWatcher = watcher;
+  const observedVersion = watcher.version;
   const scope = createServerReadScope();
   let snapshot, blocks;
   try {
@@ -83,13 +127,24 @@ async function selectProductionDate(date) {
       scope.getDocs(query(collection(db, 'productions'), where('date', '==', date))),
       getAllBlockingItems(date, scope),
     ]);
-  } catch (error) { if (!isCurrent()) return false; throw error; }
-  if (!isCurrent()) return false;
+  } catch (error) { if (newWatcher) stopSelectedDateWatcher(watcher); if (!isCurrent()) return false; throw error; }
+  if (!isCurrent()) { if (newWatcher) stopSelectedDateWatcher(watcher); return false; }
+  if (watcher.closed) throw watcher.error || new Error('선택 날짜 조회를 다시 시도해주세요.');
+  if (newWatcher) {
+    stopSelectedDateWatcher(selectedDateWatcher);
+    selectedDateWatcher = watcher;
+    pendingSelectedDateWatcher = null;
+  }
+  watcher.displayedSignature = fingerprint(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
+  watcher.loading = false;
   selectedProductionDate = date;
   selectedDateProductions = snapshot.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => p.status !== 'deleted')
     .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || a.id.localeCompare(b.id));
   selectedDateBlockingData = blocks;
   renderMainLayout();
+  if (watcher.version > observedVersion && watcher.latestSignature !== watcher.displayedSignature) {
+    setTimeout(() => { if (selectedDateWatcher === watcher) refreshSelectedDate?.({}); }, 0);
+  }
   return true;
 }
 
@@ -101,7 +156,7 @@ export function showProductionDatePicker() {
     <p id="productionDateError" role="alert"></p>
     <div class="modal-actions"><button class="btn-secondary" id="productionDateCancel">취소</button><button class="btn-primary" id="productionDateConfirm">조회</button></div>`);
   const overlay = document.getElementById('modalOverlay');
-  document.getElementById('productionDateCancel').addEventListener('click', () => { selectedDateRequest++; overlay.remove(); });
+  document.getElementById('productionDateCancel').addEventListener('click', () => { selectedDateRequest++; stopSelectedDateWatcher(pendingSelectedDateWatcher); overlay.remove(); });
   document.getElementById('productionDateConfirm').addEventListener('click', async event => {
     const button = event.currentTarget;
     if (button.disabled) return;
@@ -3712,6 +3767,8 @@ async function handleRefreshCompletion() {
 // [묶음 6E-4] selectedDate 모드 해제 — 1번 화면을 다시 오늘 기준(또는 마감 후 다음 영업일)으로 표시
 function handleBackToToday() {
   selectedDateRequest++;
+  stopSelectedDateWatcher(pendingSelectedDateWatcher);
+  stopSelectedDateWatcher(selectedDateWatcher);
   selectedProductionDate = null;
   selectedDateProductions = [];
   selectedDateBlockingData = null;
@@ -3821,7 +3878,18 @@ async function renderInstantMain({force=false}={}) {
   const pageContext = getPageContext();
   if (selectedDatePage !== pageContext) {
     selectedDatePage = pageContext; selectedDateRequest++;
+    stopSelectedDateWatcher(pendingSelectedDateWatcher);
+    stopSelectedDateWatcher(selectedDateWatcher);
     selectedProductionDate=null;selectedDateProductions=[];selectedDateBlockingData=null;
+    refreshSelectedDate = pageRefresh(mainResource, () => {
+      const date = selectedProductionDate;
+      return date ? selectProductionDate(date) : Promise.resolve();
+    });
+    registerPageCleanup(() => {
+      stopSelectedDateWatcher(pendingSelectedDateWatcher);
+      stopSelectedDateWatcher(selectedDateWatcher);
+      refreshSelectedDate = null;
+    });
   }
   const refresh=pageRefresh(mainResource,renderInstantMain);
   const model=await mainResource.load(scope=>prepareMainModel(scope,{today,weekOffset}),{key,force,onChange:event=>{
@@ -3830,7 +3898,6 @@ async function renderInstantMain({force=false}={}) {
       content.textContent = '접근 권한을 다시 확인하려면 새로고침해주세요.';
       return;
     }
-    if(selectedProductionDate){showRefreshError(content);return;}
     refresh(event);
   }});
   if(!model||!content.isConnected||currentMenu!=='main')return;

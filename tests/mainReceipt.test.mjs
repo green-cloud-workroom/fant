@@ -2,9 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { pageEnvironment } from './helpers/pageDom.mjs';
 
-async function setup(role = 'office') {
+async function setup(role = 'office', { outsideMainQueries = false } = {}) {
   const e = await pageEnvironment('main', { role, instantRoutes: ['main'], instrument: '\nexport { selectProductionDate, openProductReceiptModal, handleBackToToday, renderInstantMain }; export const selectedState=()=>({date:selectedProductionDate,rows:selectedDateProductions});' });
   e.state.rows.productions = [{ id:'past',date:'2026-07-01',recipeId:'r1',recipeName:'과거 생산',category:'raw',target:'cat',status:'completed',received:true,receivedRevision:1,receivedPlates:1,receivedLoosePacks:0,receivedTotalPacks:100,receivedBox:5,receivedRemainder:0,ingredientsSnapshot:[] }];
+  if (outsideMainQueries) e.state.rows.productions.push(...Array.from({length:100},(_,i)=>({
+    id:'recent'+i,date:`2026-08-${String(i%14+1).padStart(2,'0')}`,recipeId:'r1',recipeName:'최근 생산',
+    category:'raw',target:'cat',status:'completed',received:true,ingredientsSnapshot:[],
+  })));
   e.state.rows.recipes[0].packsPerPlate=100;
   e.state.rows.closings.push({id:'2026-07-01',status:'closed'});
   e.state.rows.productTransferRequests=[{id:'productions:past:1',status:'pending'}];
@@ -30,15 +34,101 @@ test('late historical query cannot replace the view after returning to today',as
   finally {await e.cleanup();}
 });
 
-test('refresh notice reloads the selected historical date without navigating the shell',async()=>{
+test('selected historical date refreshes without navigating the shell',async()=>{
   const e=await setup();
   try {
     await e.page.selectProductionDate('2026-07-01');
     e.state.rows.productions[0].receivedTotalPacks=777;
     await e.state.notify('productions');
-    await e.fire('[data-refresh-error] button');
+    for(let i=0;i<30&&e.page.selectedState().rows[0].receivedTotalPacks!==777;i++)await new Promise(resolve=>setTimeout(resolve,20));
     assert.equal(e.page.selectedState().date,'2026-07-01');
     assert.equal(e.page.selectedState().rows[0].receivedTotalPacks,777);
+    assert.ok(!e.document.querySelector('[data-refresh-error]'));
+  } finally {await e.cleanup();}
+});
+
+test('a selected production outside main queries updates after an external change',async()=>{
+  const e=await setup('office',{outsideMainQueries:true});
+  try {
+    await e.page.selectProductionDate('2026-07-01');
+    e.state.rows.productions[0].receivedTotalPacks=777;
+    await e.state.notify('productions');
+    for(let i=0;i<30&&e.page.selectedState().rows[0].receivedTotalPacks!==777;i++)await new Promise(resolve=>setTimeout(resolve,20));
+    assert.equal(e.page.selectedState().rows[0].receivedTotalPacks,777);
+    assert.ok(!e.document.querySelector('[data-refresh-error]'),'normal change was labeled as a refresh error');
+  } finally {await e.cleanup();}
+});
+
+test('a normal main-data change does not report an error while a past date is selected',async()=>{
+  const e=await setup();
+  try {
+    await e.page.selectProductionDate('2026-07-01');
+    e.state.rows.eggStock[0].currentQty++;
+    await e.state.notify('eggStock');
+    await new Promise(resolve=>setTimeout(resolve,180));
+    assert.ok(!e.document.querySelector('[data-refresh-error]'),'normal change was labeled as a refresh error');
+    assert.equal(e.page.selectedState().date,'2026-07-01');
+  } finally {await e.cleanup();}
+});
+
+test('external receipt change preserves an open form and prevents a stale save',async()=>{
+  const e=await setup();
+  try {
+    await e.page.selectProductionDate('2026-07-01');
+    await e.page.openProductReceiptModal('past');
+    e.fill('#pr_plates',2);
+    const writes=e.state.writes.length;
+    e.state.rows.productions[0].receivedTotalPacks=777;
+    await e.state.notify('productions');
+    assert.equal(e.document.getElementById('pr_plates').value,'2');
+    assert.match(e.document.querySelector('[data-refresh-notice]')?.textContent||'',/자료가 변경/);
+    assert.ok(!e.document.querySelector('[data-refresh-error]'));
+    await e.fire('#pr_confirm');
+    assert.equal(e.state.writes.length,writes);
+    assert.equal(e.document.getElementById('pr_plates').value,'2');
+  } finally {await e.cleanup();}
+});
+
+test('switching historical dates ignores later changes to the previous date',async()=>{
+  const e=await setup();
+  try {
+    await e.page.selectProductionDate('2026-07-01');
+    await e.page.selectProductionDate('2026-07-02');
+    e.state.rows.productions[0].receivedTotalPacks=777;
+    await e.state.notify('productions');
+    await new Promise(resolve=>setTimeout(resolve,150));
+    assert.equal(e.page.selectedState().date,'2026-07-02');
+    assert.equal(e.page.selectedState().rows.length,0);
+    assert.ok(!e.document.querySelector('[data-refresh-error],[data-refresh-notice]'));
+    e.page.handleBackToToday();
+    assert.equal(e.page.selectedState().date,null);
+  } finally {await e.cleanup();}
+});
+
+test('a selected-date read error keeps the date and recovers through retry',async()=>{
+  const e=await setup();
+  try {
+    await e.page.selectProductionDate('2026-07-01');
+    e.state.failures.add('productions');
+    await e.state.notify('productions');
+    assert.equal(e.page.selectedState().date,'2026-07-01');
+    assert.match(e.document.querySelector('[data-refresh-notice]')?.textContent||'',/확인하지 못했습니다/);
+    e.state.failures.delete('productions');
+    e.state.rows.productions[0].receivedTotalPacks=777;
+    await e.fire('[data-refresh-notice] button');
+    assert.equal(e.page.selectedState().rows[0].receivedTotalPacks,777);
+    assert.ok(!e.document.querySelector('[data-refresh-notice]'));
+  } finally {await e.cleanup();}
+});
+
+test('a failed date switch leaves the previously selected production visible',async()=>{
+  const e=await setup();
+  try {
+    await e.page.selectProductionDate('2026-07-01');
+    e.state.failures.add('productions');
+    await assert.rejects(()=>e.page.selectProductionDate('2026-07-02'),/fixture read failed/);
+    assert.equal(e.page.selectedState().date,'2026-07-01');
+    assert.equal(e.page.selectedState().rows[0].receivedTotalPacks,100);
   } finally {await e.cleanup();}
 });
 
