@@ -7,9 +7,21 @@ test('closing: shared refresh performs one read per query, preserves all 14 date
   const {createReadScope}=await env.load('src/services/readScope.js');const scope=createReadScope();
   const result=await Promise.all(Array.from({length:3},()=>api.findActionableClosingDate(env.today,null,scope)));
   assert.deepEqual(result,[null,null,null]);
-  assert.equal(env.state.reads.filter(r=>r.kind==='query'&&r.path==='productions').length,1);
+  assert.equal(env.state.reads.filter(r=>r.kind==='query'&&r.path==='productions').length,2);
+  assert.equal(env.state.reads.filter(r=>r.kind==='query'&&r.path==='productions'&&r.conditions.length===0).length,0);
   assert.equal(env.state.reads.filter(r=>r.kind==='query'&&r.path==='activityLogs').length,1);
-  assert.ok(env.state.reads.length<=15,`reads: ${env.state.reads.length}`);
+  assert.ok(env.state.reads.length<=18,`reads: ${env.state.reads.length}`);
+});
+
+test('closing pages past deleted rows to keep the latest 14 distinct production days',async()=>{
+  const env=await environment();
+  env.state.rows.productions[0].received=false;
+  for(let i=0;i<120;i++)env.state.rows.productions.push({id:`deleted-${String(i).padStart(3,'0')}`,date:env.dates.at(-1),status:'deleted'});
+  const api=await env.load('src/services/closingChecks.js');
+  assert.equal((await api.findActionableClosingDate(env.today)).date,env.dates[0]);
+  const pages=env.state.reads.filter(r=>r.path==='productions'&&r.conditions.some(c=>c.type==='limit'));
+  assert.ok(pages.length>=2);
+  assert.ok(pages.at(-1).conditions.some(c=>c.type==='cursor'));
 });
 
 for(const scenario of ['schedule','receipt','egg','productionLog','officeLog','autoRepack','frozenOrder','unclosed'])test('closing preserves '+scenario,async()=>{

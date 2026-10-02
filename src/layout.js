@@ -57,8 +57,26 @@ let navigationPending = false;
 let nextMenu = null;
 let shellIdentity = null;
 let shellRefreshTimer;
+let startupReadiness = null;
+let startupPending = null;
+// Keep all route entries behind the same holiday initialization, including
+// navigation while startup is pending. A failed read can be explicitly retried.
+export function setStartupReadiness(loader) {
+  startupReadiness = loader;
+  startupPending = null;
+}
+function awaitStartupReadiness() {
+  if (!startupReadiness) return Promise.resolve();
+  if (!startupPending) {
+    const pending = Promise.resolve().then(startupReadiness);
+    startupPending = pending;
+    pending.catch(() => { if (startupPending === pending) startupPending = null; });
+  }
+  return startupPending;
+}
 registerNavigationHandler(navigate);
 sessionStore.onClear(() => {
+  setStartupReadiness(null);
   shellIdentity = null; nextMenu = null; disposePage(); dismissAllModals(); clearTimeout(shellRefreshTimer);
   window.__blockingItems = null; blockingModalAutoShown = false;
 });
@@ -114,7 +132,7 @@ export function renderLayout() {
       </nav>
 
       <div class="subbar">
-        <span class="subbar-item" id="subToday">📅 --</span>
+        <button type="button" class="subbar-item subbar-date-button" id="subToday" title="생산 날짜 선택">📅 --</button>
         <span class="subbar-item" id="sub18months">⏳ --</span>
         <span class="subbar-item" id="subEgg">🥚 --개</span>
         <span class="subbar-item" id="subLowStock">⚠️ 부족재고 --개</span>
@@ -143,6 +161,10 @@ export function renderLayout() {
   });
 
   document.getElementById('logoutBtn').addEventListener('click', handleLogoutClick);
+  document.getElementById('subToday').addEventListener('click', async () => {
+    if (currentMenu !== 'main' || document.getElementById('subToday').disabled) return;
+    (await import('./pages/main.js')).showProductionDatePicker();
+  });
   document.getElementById('closingBtn').addEventListener('click', handleClosingClick);
 
   // 배너 클릭 핸들러 — Phase 3d에서 window.openBlockingModal 등록되면 모달, 없으면 fallback alert
@@ -182,7 +204,13 @@ export function renderLayout() {
   if ((window.location.hash || '').replace('#', '') !== currentMenu) {
     window.location.hash = currentMenu;
   }
-  renderPage(currentMenu, { scope });
+  renderPage(currentMenu, { scope, ready: awaitStartupReadiness, onReady: updateProductionDateButton });
+}
+
+function updateProductionDateButton() {
+  const button = document.getElementById('subToday');
+  const content = document.getElementById('mainContent');
+  if (button) button.disabled = currentMenu !== 'main' || content?.dataset.pageReady !== 'main' || content?.dataset.productionPending === 'true';
 }
 
 // 설비 부품 메뉴 버튼 배지 — 교체 임박·지남 + 재고 부족 건수
@@ -219,6 +247,7 @@ async function updateSubbar(scope = createReadScope()) {
   const futureStr = `${String(fy).slice(2)}/${fm}/${fd}`;
 
   document.getElementById('subToday').textContent = `📅 ${today}`;
+  updateProductionDateButton();
   document.getElementById('sub18months').textContent = `⏳ ${futureStr}`;
 
   try {

@@ -13,10 +13,13 @@ async function move(route) {
  const end=performance.now()+15000;
  while(performance.now()<end){
   const host=document.getElementById('mainContent');
-  if(host!==old && host?.textContent.trim() && !/로딩 중|불러오는 중/.test(host.textContent)) {
+  if(host!==old && host?.dataset.pageReady===route && host?.textContent.trim()) {
    if(/화면을 불러오지 못|로드 실패/.test(host.textContent))throw Error(route+': '+host.textContent);
    await frame();await frame();
-   return {route,ms:performance.now()-start,reads:fixture.state.reads.length-before,chars:host.textContent.length};
+   const timing=JSON.parse(host.dataset.pageTiming||'{}');
+   return {route,ms:performance.now()-start,dataReadyMs:timing.dataReadyMs,
+    domReadyMs:timing.domReadyMs,frameWaitMs:timing.frameWaitMs,frameStatus:timing.frameStatus,
+    reads:fixture.state.reads.length-before,chars:host.textContent.length};
   }
   await delay(5);
  }
@@ -41,7 +44,7 @@ async function run(rounds,idle=false){
    const rows=samples.filter(s=>s.route===route),values=rows.map(s=>s.ms);
    return [route,{samples:rows.length,p50:quantile(values,.5),p95:quantile(values,.95),max:Math.max(...values),reads:rows.reduce((n,s)=>n+s.reads,0)}];
   }));
-  const report={startedAt,finishedAt:new Date().toISOString(),fixture:'synthetic browser, 50ms/request, 30 types/300 meat lots',idle,
+  const report={startedAt,finishedAt:new Date().toISOString(),fixture:'synthetic browser, 50ms/request, 30 types/300 meat lots, 240 meat logs',idle,
    byRoute,totalReads:fixture.state.reads.length-initialReads,writes:fixture.state.writes.length-initialWrites,samples};
   await fetch('/__instant-results',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(report)});
   result.textContent=JSON.stringify({...report,samples:undefined},null,2);
@@ -51,11 +54,11 @@ document.getElementById('measureAllPages').onclick=()=>run(50);
 document.getElementById('measureIdlePages').onclick=()=>run(1,true);
 
 const subButton=document.createElement('button');subButton.id='measureSubScreens';subButton.textContent='하위 탭·설정 내용 50회 측정';panel.prepend(subButton);
-async function contentAfter(action,select,label){
+async function contentAfter(action,select,label,isReady=()=>true){
  const start=performance.now();action();
  for(let i=0;i<3000;i++){
   const body=select(),text=body?.textContent||'';
-  if(text.trim()&&!/로딩 중|불러오는 중/.test(text)){
+  if(text.trim()&&!/로딩 중|불러오는 중|조회 중/.test(text)&&isReady(body)){
    if(/불러오지 못|로드 실패/.test(text))throw Error(label+': '+text);
    await frame();await frame();return {route:label,ms:performance.now()-start,chars:text.length};
   }
@@ -72,14 +75,16 @@ subButton.onclick=async()=>{
     if(document.querySelector('.nav-btn.active')?.dataset.menu!==route)await move(route);
     const tabs=[...document.querySelectorAll(selector)].map(button=>button.dataset.tab);
     for(const tab of tabs){
-     samples.push({...await contentAfter(()=>document.querySelector(selector+'[data-tab="'+tab+'"]').click(),()=>document.querySelector(bodyId),route+':'+tab),round});
+     const ready=route==='meat'?()=>document.querySelector('#tabContent [data-meat-history-section]')?.dataset.meatHistoryState==='ready'
+       :route==='stats'?()=>document.getElementById('mainContent')?.dataset.statsReadyTab===tab:()=>true;
+     samples.push({...await contentAfter(()=>document.querySelector(selector+'[data-tab="'+tab+'"]').click(),()=>document.querySelector(bodyId),route+':'+tab,ready),round});
     }
    }
    await move('settings');
    const sections=[...document.querySelectorAll('.settings-section')];
    for(let index=0;index<sections.length;index++){
     const section=sections[index];
-    samples.push({...await contentAfter(()=>section.querySelector('summary').click(),()=>section.querySelector('.settings-section-body'),'settings:'+index),round});
+    samples.push({...await contentAfter(()=>{section.open=false;section.querySelector('summary').click();},()=>section.querySelector('.settings-section-body'),'settings:'+index,()=>section.open),round});
    }
    result.textContent='하위 화면 측정 '+(round+1)+'/50';
   }

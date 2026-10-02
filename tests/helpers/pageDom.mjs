@@ -21,14 +21,13 @@ export async function pageEnvironment(route,{baselineRef,instrument='',role='off
   breadPanLots:[],frozenSeparation:[],frozenSeparationLogs:[],freezeOrders:[],
  });
  const e=await environment({session:true,firestore:fake,baselineRef,instantRoutes,instrument:{[`src/pages/${route}.js`]:instrument}});
- const {document,Event,HTMLElement}=parseHTML('<html><body><div id="mainContent"></div></body></html>');
- const events=new WeakMap(),pending=new Set(),alerts=[];
- const native=document.defaultView.EventTarget.prototype.addEventListener;
+ const {document}=parseHTML('<html><body><div id="mainContent"></div></body></html>');
+ const events=new WeakMap(),decorated=new WeakSet(),alerts=[];
  // Intercept registration only in this document, so tests can await actual
  // asynchronous UI callbacks instead of guessing when a write completed.
  const decorate=node=>{
-  if(node.__testEvents)return node;
-  node.__testEvents=true;
+  if(node.ownerDocument!==document || decorated.has(node))return node;
+  decorated.add(node);
   if(node.tagName==='SELECT'){
     Object.defineProperty(node,'selectedIndex',{configurable:true,get(){return [...this.options].findIndex(option=>option.selected);}});
     Object.defineProperty(node,'value',{configurable:true,
@@ -38,15 +37,19 @@ export async function pageEnvironment(route,{baselineRef,instrument='',role='off
   }
   if(node.tagName==='OPTION'&&!('text' in node))Object.defineProperty(node,'text',{get(){return this.textContent;}});
   node.addEventListener=(kind,callback)=>{let byKind=events.get(node);if(!byKind)events.set(node,byKind=new Map());if(!byKind.has(kind))byKind.set(kind,[]);byKind.get(kind).push(callback);};
+  decorateQueries(node);
   return node;
  };
+ // Patch individual nodes, never LinkeDOM's shared HTMLElement prototype.
+ // Two documents may be alive at once and must retain separate event maps.
+ function decorateQueries(node) {
+  const all=node.querySelectorAll,one=node.querySelector;
+  if(all)node.querySelectorAll=function(...args){const list=all.apply(this,args);list.forEach(decorate);return list;};
+  if(one)node.querySelector=function(...args){const n=one.apply(this,args);return n?decorate(n):n;};
+ }
  const create=document.createElement.bind(document);document.createElement=(...args)=>decorate(create(...args));
  const get=document.getElementById.bind(document);document.getElementById=id=>{const n=get(id);return n?decorate(n):n;};
- for(const proto of [document,HTMLElement.prototype]){
-  const all=proto.querySelectorAll,one=proto.querySelector;
-  if(all)proto.querySelectorAll=function(...args){const list=all.apply(this,args);list.forEach(decorate);return list;};
-  if(one)proto.querySelector=function(...args){const n=one.apply(this,args);return n?decorate(n):n;};
- }
+ decorateQueries(document);
  e.context.document=document;e.nodes.mainContent=document.getElementById('mainContent');
  e.context.window=e.context;e.context.innerWidth=1280;e.context.innerHeight=900;
  e.context.Math=Object.assign(Object.create(Math),{random:()=>0.5});

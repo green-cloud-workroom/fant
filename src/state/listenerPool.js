@@ -1,4 +1,4 @@
-export function createListenerPool({ store, registry, listen, graceMs = 30_000, timeoutMs = 15_000, onRead = () => {}, sameData = () => false }) {
+export function createListenerPool({ store, registry, listen, graceMs = 30_000, timeoutMs = 15_000, onRead = () => {}, onReadResult = () => {}, sameData = () => false }) {
   const entries = new Map();
   const owners = new Map();
   const notifications = new Map();
@@ -27,13 +27,18 @@ export function createListenerPool({ store, registry, listen, graceMs = 30_000, 
     let entry = entries.get(key);
     if (entry?.error) { remove(entry); entry = null; }
     if (!entry) {
-      entry = { key, ref, kind, owners: new Set(), waiters: [], epoch: store.epoch, revision: 0 };
+      entry = { key, ref, kind, owners: new Set(), waiters: [], epoch: store.epoch, revision: 0, startedAt: Date.now() };
       entries.set(key, entry);
       onRead(false,{owner,kind});
       entry.unsubscribe = listen(ref, snapshot => {
         if (entry.epoch !== store.epoch || entries.get(key) !== entry) return;
         const previous = store.peek(key);
         const server = !snapshot.metadata?.fromCache && !snapshot.metadata?.hasPendingWrites;
+        if (server && !entry.firstResponseRecorded) {
+          entry.firstResponseRecorded = true;
+          onReadResult({ kind, collection: (ref.path || '').split('/')[0], durationMs: Date.now() - entry.startedAt,
+            documents: snapshot.docs ? snapshot.docs.length : snapshot.exists() ? 1 : 0 });
+        }
         const value = { snapshot, revision: ++entry.revision, fromCache: !server,
           serverObservedAt: server ? Date.now() : previous?.serverObservedAt || null, status: 'ready' };
         store.publish(key, value, entry.epoch);

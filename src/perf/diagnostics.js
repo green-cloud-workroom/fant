@@ -1,4 +1,4 @@
-import { exportMetrics, exportReadMetrics } from './metrics.js';
+import { exportMetrics, exportReadMetrics, exportReadResponseMetrics, exportPhaseMetrics } from './metrics.js';
 import { inspectPageResources } from '../state/pageResources.js';
 import { displayPool } from '../state/displayReads.js';
 import { sessionStore } from '../state/sessionStore.js';
@@ -13,7 +13,7 @@ export function installDiagnostics() {
   const output=document.createElement('pre');output.id='performanceDiagnosticsResult';
   const refresh=()=>{output.textContent=JSON.stringify({at:new Date().toISOString(),epoch:sessionStore.epoch,
     models:inspectPageResources(),listeners:displayPool.inspect(),heapBytes:performance.memory?.usedJSHeapSize??null,
-    navigation:exportMetrics(),readRequests:exportReadMetrics()},null,2);};
+    navigation:exportMetrics(),readRequests:exportReadMetrics(),readResponses:exportReadResponseMetrics(),phases:exportPhaseMetrics()},null,2);};
   button.addEventListener('click',refresh);
   panel.addEventListener('toggle',()=>{if(panel.open)refresh();});
   panel.append(summary,button,output);document.body.append(panel);

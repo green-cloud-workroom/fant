@@ -8,7 +8,7 @@
 import { createReadScope } from './readScope.js';
 import { createServerReadScope } from './serverReadScope.js';
 import { db } from '../firebase.js';
-import { collection, doc, query, where, documentId } from 'firebase/firestore';
+import { collection, doc, query, where, documentId, orderBy, limit, startAfter } from 'firebase/firestore';
 import { getNextBusinessDayByType, ensureHolidaysCache } from '../utils/date.js';
 import { getEarliestUnclosedWorkday, isDateClosed } from '../closing.js';
 import {
@@ -28,15 +28,44 @@ import {
   aggregateBlockingItems
 } from './closingChecksLogic.js';
 
+async function readDateRows(name, date, scope, field = 'date') {
+  const cached = scope.closingRows?.[name];
+  if (cached?.has(date)) return cached.get(date);
+  const snap = await scope.getDocs(query(collection(db, name), where(field, '==', date)));
+  return snap.docs.map(item => item.data());
+}
+
+async function preloadClosingRows(dates, scope) {
+  const nextDates = dates.map(date => getNextBusinessDayByType(date, 'production'));
+  const wanted = {
+    productions: [...new Set([...dates, ...nextDates])],
+    productionCompletion: dates,
+    frozenPanStock: dates,
+    schedules: dates,
+    eggLogs: dates,
+  };
+  const names = Object.keys(wanted);
+  const batches = await Promise.all(names.map(async name => {
+    const field = name === 'productionCompletion' ? 'runDate' : 'date';
+    const snap = await scope.getDocs(query(collection(db, name), where(field, 'in', wanted[name])));
+    const byDate = new Map(wanted[name].map(date => [date, []]));
+    for (const item of snap.docs) {
+      const row = item.data();
+      byDate.get(row[field])?.push(row);
+    }
+    return byDate;
+  }));
+  return Object.fromEntries(names.map((name, index) => [name, batches[index]]));
+}
+
 /**
  * 1. 내일생산불러오기 처리 안 됨
  */
 export async function checkTomorrowProductionLoaded(dateStr, scope = createReadScope()) {
-  const nextDayProductions = await loadNextDayProductions(dateStr, scope);
-
-  // dateStr 시점의 productionCompletion 전체 (judge에서 필터)
-  const compSnap = await scope.getDocs(collection(db, 'productionCompletion'));
-  const completions = compSnap.docs.map(d => d.data());
+  const [nextDayProductions, completions] = await Promise.all([
+    loadNextDayProductions(dateStr, scope),
+    readDateRows('productionCompletion', dateStr, scope, 'runDate'),
+  ]);
 
   return judgeTomorrowProductionLoaded(nextDayProductions, completions, dateStr);
 }
@@ -45,8 +74,7 @@ export async function checkTomorrowProductionLoaded(dateStr, scope = createReadS
  * 2. 동결건조 발주 확인 처리 안 됨
  */
 export async function checkFrozenOrdersConfirmed(dateStr, scope = createReadScope()) {
-  const snap = await scope.getDocs(collection(db, 'frozenPanStock'));
-  const rows = snap.docs.map(d => d.data());
+  const rows = await readDateRows('frozenPanStock', dateStr, scope);
   return judgeFrozenOrdersConfirmed(rows, dateStr);
 }
 
@@ -54,8 +82,7 @@ export async function checkFrozenOrdersConfirmed(dateStr, scope = createReadScop
  * 3. 입고 예정 완료/취소 처리 안 됨
  */
 export async function checkSchedulesProcessed(dateStr, scope = createReadScope()) {
-  const snap = await scope.getDocs(collection(db, 'schedules'));
-  const schedules = snap.docs.map(d => d.data());
+  const schedules = await readDateRows('schedules', dateStr, scope);
   return judgeSchedulesProcessed(schedules, dateStr);
 }
 
@@ -63,11 +90,10 @@ export async function checkSchedulesProcessed(dateStr, scope = createReadScope()
  * 7. 계란 출고 미입력 (노른자 사용 생산이 있을 때만)
  */
 export async function checkEggOutputForProduction(dateStr, scope = createReadScope()) {
-  const prodSnap = await scope.getDocs(collection(db, 'productions'));
-  const productions = prodSnap.docs.map(d => d.data());
-
-  const eggSnap = await scope.getDocs(collection(db, 'eggLogs'));
-  const eggLogs = eggSnap.docs.map(d => d.data());
+  const [productions, eggLogs] = await Promise.all([
+    readDateRows('productions', dateStr, scope),
+    readDateRows('eggLogs', dateStr, scope),
+  ]);
 
   return judgeEggOutputForProduction(productions, eggLogs, dateStr);
 }
@@ -76,8 +102,7 @@ export async function checkEggOutputForProduction(dateStr, scope = createReadSco
  * 8. 생식 제품입고 미완료
  */
 export async function checkProductReceiptsCompleted(dateStr, scope = createReadScope()) {
-  const prodSnap = await scope.getDocs(collection(db, 'productions'));
-  const productions = prodSnap.docs.map(d => d.data());
+  const productions = await readDateRows('productions', dateStr, scope);
   return judgeProductReceiptsCompleted(productions, dateStr);
 }
 
@@ -108,23 +133,24 @@ export async function checkBagMinimumStock(scope = createReadScope()) {
 }
 
 export async function checkMeatMinimumStock(scope = createReadScope()) {
-  const meatTypesSnap = await scope.getDocs(collection(db, 'meatTypes'));
+  const [meatTypesSnap, meatStocksSnap] = await Promise.all([
+    scope.getDocs(collection(db, 'meatTypes')),
+    scope.getDocs(collection(db, 'meatStocks')),
+  ]);
   const meatTypes = meatTypesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-  const meatStocksSnap = await scope.getDocs(collection(db, 'meatStocks'));
   const meatStocks = meatStocksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
   return judgeMeatMinimumStock(meatTypes, meatStocks);
 }
 
 export async function checkSupplementMinimumStock(scope = createReadScope()) {
-  const typesSnap = await scope.getDocs(query(
-    collection(db, 'supplementTypes'),
-    where('active', '==', true)
-  ));
+  const [typesSnap, stockSnap] = await Promise.all([
+    scope.getDocs(query(collection(db, 'supplementTypes'), where('active', '==', true))),
+    scope.getDocs(collection(db, 'supplementStock')),
+  ]);
   const supplementTypes = typesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-  const stockSnap = await scope.getDocs(collection(db, 'supplementStock'));
   const supplementStocks = stockSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
   return judgeSupplementMinimumStock(supplementTypes, supplementStocks);
@@ -132,9 +158,7 @@ export async function checkSupplementMinimumStock(scope = createReadScope()) {
 
 async function loadNextDayProductions(dateStr, scope = createReadScope()) {
   const nextBizDay = getNextBusinessDayByType(dateStr, 'production');
-  const prodSnap = await scope.getDocs(collection(db, 'productions'));
-  return prodSnap.docs
-    .map(d => d.data())
+  return (await readDateRows('productions', nextBizDay, scope))
     .filter(p => p.date === nextBizDay && p.status !== 'deleted');
 }
 
@@ -254,13 +278,11 @@ async function findActionableWithScope(today, productions, scope) {
   await scope.once('holidaysReady', () => ensureHolidaysCache(scope));
   const [earliestUnclosed, allProductions] = await Promise.all([
     scope.once('earliestUnclosed', () => getEarliestUnclosedWorkday([], scope)),
-    productions || loadAllProductions(scope),
+    productions == null ? loadRecentProductionDates(today, scope) : productions,
   ]);
-  const productionDates = [...new Set((allProductions || [])
+  const productionDates = productions == null ? allProductions : [...new Set((allProductions || [])
     .filter(p => p.date && p.date < today && p.status !== 'deleted')
-    .map(p => p.date))]
-    .sort()
-    .slice(-14);
+    .map(p => p.date))].sort().slice(-14);
 
   const candidates = new Set(productionDates);
   if (earliestUnclosed && earliestUnclosed < today) candidates.add(earliestUnclosed);
@@ -271,6 +293,8 @@ async function findActionableWithScope(today, productions, scope) {
   if (!dates.length) return null;
   const closings = scope.getDocs(query(collection(db, 'closings'), where(documentId(), 'in', dates))).catch(() => null);
   const logs = scope.getDocs(query(collection(db, 'activityLogs'), where('date', 'in', dates))).catch(() => null);
+  const closingRows = await preloadClosingRows(dates, scope);
+  const candidateScope = { ...scope, closingRows };
   for (const date of dates) {
     scope.once('closed:' + date, async () => {
       const batch = await closings;
@@ -289,7 +313,7 @@ async function findActionableWithScope(today, productions, scope) {
   const results = await Promise.allSettled([...candidates].sort().map(async date => {
     const [closed, blockingData] = await Promise.all([
       scope.once('closed:' + date, () => isDateClosed(date, scope)),
-      getAllBlockingItems(date, scope),
+      getAllBlockingItems(date, candidateScope),
     ]);
     return { date, closed, blockingData };
   }));
@@ -302,7 +326,21 @@ async function findActionableWithScope(today, productions, scope) {
   return null;
 }
 
-async function loadAllProductions(scope = createReadScope()) {
-  const prodSnap = await scope.getDocs(collection(db, 'productions'));
-  return prodSnap.docs.map(d => d.data());
+async function loadRecentProductionDates(today, scope = createReadScope()) {
+  const dates = new Set();
+  let cursor = null;
+  while (dates.size < 14) {
+    const constraints = [where('date', '<', today), orderBy('date', 'desc')];
+    if (cursor) constraints.push(startAfter(cursor));
+    constraints.push(limit(100));
+    const snap = await scope.getDocs(query(collection(db, 'productions'), ...constraints));
+    for (const item of snap.docs) {
+      const row = item.data();
+      if (row.date && row.status !== 'deleted') dates.add(row.date);
+      if (dates.size === 14) break;
+    }
+    if (snap.docs.length < 100) break;
+    cursor = snap.docs.at(-1);
+  }
+  return [...dates].sort();
 }

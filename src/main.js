@@ -3,7 +3,8 @@ import { auth } from './firebase.js';
 import { signInWithEmailAndPassword, onIdTokenChanged, signOut } from 'firebase/auth';
 import { loadUserInfo, clearUserInfo, currentUserRole } from './app.js';
 import { loadHolidaysCache, getTodayKST } from './utils/date.js';
-import { renderLayout } from './layout.js';
+import { renderLayout, setStartupReadiness } from './layout.js';
+import { measurePhase, recordPhase } from './perf/metrics.js';
 import { setupMidnightLogout, clearMidnightLogout } from './midnightLogout.js';
 import { setSessionIdentity } from './state/sessionController.js';
 import { createDisplayScope } from './state/displayReads.js';
@@ -14,19 +15,25 @@ let authVersion = 0;
 let refreshedUid = null;
 let activeIdentity = null;
 let loginDay = null;
+const moduleReadyAt = performance.now();
 onIdTokenChanged(auth, async (user) => {
+  const authCallbackAt = performance.now();
   const version = ++authVersion;
   if (user) {
     try {
       const force = refreshedUid !== user.uid;
       refreshedUid = user.uid;
+      const claimsStartedAt = performance.now();
       if (!await loadUserInfo(user, force) || version !== authVersion) return;
       const identity = setSessionIdentity(user.uid, currentUserRole, getTodayKST());
       if (identity === activeIdentity) return;
       loginDay = getTodayKST();
       document.querySelectorAll('.modal-overlay').forEach(node => node.remove());
-      await loadHolidaysCache(flags.store && !performanceDisabled() ? createDisplayScope('shell') : undefined);
-      if (version !== authVersion) return;
+      recordPhase('startup:module-ready', 0, 'ready', { durationMs: moduleReadyAt });
+      recordPhase('startup:auth-callback', 0, 'ready', { durationMs: authCallbackAt });
+      recordPhase('startup:claims', claimsStartedAt);
+      setStartupReadiness(() => measurePhase('startup:holidays', () =>
+        loadHolidaysCache(flags.store && !performanceDisabled() ? createDisplayScope('shell') : undefined)));
       activeIdentity = identity;
       renderLayout();
       setupMidnightLogout();

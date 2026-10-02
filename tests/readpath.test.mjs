@@ -5,6 +5,63 @@ import { createSessionStore } from '../src/state/sessionStore.js';
 import { createQueryRegistry } from '../src/state/queryRegistry.js';
 import { createListenerPool } from '../src/state/listenerPool.js';
 import { environment } from './helpers/modules.mjs';
+import { parseHTML } from 'linkedom';
+
+async function routedLayout(instant) {
+ const e=await environment({session:true,realRouter:true,instantRoutes:instant?['main']:[],
+  instrument:{'src/layout.js':'\nexport {updateProductionDateButton};'}});
+ e.cache.delete(resolve('src/layout.js'));
+ e.synthetic(resolve('src/config/performanceFlags.js'),{flags:{shell:instant,store:instant,instantRoutes:instant?['main']:[]},performanceDisabled:()=>!instant,useSessionReads:()=>instant});
+ const app=e.synthetic(resolve('src/app.js'),{currentMenu:'main',currentUser:{uid:'fixture'},currentUserRole:'office',MENUS:[],setCurrentMenu(){},handleLogout(){},commitCurrentMenu(){},registerNavigationHandler(){}});
+ const {document}=parseHTML('<html><body><main id="mainContent"></main><button id="subToday"></button></body></html>');
+ e.context.document=document;e.context.window.addEventListener=()=>{};e.context.requestAnimationFrame=()=>{};
+ e.context.console={...console,error:()=>{}};
+ let render=async()=>{document.getElementById('mainContent').textContent='main data';};
+ e.synthetic(resolve('src/pages/main.js'),{renderMain:()=>render()});
+ const layout=await e.load('src/layout.js'),router=await e.load('src/router.js');
+ layout.updateProductionDateButton();
+ return {...e,app,document,layout,router,setRender:fn=>{render=fn;},
+  cleanup:async()=>{(await e.load('src/utils/pageLifecycle.js')).disposePage();(await e.load('src/state/sessionStore.js')).sessionStore.clear();}};
+}
+
+for(const instant of [false,true])test(`header date button waits for page readiness (${instant?'instant':'legacy'})`,async()=>{
+ const e=await routedLayout(instant);
+ try {
+  let release;const gate=new Promise(resolve=>{release=resolve;});
+  const pending=e.router.renderPage('main',{ready:()=>gate,onReady:e.layout.updateProductionDateButton});
+  assert.equal(e.document.getElementById('subToday').disabled,true);
+  release();await pending;
+  assert.equal(e.document.getElementById('mainContent').dataset.pageReady,'main');
+  assert.equal(e.document.getElementById('subToday').disabled,false);
+ } finally {await e.cleanup();}
+});
+
+test('failed main load keeps date selection disabled and retry enables it',async()=>{
+ const e=await routedLayout(false);
+ try {
+  e.setRender(async()=>{throw Error('offline');});
+  const options={onReady:e.layout.updateProductionDateButton};
+  await e.router.renderPage('main',options);
+  assert.ok(e.document.getElementById('retryPageLoad'));
+  assert.equal(e.document.getElementById('subToday').disabled,true);
+  e.setRender(async()=>{});await e.router.renderPage('main',options);
+  assert.equal(e.document.getElementById('subToday').disabled,false);
+ } finally {await e.cleanup();}
+});
+
+test('a main render finishing after navigation cannot enable the date button',async()=>{
+ const e=await routedLayout(true);
+ try {
+  let release,started;const gate=new Promise(resolve=>{release=resolve;}),entered=new Promise(resolve=>{started=resolve;});
+  e.setRender(async()=>{started();await gate;});
+  const pending=e.router.renderPage('main',{onReady:e.layout.updateProductionDateButton});
+  await entered;e.app.setExport('currentMenu','egg');
+  (await e.load('src/utils/pageLifecycle.js')).beginPage(e.document.getElementById('mainContent'),'egg');
+  release();await pending;
+  assert.equal(e.document.getElementById('subToday').disabled,true);
+  assert.notEqual(e.document.getElementById('mainContent').dataset.pageReady,'main');
+ } finally {await e.cleanup();}
+});
 
 function setup(options = {}) {
   const store = createSessionStore(); store.clear('user:office:2026-09-14');
@@ -13,7 +70,28 @@ function setup(options = {}) {
     listen(ref,next,error) { listeners.push({ref,next,error}); return ()=>released++; }, graceMs: 5, timeoutMs: 1000, ...options });
   return {store,pool,listeners,get released(){return released;}};
 }
-const snap = (value, fromCache=false, hasPendingWrites=false) => ({ value, metadata:{fromCache,hasPendingWrites} });
+const snap = (value, fromCache=false, hasPendingWrites=false) => ({
+ value, metadata:{fromCache,hasPendingWrites},
+ ...(Array.isArray(value)
+  ? {docs:value.map((data,index)=>({id:String(index),data:()=>data})),size:value.length,empty:value.length===0}
+  : {exists:()=>value!=null,data:()=>value}),
+});
+
+test('response metrics count only the first authoritative query and document snapshots',async()=>{
+ const results=[],t=setup({onReadResult:result=>results.push(result)});
+ const rows=t.pool.getDocs({path:'recipes'},'main');
+ t.listeners[0].next(snap([],true));t.listeners[0].next(snap(['pending'],false,true));
+ assert.equal(results.length,0);
+ t.listeners[0].next(snap(['a','b']));await rows;
+ t.listeners[0].next(snap(['a','b','c']));
+ assert.equal(results.length,1);assert.equal(results[0].documents,2);
+ const missing=t.pool.getDoc({path:'eggStock/missing'},'main');
+ t.listeners[1].next(snap(null));await missing;
+ assert.equal(results[1].documents,0);
+ const found=t.pool.getDoc({path:'eggStock/global'},'main');
+ t.listeners[2].next(snap({currentQty:1}));await found;
+ assert.equal(results[2].documents,1);t.pool.dispose();
+});
 
 test('session epoch rejects old responses and clears all subscribers',()=>{
   const s=createSessionStore();s.clear('A');const epoch=s.epoch;let calls=0;

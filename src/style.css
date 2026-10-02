@@ -3670,3 +3670,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
 
 .eq-popup-list { font-size: 13px; line-height: 1.9; margin: 0 0 4px; }
 .eq-popup-list .eq-pill { margin-right: 6px; }
+
+.subbar-date-button, .main-date-button { border: 0; background: transparent; font-family: inherit; padding: 0; cursor: pointer; text-align: left; }
+.subbar-date-button:disabled { cursor: default; opacity: 1; }
+.subbar-date-button:focus-visible, .main-date-button:focus-visible { outline: 2px solid #3182ce; outline-offset: 3px; }
