@@ -234,3 +234,18 @@ test('completed raw receipt sends only a linked correction request and keeps aud
   assert.equal(request.basisBoxes,5);assert.equal(request.boxes,10);assert.ok(request.correctionReason);
  } finally {await e.cleanup();}
 });
+
+test('resolving a duplicate latest receipt preserves the next linked correction path', async()=>{
+ const e=await setup();
+ try {
+  e.state.rows.productions[0].receivedRevision=2;
+  e.state.rows.productTransferRequests=[
+   {id:'productions:past:1',sourceApp:'production',sourceCollection:'productions',sourceId:'past',eventType:'productReceipt',revision:1,boxes:5,remainderPacks:0,status:'completed'},
+   {id:'productions:past:2',sourceApp:'production',sourceCollection:'productions',sourceId:'past',eventType:'productReceipt',revision:2,boxes:5,remainderPacks:0,status:'rejected',duplicateOf:'productions:past:1'},
+  ];
+  await e.page.openProductReceiptModal('past');e.fill('#pr_plates',2);await e.fire('#pr_confirm');
+  const request=e.state.rows.productTransferRequests.find(row=>row.revision===3);
+  assert.equal(request.receiptMode,'adjustment');assert.equal(request.correctionOf,'productions:past:1');
+  assert.equal(request.basisBoxes,5);assert.equal(request.boxes,10);
+ } finally {await e.cleanup();}
+});
