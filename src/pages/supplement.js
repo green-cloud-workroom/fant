@@ -1,13 +1,21 @@
+import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
-  collection, doc, getDoc, getDocs, limit, orderBy, query, where, runTransaction,
+  collection, doc, getDocFromServer as getDoc, getDocsFromServer as getDocs, limit, orderBy, query, where,
   serverTimestamp,
 } from 'firebase/firestore';
-import * as XLSX from 'xlsx';
+
 import { currentUser, currentUserRole } from '../app.js';
 import { getTodayKST } from '../utils/date.js';
-import { loadMenuStaffGroups, STAFF_GROUP_LABELS } from '../services/menuStaffGroups.js';
-import { loadSystemValues } from '../services/systemValues.js';
+import { DEFAULT_MENU_STAFF_GROUPS, STAFF_GROUP_LABELS } from '../services/menuStaffGroups.js';
+import { DEFAULT_SYSTEM_VALUES } from '../services/systemValues.js';
+
+import {pageResource} from '../state/pageResources.js';
+import {withReadCommand} from '../services/readCommand.js';
+import {pageRefresh} from '../utils/pageRefresh.js';
+import {getPageContext} from '../utils/pageLifecycle.js';
+import {canLeavePage} from '../utils/formDraft.js';
+const supplementResource=pageResource('supplement');
 
 // 표에 표시할 과거 일자 범위 (일). 오늘 포함 N일.
 const SUPPLEMENT_TABLE_DAYS = 14;
@@ -28,47 +36,36 @@ let selectedInStaff = '';
 let selectedAdjustStaff = '';
 let selectedAdjustReason = '';
 
-export async function renderSupplement() {
-  const content = document.getElementById('mainContent');
-  content.innerHTML = `<div style="padding:24px;"><p>영양제 재고 로딩 중...</p></div>`;
-
-  await Promise.all([
-    loadSupplementData(),
-    loadSupplementMenuStaffGroups(),
-    loadSupplementThresholds(),
-  ]);
-  await loadSupplementStaffCache();
+export async function renderSupplement({force=false}={}) {
+  const content=document.getElementById('mainContent');
+  content.innerHTML='<div style="padding:24px;"><p>영양제 재고 로딩 중...</p></div>';
+  const data=await supplementResource.load(loadSupplementModel,{force,onChange:pageRefresh(supplementResource,renderSupplement,{draftSelector:'.supplement-page'})});
+  if(!data||!content.isConnected)return;
+  [supplementTypes,supplementStocks,supplementLogs]=[data.types,data.stocks,data.logs];
+  supplementMenuStaffGroups=data.groups;supplementStaffCache=data.staff;
+  supplementThresholdYellow=Number(data.values.supplementThresholdYellow)||10;
+  supplementThresholdRed=Number(data.values.supplementThresholdRed)||5;
   renderSupplementLayout();
 }
 
-async function loadSupplementThresholds() {
-  const values = await loadSystemValues();
-  supplementThresholdYellow = Number(values.supplementThresholdYellow) || 10;
-  supplementThresholdRed = Number(values.supplementThresholdRed) || 5;
-}
+export function preparePage({cacheOnly=true}={}) { return supplementResource.prepare?.('default',loadSupplementModel,{cacheOnly}); }
 
-async function loadSupplementData() {
-  const dateColumns = getSupplementDateColumns();
-  const rangeStart = dateColumns[dateColumns.length - 1]; // 가장 과거 일자
-
-  const [typeSnap, stockSnap, logSnap] = await Promise.all([
-    getDocs(query(collection(db, 'supplementTypes'), orderBy('sortOrder'))),
-    getDocs(collection(db, 'supplementStock')),
-    // 복합 인덱스 회피: where만 사용하고 정렬은 클라이언트에서 처리.
-    getDocs(query(collection(db, 'supplementLogs'), where('date', '>=', rangeStart))),
+async function loadSupplementModel(scope) {
+  const dates=getSupplementDateColumns(),rangeStart=dates.at(-1);
+  const keys=['senior','lead','office'];
+  const [types,stocks,logs,groups,values,...staff]=await Promise.all([
+    scope.getDocs(query(collection(db,'supplementTypes'),orderBy('sortOrder'))),
+    scope.getDocs(collection(db,'supplementStock')),
+    scope.getDocs(query(collection(db,'supplementLogs'),where('date','>=',rangeStart))),
+    scope.getDoc(doc(db,'settings','menuStaffGroups')),scope.getDoc(doc(db,'settings','systemValues')),
+    ...keys.map(key=>scope.getDoc(doc(db,'staffGroups',key))),
   ]);
-
-  supplementTypes = typeSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-  supplementStocks = stockSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-  supplementLogs = logSnap.docs
-    .map(d => ({ id: d.id, ...d.data() }))
-    .sort((a, b) => {
-      // 최신순: date desc, 같은 날이면 timestamp desc.
-      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
-      const ta = a.timestamp?.seconds || 0;
-      const tb = b.timestamp?.seconds || 0;
-      return tb - ta;
-    });
+  const rows=snap=>snap.docs.map(d=>({id:d.id,...d.data()}));
+  return {types:rows(types),stocks:rows(stocks),logs:rows(logs).sort((a,b)=>a.date!==b.date?(a.date<b.date?1:-1):(b.timestamp?.seconds||0)-(a.timestamp?.seconds||0)),
+    groups:{...DEFAULT_MENU_STAFF_GROUPS,...(groups.exists()?groups.data():{})},
+    values:{...DEFAULT_SYSTEM_VALUES,...(values.exists()?values.data():{})},
+    staff:Object.fromEntries(keys.map((key,i)=>[key,staff[i].exists()?staff[i].data().members||[]:[]])),
+  };
 }
 
 // 표에 표시할 날짜 열 목록. 오늘(맨 앞) ~ 과거 순. YYYY-MM-DD 문자열 배열.
@@ -136,7 +133,8 @@ function getFilteredSupplementTypes() {
   });
 }
 
-function downloadSupplementStockExcel() {
+async function downloadSupplementStockExcel() {
+  const XLSX = await import('../utils/spreadsheet.js');
   const filtered = getFilteredSupplementTypes();
   if (filtered.length === 0) {
     alert('다운로드할 영양제 SKU가 없습니다.');
@@ -510,7 +508,7 @@ function renderLogTypeTag(type) {
 
 function bindSupplementEvents() {
   document.getElementById('btnSupplementRefresh')?.addEventListener('click', async () => {
-    await renderSupplement();
+    if(await canLeavePage())await renderSupplement({force:true});
   });
   document.getElementById('supplementFilter')?.addEventListener('change', (e) => {
     supplementFilter = e.target.value;
@@ -572,11 +570,13 @@ function renderStaffOptions(menuKey) {
 }
 
 async function refreshSupplementTable() {
-  await loadSupplementData();
-  const wrap = document.getElementById('supplementTableWrap');
-  if (wrap) {
-    wrap.innerHTML = renderSupplementTable();
-    bindSupplementCellEvents();
+  const page=getPageContext();
+  const drafts=[...document.querySelectorAll('.supplement-cell-input')].filter(input=>input.value).map(input=>({type:input.dataset.typeId,date:input.dataset.date,cell:input.dataset.cell,value:input.value}));
+  await renderSupplement({force:true});
+  if(page&&!page.isCurrent())return;
+  for(const input of document.querySelectorAll('.supplement-cell-input')){
+    const draft=drafts.find(d=>d.type===input.dataset.typeId&&d.date===input.dataset.date&&d.cell===input.dataset.cell);
+    if(draft)input.value=draft.value;
   }
 }
 
@@ -615,7 +615,9 @@ function openIncomingModal(typeId, typeName) {
     const button = document.getElementById('btnSaveSupIn');
     button.disabled = true;
     try {
+      const page=getPageContext();
       await saveIncomingCell(typeId, getTodayKST(), qty, staffName);
+      if(page&&!page.isCurrent())return;
       closeModal();
       await refreshSupplementTable();
       alert('입고 완료');
@@ -671,7 +673,9 @@ function openAdjustModal(typeId, typeName) {
     const button = document.getElementById('btnSaveSupAdj');
     button.disabled = true;
     try {
+      const page=getPageContext();
       await saveAdjustCell(typeId, getTodayKST(), signedQty, reason, staffName);
+      if(page&&!page.isCurrent())return;
       closeModal();
       await refreshSupplementTable();
       alert('조정 완료');
@@ -718,8 +722,11 @@ async function handleIncomingCellBlur(input) {
 
   input.disabled = true;
   try {
-    await saveIncomingCell(typeId, date, qty, staffName);
-    await renderSupplement();
+    const page=getPageContext();
+      await saveIncomingCell(typeId, date, qty, staffName);
+      if(page&&!page.isCurrent())return;
+    input.value='';
+    await refreshSupplementTable();
   } catch (err) {
     console.error('[supplement] incoming cell save failed:', err);
     alert(`입고 등록 중 오류가 발생했습니다: ${err.message || err}`);
@@ -729,10 +736,13 @@ async function handleIncomingCellBlur(input) {
 
 // 입고 저장 — 기존 saveSupplementIncoming 트랜잭션 로직 재사용.
 async function saveIncomingCell(supplementTypeId, date, qty, staffName) {
+  return withReadCommand(supplementResource,command=>saveIncomingCellWithCommand(supplementTypeId, date, qty, staffName,command),{roles:['admin','office','production']});
+}
+async function saveIncomingCellWithCommand(supplementTypeId, date, qty, staffName,command) {
   const stockRef = doc(db, 'supplementStock', supplementTypeId);
   const logRef = doc(collection(db, 'supplementLogs'));
 
-  await runTransaction(db, async (transaction) => {
+  await command.transaction(db, async (transaction) => {
     const stockSnap = await transaction.get(stockRef);
     const before = Number(stockSnap.exists() ? stockSnap.data().currentQty || 0 : 0);
     const after = before + qty;
@@ -754,7 +764,7 @@ async function saveIncomingCell(supplementTypeId, date, qty, staffName) {
       after,
       staffName,
     });
-  });
+  },{targets:[stockRef,logRef]});
 }
 
 // 수동조정 셀 blur — 부호 입력(+N / -N / N). 델타로 새 로그 발행.
@@ -789,8 +799,11 @@ async function handleAdjustCellBlur(input) {
 
   input.disabled = true;
   try {
-    await saveAdjustCell(typeId, date, signedQty, reason, staffName);
-    await renderSupplement();
+    const page=getPageContext();
+      await saveAdjustCell(typeId, date, signedQty, reason, staffName);
+      if(page&&!page.isCurrent())return;
+    input.value='';
+    await refreshSupplementTable();
   } catch (err) {
     console.error('[supplement] adjust cell save failed:', err);
     if (err.message === 'NEGATIVE_SUPPLEMENT_STOCK') {
@@ -804,6 +817,9 @@ async function handleAdjustCellBlur(input) {
 
 // 수동조정 저장 — 기존 saveSupplementAdjust 트랜잭션 로직 + activityLogs 풀필드 재사용.
 async function saveAdjustCell(supplementTypeId, date, signedQty, reason, staffName) {
+  return withReadCommand(supplementResource,command=>saveAdjustCellWithCommand(supplementTypeId, date, signedQty, reason, staffName,command),{roles:['admin','office','production']});
+}
+async function saveAdjustCellWithCommand(supplementTypeId, date, signedQty, reason, staffName,command) {
   const stockRef = doc(db, 'supplementStock', supplementTypeId);
   const logRef = doc(collection(db, 'supplementLogs'));
   const activityRef = doc(collection(db, 'activityLogs'));
@@ -811,7 +827,7 @@ async function saveAdjustCell(supplementTypeId, date, signedQty, reason, staffNa
   const supplementName = supplement?.name || supplementTypeId;
   const sign = signedQty > 0 ? '+' : '';
 
-  await runTransaction(db, async (transaction) => {
+  await command.transaction(db, async (transaction) => {
     const stockSnap = await transaction.get(stockRef);
     const before = Number(stockSnap.exists() ? stockSnap.data().currentQty || 0 : 0);
     const after = before + signedQty;
@@ -862,7 +878,7 @@ async function saveAdjustCell(supplementTypeId, date, signedQty, reason, staffNa
       acknowledgedBy: null,
       acknowledgedByUid: null,
     });
-  });
+  },{targets:[stockRef,logRef]});
 }
 
 async function showAllSupplementLogsModal() {
@@ -894,31 +910,10 @@ function showModal(html, extraClass = '') {
   });
 }
 
-window.closeModal = function() {
+registerCloseModal('supplement', function() {
   document.querySelector('.modal-overlay')?.remove();
-};
+});
 
-async function loadSupplementMenuStaffGroups() {
-  supplementMenuStaffGroups = await loadMenuStaffGroups();
-}
-
-async function loadSupplementStaffCache() {
-  if (!supplementMenuStaffGroups) {
-    await loadSupplementMenuStaffGroups();
-  }
-
-  const groupKeys = [
-    ...getSupplementStaffGroupKeys('supplementStockIn'),
-    ...getSupplementStaffGroupKeys('supplementAdjust'),
-  ].filter((key, index, list) => list.indexOf(key) === index);
-  const missingKeys = groupKeys.filter(key => !supplementStaffCache[key]);
-  if (missingKeys.length === 0) return;
-
-  await Promise.all(missingKeys.map(async (key) => {
-    const snap = await getDoc(doc(db, 'staffGroups', key));
-    supplementStaffCache[key] = snap.exists() ? snap.data().members || [] : [];
-  }));
-}
 
 function getSupplementStaffGroupKeys(menuKey) {
   const groups = supplementMenuStaffGroups?.[menuKey];

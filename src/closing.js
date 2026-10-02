@@ -14,8 +14,8 @@
 
 import { db } from './firebase.js';
 import {
-  doc, getDoc, setDoc, updateDoc,
-  collection, getDocs, query, orderBy, limit, where,
+  doc, getDocFromServer as getDoc, setDoc, updateDoc,
+  collection, getDocsFromServer as getDocs, query, orderBy, limit, where,
   serverTimestamp,
 } from 'firebase/firestore';
 import { currentUser } from './app.js';
@@ -31,9 +31,9 @@ import { recordActivity } from './services/activityLogs.js';
  * @param {string} dateStr - YYYY-MM-DD
  * @returns {Promise<boolean>}
  */
-export async function isDateClosed(dateStr) {
+export async function isDateClosed(dateStr, scope = { getDoc }) {
   if (!dateStr) return false;
-  const snap = await getDoc(doc(db, 'closings', dateStr));
+  const snap = await scope.getDoc(doc(db, 'closings', dateStr));
   if (!snap.exists()) return false;
   return snap.data().status === 'closed';
 }
@@ -44,14 +44,14 @@ export async function isDateClosed(dateStr) {
  *
  * @returns {Promise<string|null>} YYYY-MM-DD or null
  */
-export async function getLastClosedDate() {
+export async function getLastClosedDate(scope = { getDocs }) {
   const q = query(
     collection(db, 'closings'),
     where('status', '==', 'closed'),
     orderBy('__name__', 'desc'),
     limit(1),
   );
-  const snap = await getDocs(q);
+  const snap = await scope.getDocs(q);
   if (snap.empty) return null;
   return snap.docs[0].id;
 }
@@ -70,9 +70,9 @@ export async function getLastClosedDate() {
  * @param {string[]} [holidays=[]] - 휴일 목록
  * @returns {Promise<string|null>}
  */
-export async function getEarliestUnclosedWorkday(holidays = []) {
+export async function getEarliestUnclosedWorkday(holidays = [], scope) {
   const today = getTodayKST();
-  const lastClosed = await getLastClosedDate();
+  const lastClosed = await getLastClosedDate(scope);
 
   let candidate;
   if (lastClosed === null) {

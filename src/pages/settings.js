@@ -1,19 +1,27 @@
 import { showPromptModal, showConfirmModal } from '../utils/modal.js';
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, getDoc, setDoc, addDoc, serverTimestamp, writeBatch
+  collection, getDocsFromServer as getDocs, doc, getDocFromServer as getDoc, setDoc, addDoc, serverTimestamp, writeBatch
 } from 'firebase/firestore';
 import { currentUser, currentUserRole } from '../app.js';
 import { getTodayKST, loadHolidaysCache } from '../utils/date.js';
 import { DEFAULT_CLOSING_FLAGS } from '../services/closingChecksLogic.js';
-import { loadSystemValues, SYSTEM_VALUE_FIELDS } from '../services/systemValues.js';
+import { loadSystemValues, SYSTEM_VALUE_FIELDS, DEFAULT_SYSTEM_VALUES } from '../services/systemValues.js';
 import { addMeatPriceHistory, loadMeatPriceRows, pickLatestMeatPrice } from '../services/meatPrices.js';
 import {
-  loadMenuStaffGroups, MENU_STAFF_GROUP_FIELDS, STAFF_GROUP_KEYS, STAFF_GROUP_LABELS
+  loadMenuStaffGroups, MENU_STAFF_GROUP_FIELDS, STAFF_GROUP_KEYS, STAFF_GROUP_LABELS, DEFAULT_MENU_STAFF_GROUPS
 } from '../services/menuStaffGroups.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { getKoreanPublicHolidaysForYears, PUBLIC_HOLIDAY_SOURCE } from '../services/holidayMaster.js';
-import Sortable from 'sortablejs';
+import Sortable from '../utils/sortable.js';
+import {fingerprint} from '../services/actionGateway.js';
+import {getPageContext} from '../utils/pageLifecycle.js';
+
+async function assertSettingUnchanged(command,path,key,before,defaults={}) {
+  const snapshot=await command.getDoc(doc(db,path));
+  const value={...defaults,...(snapshot.exists()?snapshot.data():{})}[key];
+  if(fingerprint(value)!==fingerprint(before))throw new Error('다른 작업으로 설정이 변경되었습니다. 입력을 보존하고 최신 자료를 다시 확인해주세요.');
+}
 
 const COPY_SHEET_ORDER_DEFAULT = ['rawCat', 'rawDog', 'freezeCat', 'freezeDog', 'freezeCommon'];
 
@@ -47,49 +55,48 @@ const CLOSING_FLAG_WARNS = [
 ];
 
 export async function renderSettings() {
-  if (false && currentUserRole === 'production') {
-    alert('설정은 대표/사무 계정만 가능합니다.');
-    return;
-  }
-
+  if (!['admin','office'].includes(currentUserRole)) return;
+  const ready=await settingsResource.load(async()=>({}),{force:true});
+  if(!ready)return;
   const content = document.getElementById('mainContent');
-  content.innerHTML = `<div style="padding:24px;"><p>설정 로딩 중...</p></div>`;
+  const isWriter = true;
+  const canEditMeatPrice = true;
+  const titles = ["담당자 관리","메뉴별 담당자 그룹","마감 차단/경고 설정","공휴일 관리","생산지시서 카테고리 순서","원료 명칭 통합","시스템 설정값","원료 단가 관리"];
+  content.innerHTML = '<div class="settings-wrap"><h2 class="settings-title">설정</h2>' + titles.map(title =>
+    '<details class="settings-section"><summary class="settings-section-summary"><span class="settings-section-title">' + title + '</span><span class="settings-section-toggle">펼치기</span></summary><div class="settings-section-body"></div></details>'
+  ).join('') + '</div>';
+  content.querySelectorAll('.settings-section').forEach((section,index) => {
+    let pending = false, loaded = false;
+    const body = section.querySelector('.settings-section-body');
+    async function fill(options={}) {
+      if (!section.open || pending || loaded) return;
+      pending = true;
+      body.textContent = '불러오는 중…';
+      try {
+        const resource=settingSections[index];
+        const data=resource?await resource.load(scope=>loadSettingsSection(index,scope),{force:options.force===true,
+          onChange:pageRefresh(resource,async opts=>{loaded=false;await fill(opts);},{draftSelector:'.settings-section-body'})
+        }):await loadSettingsSection(index);
+        if(!section.isConnected || resource && data==null)return;
+        switch(index) { case 0: {
+      const staffGroups = data;
 
-  const staffGroups = await loadStaffGroups();
-  const holidays = await loadHolidays();
-  const closingFlags = await loadClosingFlags();
-  const systemValues = await loadSystemValues();
-  const menuStaffGroups = await loadMenuStaffGroups();
-  const copySheetOrder = await loadCopySheetOrder();
-  const meatPriceRows = await loadMeatPriceRows(getTodayKST());
-  const ingredientNameRows = await loadIngredientNameRows();
-  const isWriter = currentUserRole === 'admin' || currentUserRole === 'office';
-  const canEditMeatPrice = isWriter;
-
-  content.innerHTML = `
-    <div class="settings-wrap">
-      <h2 class="settings-title">설정</h2>
-
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">담당자 관리</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+      if (!section.isConnected) return;
+      body.innerHTML = `
         <div class="staff-groups">
           ${renderStaffGroup('senior', '선임', staffGroups.senior, isWriter)}
           ${renderStaffGroup('lead', '주임', staffGroups.lead, isWriter)}
           ${renderStaffGroup('office', '사무', staffGroups.office, isWriter)}
         </div>
-        </div>
-      </details>
+        `;
+      if(isWriter) bindStaffEvents(staffGroups);
+      break;
+    }
+case 1: {
+      const menuStaffGroups = data;
 
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">메뉴별 담당자 그룹</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+      if (!section.isConnected) return;
+      body.innerHTML = `
         <p class="settings-section-desc">
           각 메뉴의 담당자 선택에 어떤 그룹을 노출할지 설정합니다. 최소 1개 그룹을 선택해야 합니다.
         </p>
@@ -98,15 +105,15 @@ export async function renderSettings() {
             renderMenuStaffGroupRow(field, menuStaffGroups[field.key], isWriter)
           ).join('')}
         </div>
-        </div>
-      </details>
+        `;
+      if(isWriter) bindMenuStaffGroupEvents(menuStaffGroups);
+      break;
+    }
+case 2: {
+      const closingFlags = data;
 
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">마감 차단/경고 설정</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+      if (!section.isConnected) return;
+      body.innerHTML = `
         <p class="settings-section-desc">
           ON인 항목만 마감 시 차단/경고로 동작합니다. OFF로 두면 해당 항목을 무시하고 마감 가능합니다.
         </p>
@@ -120,78 +127,79 @@ export async function renderSettings() {
         <div class="closing-flag-list">
           ${CLOSING_FLAG_WARNS.map(flag => renderFlagRow(flag, closingFlags[flag.key], isWriter)).join('')}
         </div>
-        </div>
-      </details>
+        `;
+      if(isWriter) bindClosingFlagEvents(closingFlags);
+      break;
+    }
+case 3: {
+      const holidays = data;
 
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">공휴일 관리</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+      if (!section.isConnected) return;
+      body.innerHTML = `
         <p class="settings-section-desc">토/일은 자동 처리됩니다. 추가 공휴일만 등록하세요.</p>
         ${renderHolidaysSection(holidays)}
-        </div>
-      </details>
+        `;
+      bindHolidayEvents();
+      break;
+    }
+case 4: {
+      const copySheetOrder = data;
 
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">생산지시서 카테고리 순서</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+      if (!section.isConnected) return;
+      body.innerHTML = `
           <p class="settings-section-desc">생산지시서 복사 시 카테고리 출력 순서입니다.</p>
           ${renderCopySheetOrderSection(copySheetOrder, isWriter)}
-        </div>
-      </details>
-
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">원료 명칭 통합</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+        `;
+      bindCopySheetOrderEvents(isWriter);
+      break;
+    }
+case 5: {
+      const [ingredientNameRows,staffGroups]=data;
+      if (!section.isConnected) return;
+      body.innerHTML = `
           <p class="settings-section-desc">레시피에 적힌 원료명을 실제로 통합합니다. 오늘 이후 생산 카드의 원료명도 함께 갱신되고, 과거 기록은 보존됩니다.</p>
           ${renderIngredientNameMergeSection(ingredientNameRows, isWriter)}
-        </div>
-      </details>
+        `;
+      bindIngredientNameMergeEvents(ingredientNameRows, staffGroups, isWriter);
+      break;
+    }
+case 6: {
+      const systemValues = data;
 
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">시스템 설정값</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+      if (!section.isConnected) return;
+      body.innerHTML = `
         <p class="settings-section-desc">
           생산/재고 계산에 쓰이는 기준값입니다. 변경 시 이후 계산부터 적용됩니다.
         </p>
         <div class="system-value-list">
           ${SYSTEM_VALUE_FIELDS.map(field => renderSystemValueRow(field, systemValues[field.key], isWriter)).join('')}
         </div>
-        </div>
-      </details>
+        `;
+      if(isWriter) bindSystemValueEvents(systemValues);
+      break;
+    }
+case 7: {
+      const meatPriceRows = data;
 
-      <details class="settings-section">
-        <summary class="settings-section-summary">
-          <span class="settings-section-title">원료 단가 관리</span>
-          <span class="settings-section-toggle">펼치기</span>
-        </summary>
-        <div class="settings-section-body">
+      if (!section.isConnected) return;
+      body.innerHTML = `
           <p class="settings-section-desc">원육 단가를 원/kg 기준 effectiveDate 이력으로 관리합니다.</p>
           ${renderMeatPriceSection(meatPriceRows, canEditMeatPrice)}
-        </div>
-      </details>
-    </div>
-  `;
-
-  if (isWriter) bindStaffEvents(staffGroups);
-  if (isWriter) bindClosingFlagEvents(closingFlags);
-  if (isWriter) bindSystemValueEvents(systemValues);
-  if (isWriter) bindMenuStaffGroupEvents(menuStaffGroups);
-  bindCopySheetOrderEvents(isWriter);
-  bindIngredientNameMergeEvents(ingredientNameRows, staffGroups, isWriter);
-  bindHolidayEvents();
-  bindMeatPriceEvents(meatPriceRows, canEditMeatPrice);
+        `;
+      bindMeatPriceEvents(meatPriceRows, canEditMeatPrice);
+      break;
+    } }
+        loaded = true;
+      } catch (error) {
+        if (section.isConnected) {
+          body.innerHTML = '<p>자료를 불러오지 못했습니다.</p><button class="btn-secondary">다시 시도</button>';
+          body.querySelector('button').addEventListener('click',fill);
+        }
+        console.error('[설정 영역 로드]', error);
+      } finally { pending = false; }
+    }
+    section.addEventListener('toggle',fill);
+  });
 }
 
 function normalizeCopySheetOrder(order) {
@@ -202,13 +210,14 @@ function normalizeCopySheetOrder(order) {
   return [...valid, ...missing];
 }
 
-async function loadCopySheetOrder() {
+async function loadCopySheetOrder(scope={getDoc,getDocs}) {
   try {
-    const snap = await getDoc(doc(db, 'settings', 'copySheetOrder'));
+    const snap = await scope.getDoc(doc(db, 'settings', 'copySheetOrder'));
     return snap.exists()
       ? normalizeCopySheetOrder(snap.data().order)
       : [...COPY_SHEET_ORDER_DEFAULT];
   } catch (err) {
+    if(scope.displayOwner)throw err;
     console.warn('[settings] copySheetOrder load failed:', err);
     return [...COPY_SHEET_ORDER_DEFAULT];
   }
@@ -237,8 +246,8 @@ function escapeSettingsHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-async function loadIngredientNameRows() {
-  const snap = await getDocs(collection(db, 'recipes'));
+async function loadIngredientNameRows(scope={getDoc,getDocs}) {
+  const snap = await scope.getDocs(collection(db, 'recipes'));
   const byName = new Map();
 
   snap.docs.forEach(recipeDoc => {
@@ -394,6 +403,9 @@ function showIngredientNameMergeModal(fromNames, rows, staffGroups) {
 }
 
 async function mergeIngredientNames(fromNames, toName, staffName, onDone) {
+ return runPageCommand(settingsResource,async command=>{
+  const {getDocs,writeBatch,recordActivity}=commandWrites(command);
+
   const selected = new Set(fromNames);
   try {
     const snap = await getDocs(collection(db, 'recipes'));
@@ -494,6 +506,8 @@ async function mergeIngredientNames(fromNames, toName, staffName, onDone) {
     console.error('[settings] ingredient name merge failed:', err);
     alert('원료 명칭 통합 실패: ' + err.message);
   }
+
+ },{roles:['admin','office']});
 }
 
 function formatUnitPrice(value) {
@@ -579,6 +593,9 @@ function openMeatPriceModal(row) {
   });
 
   overlay.querySelector('#meatPriceSave').addEventListener('click', async () => {
+ return runPageCommand(settingsResource,async command=>{
+  const {getDocs,addDoc}=commandWrites(command);
+
     const unitPrice = Number(overlay.querySelector('#meatPriceUnitPrice').value);
     const effectiveDate = overlay.querySelector('#meatPriceEffectiveDate').value;
     const reason = overlay.querySelector('#meatPriceReason').value.trim() || 'manual';
@@ -602,7 +619,7 @@ function openMeatPriceModal(row) {
         prevUnitPrice: prev?.unitPrice ?? null,
         reason,
         createdBy: currentUser?.email || currentUser?.uid || '',
-      });
+      }, commandWrites(command));
       await addDoc(collection(db, 'activityLogs'), {
         date: getTodayKST(),
         timestamp: serverTimestamp(),
@@ -624,7 +641,9 @@ function openMeatPriceModal(row) {
       console.error('[settings] meat price save failed:', err);
       alert('원료 단가 저장 실패: ' + err.message);
     }
-  });
+
+ },{roles:['admin','office']});
+});
 }
 
 function bindCopySheetOrderEvents(isWriter) {
@@ -650,6 +669,9 @@ function bindCopySheetOrderEvents(isWriter) {
 }
 
 async function persistCopySheetOrder() {
+ return runPageCommand(settingsResource,async command=>{
+  const {setDoc}=commandWrites(command);
+
   const listEl = document.getElementById('copySheetOrderList');
   if (!listEl) return;
 
@@ -668,15 +690,18 @@ async function persistCopySheetOrder() {
     alert('카테고리 순서 저장 실패: ' + err.message);
     await renderSettings();
   }
+
+ },{roles:['admin','office']});
 }
 
-async function loadClosingFlags() {
+async function loadClosingFlags(scope={getDoc,getDocs}) {
   try {
-    const snap = await getDoc(doc(db, 'settings', 'closingFlags'));
+    const snap = await scope.getDoc(doc(db, 'settings', 'closingFlags'));
     return snap.exists()
       ? { ...DEFAULT_CLOSING_FLAGS, ...snap.data() }
       : { ...DEFAULT_CLOSING_FLAGS };
   } catch (err) {
+    if(scope.displayOwner)throw err;
     console.warn('[settings] closingFlags load failed:', err);
     return { ...DEFAULT_CLOSING_FLAGS };
   }
@@ -702,11 +727,15 @@ function renderFlagRow(flag, value, isWriter) {
 function bindClosingFlagEvents(initialFlags) {
   document.querySelectorAll('.closing-flag-list input[type="checkbox"]').forEach(cb => {
     cb.addEventListener('change', async (e) => {
+ return runPageCommand(settingsResource,async command=>{
+  const {addDoc,setDoc}=commandWrites(command);
+
       const flagKey = e.target.dataset.flagKey;
       const before = initialFlags[flagKey] !== false;
       const after = e.target.checked;
 
       try {
+        await assertSettingUnchanged(command,'settings/closingFlags',flagKey,before,DEFAULT_CLOSING_FLAGS);
         await setDoc(
           doc(db, 'settings', 'closingFlags'),
           { [flagKey]: after },
@@ -728,7 +757,9 @@ function bindClosingFlagEvents(initialFlags) {
         alert('저장 실패: ' + err.message);
         e.target.checked = before;
       }
-    });
+
+ },{roles:['admin','office']});
+});
   });
 }
 
@@ -789,6 +820,9 @@ function bindSystemValueEvents(initialValues) {
 }
 
 async function handleNumberBlur(input, field, initialValues) {
+ return runPageCommand(settingsResource,async command=>{
+  const {setDoc}=commandWrites(command);
+
   const valueKey = field.key;
   const before = initialValues[valueKey];
   const after = field.type === 'decimal'
@@ -803,21 +837,26 @@ async function handleNumberBlur(input, field, initialValues) {
   if (after === before) return;
 
   try {
+    await assertSettingUnchanged(command,'settings/systemValues',valueKey,before,DEFAULT_SYSTEM_VALUES);
     await setDoc(
       doc(db, 'settings', 'systemValues'),
       { [valueKey]: after },
       { merge: true }
     );
     initialValues[valueKey] = after;
-    await logSystemValueChange(valueKey, before, after);
+    await logSystemValueChange(valueKey, before, after, command);
   } catch (err) {
     console.error('[settings] systemValue save failed:', err);
     alert('저장 실패: ' + err.message);
-    input.value = before;
   }
+
+ },{roles:['admin','office']});
 }
 
 async function handleFractionBlur(input, field, initialValues) {
+ return runPageCommand(settingsResource,async command=>{
+  const {setDoc}=commandWrites(command);
+
   const valueKey = field.key;
   const before = initialValues[valueKey] || { numerator: 0, denominator: 1 };
 
@@ -846,22 +885,24 @@ async function handleFractionBlur(input, field, initialValues) {
   if (after.numerator === before.numerator && after.denominator === before.denominator) return;
 
   try {
+    await assertSettingUnchanged(command,'settings/systemValues',valueKey,before,DEFAULT_SYSTEM_VALUES);
     await setDoc(
       doc(db, 'settings', 'systemValues'),
       { [valueKey]: after },
       { merge: true }
     );
     initialValues[valueKey] = after;
-    await logSystemValueChange(valueKey, before, after);
+    await logSystemValueChange(valueKey, before, after, command);
   } catch (err) {
     console.error('[settings] systemValue save failed:', err);
     alert('저장 실패: ' + err.message);
-    numInput.value = before.numerator;
-    denInput.value = before.denominator;
   }
+
+ },{roles:['admin','office']});
 }
 
-async function logSystemValueChange(valueKey, before, after) {
+async function logSystemValueChange(valueKey, before, after, command) {
+  const {addDoc}=commandWrites(command);
   await addDoc(collection(db, 'activityLogs'), {
     date: getTodayKST(),
     timestamp: serverTimestamp(),
@@ -905,6 +946,9 @@ function renderMenuStaffGroupRow(field, groupKeys = [], isWriter) {
 function bindMenuStaffGroupEvents(initialGroups) {
   document.querySelectorAll('.menu-staff-group-checkbox').forEach(cb => {
     cb.addEventListener('change', async (e) => {
+ return runPageCommand(settingsResource,async command=>{
+  const {addDoc,setDoc}=commandWrites(command);
+
       const menuKey = e.target.dataset.menuKey;
       const groupKey = e.target.dataset.groupKey;
       const before = Array.isArray(initialGroups[menuKey]) ? [...initialGroups[menuKey]] : [];
@@ -925,6 +969,7 @@ function bindMenuStaffGroupEvents(initialGroups) {
       if (arraysEqual(before, after)) return;
 
       try {
+        await assertSettingUnchanged(command,'settings/menuStaffGroups',menuKey,before,DEFAULT_MENU_STAFF_GROUPS);
         await setDoc(
           doc(db, 'settings', 'menuStaffGroups'),
           { [menuKey]: after },
@@ -946,7 +991,9 @@ function bindMenuStaffGroupEvents(initialGroups) {
         alert('저장 실패: ' + err.message);
         e.target.checked = before.includes(groupKey);
       }
-    });
+
+ },{roles:['admin','office']});
+});
   });
 }
 
@@ -954,14 +1001,14 @@ function arraysEqual(a, b) {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
-async function loadStaffGroups() {
+async function loadStaffGroups(scope={getDoc,getDocs}) {
   const groups = { senior: [], lead: [], office: [] };
-  for (const key of Object.keys(groups)) {
-    const snap = await getDoc(doc(db, 'staffGroups', key));
+  await Promise.all(Object.keys(groups).map(async key => {
+    const snap = await scope.getDoc(doc(db, 'staffGroups', key));
     if (snap.exists()) {
       groups[key] = snap.data().members || [];
     }
-  }
+  }));
   return groups;
 }
 
@@ -998,13 +1045,14 @@ function bindStaffEvents(staffGroups) {
       if (name === null) return;
       if (!name || !name.trim()) return;
 
-      staffGroups[group].push({
+      const nextMembers=[...staffGroups[group],{
         id: Date.now().toString(),
         name: name.trim(),
         active: true,
         sortOrder: staffGroups[group].length,
-      });
-      await saveStaffGroup(group, staffGroups[group]);
+      }];
+      if(!await saveStaffGroup(group,nextMembers,staffGroups[group]))return;
+      staffGroups[group]=nextMembers;
       renderSettingsRefresh(staffGroups);
     });
   });
@@ -1021,14 +1069,20 @@ function bindStaffEvents(staffGroups) {
       });
       if (!confirmed) return;
 
-      staffGroups[group].splice(index, 1);
-      await saveStaffGroup(group, staffGroups[group]);
+      const nextMembers=staffGroups[group].filter((_,i)=>i!==index);
+      if(!await saveStaffGroup(group,nextMembers,staffGroups[group]))return;
+      staffGroups[group]=nextMembers;
       renderSettingsRefresh(staffGroups);
     });
   });
 }
 
-async function saveStaffGroup(groupKey, members) {
+async function saveStaffGroup(groupKey, members, before) {
+ return runPageCommand(settingsResource,async command=>{
+  const {getDoc,setDoc}=commandWrites(command);
+
+  const fresh=await command.getDoc(doc(db,'staffGroups',groupKey));
+  if(fingerprint(fresh.exists()?fresh.data().members||[]:[])!==fingerprint(before))throw new Error('담당자 목록이 변경되었습니다. 다시 불러와주세요.');
   const groupNames = { senior: '선임', lead: '주임', office: '사무' };
   await setDoc(doc(db, 'staffGroups', groupKey), {
     name: groupNames[groupKey],
@@ -1036,6 +1090,9 @@ async function saveStaffGroup(groupKey, members) {
     members,
     updatedAt: new Date(),
   });
+  return command.isCurrent();
+
+ },{roles:['admin','office']});
 }
 
 function renderSettingsRefresh(staffGroups) {
@@ -1055,8 +1112,8 @@ function renderStaffList(key, members, isWriter = false) {
   `).join('') || '<p class="staff-empty">담당자 없음</p>';
 }
 
-async function loadHolidays() {
-  const snap = await getDocs(collection(db, 'holidays'));
+async function loadHolidays(scope={getDoc,getDocs}) {
+  const snap = await scope.getDocs(collection(db, 'holidays'));
   const list = snap.docs
     .map(d => normalizeHolidayForSettings(d.id, d.data()))
     .filter(h => h.status !== 'deleted');
@@ -1164,6 +1221,9 @@ function bindHolidayEvents() {
 }
 
 async function handleAddHoliday() {
+ return runPageCommand(settingsResource,async command=>{
+  const {getDoc,setDoc}=commandWrites(command);
+
   const startInput = document.getElementById('hd_start');
   const endInput = document.getElementById('hd_end');
   const labelInput = document.getElementById('hd_label');
@@ -1233,7 +1293,7 @@ async function handleAddHoliday() {
       created,
       skipped,
       total: dates.length,
-    });
+    }, command);
     await loadHolidaysCache();
     if (created === 0 && skipped > 0) {
       alert(`등록된 날짜가 없습니다. 선택한 ${skipped}개 날짜가 이미 등록되어 있습니다.`);
@@ -1245,9 +1305,14 @@ async function handleAddHoliday() {
     console.error(err);
     alert('등록 실패: ' + err.message);
   }
+
+ },{roles:['admin','office']});
 }
 
 async function handleImportPublicHolidays() {
+ return runPageCommand(settingsResource,async command=>{
+  const {getDoc,setDoc}=commandWrites(command);
+
   const holidays = getKoreanPublicHolidaysForYears();
   const confirmed = await showConfirmModal({
     title: '한국 공휴일 자동 등록',
@@ -1286,7 +1351,7 @@ async function handleImportPublicHolidays() {
       created,
       skipped,
       total: holidays.length,
-    });
+    }, command);
     await loadHolidaysCache();
     alert(`한국 공휴일 자동 등록 완료: 신규 ${created}건 / 기존 유지 ${skipped}건`);
     await renderSettings();
@@ -1294,9 +1359,14 @@ async function handleImportPublicHolidays() {
     console.error(err);
     alert('자동 등록 실패: ' + err.message);
   }
+
+ },{roles:['admin','office']});
 }
 
 async function handleEditHoliday(holidayId) {
+ return runPageCommand(settingsResource,async command=>{
+  const {getDoc,setDoc}=commandWrites(command);
+
   const snap = await getDoc(doc(db, 'holidays', holidayId));
   if (!snap.exists()) {
     alert('휴일 정보를 찾을 수 없습니다.');
@@ -1363,7 +1433,7 @@ async function handleEditHoliday(holidayId) {
         affectsShipping,
         shippingClosedFromEnabled: !shippingAvailablePrev,
       },
-    });
+    }, command);
     await loadHolidaysCache();
     alert('휴일 수정 완료!');
     await renderSettings();
@@ -1371,9 +1441,14 @@ async function handleEditHoliday(holidayId) {
     console.error(err);
     alert('수정 실패: ' + err.message);
   }
+
+ },{roles:['admin','office']});
 }
 
 async function handleDeleteHoliday(holidayId) {
+ return runPageCommand(settingsResource,async command=>{
+  const {getDoc,setDoc}=commandWrites(command);
+
   const snap = await getDoc(doc(db, 'holidays', holidayId));
   const holiday = snap.exists() ? normalizeHolidayForSettings(holidayId, snap.data()) : { id: holidayId };
   const confirmed = await showConfirmModal({
@@ -1397,7 +1472,7 @@ async function handleDeleteHoliday(holidayId) {
       date: holidayId,
       holiday: pickHolidayLogDetails(holiday),
       mode: holiday.isAutoGenerated ? 'disableAutoGenerated' : 'softDelete',
-    });
+    }, command);
     await loadHolidaysCache();
     alert(holiday.isAutoGenerated ? '자동 공휴일 비활성 완료!' : '회사 휴무일 삭제 완료!');
     await renderSettings();
@@ -1405,6 +1480,8 @@ async function handleDeleteHoliday(holidayId) {
     console.error(err);
     alert('삭제 실패: ' + err.message);
   }
+
+ },{roles:['admin','office']});
 }
 
 function getDateRangeInclusive(startDate, endDate) {
@@ -1432,7 +1509,8 @@ function pickHolidayLogDetails(holiday) {
   };
 }
 
-async function logHolidayChange(subAction, details) {
+async function logHolidayChange(subAction, details, command) {
+  const {addDoc}=commandWrites(command);
   await addDoc(collection(db, 'activityLogs'), {
     date: getTodayKST(),
     timestamp: serverTimestamp(),
@@ -1442,4 +1520,30 @@ async function logHolidayChange(subAction, details) {
     staffName: currentUser?.email || currentUser?.uid || '',
     acknowledged: false,
   });
+}
+
+import {runPageCommand} from '../services/pageCommand.js';
+import {commandWrites} from '../services/commandWrites.js';
+
+import {pageResource} from '../state/pageResources.js';
+const settingsResource=pageResource('settings');
+
+import {instantPageResource} from '../state/instantPageResources.js';
+import {pageRefresh} from '../utils/pageRefresh.js';
+const settingSections=settingsResource.prepare?Array.from({length:8},(_,index)=>instantPageResource('settings/section/'+index)):[];
+if(settingSections.length){
+ const invalidate=settingsResource.invalidate.bind(settingsResource);
+ settingsResource.invalidate=()=>{invalidate();settingSections.forEach(resource=>resource.invalidate());};
+}
+function loadSettingsSection(index,scope) {
+ const loaders=[loadStaffGroups,loadMenuStaffGroups,loadClosingFlags,loadHolidays,loadCopySheetOrder,
+  scope=>Promise.all([loadIngredientNameRows(scope),loadStaffGroups(scope)]),loadSystemValues,
+  scope=>loadMeatPriceRows(getTodayKST(),scope)];
+ return loaders[index](scope);
+}
+export async function preparePage({cacheOnly=true}={}) {
+ for(let index=0;index<settingSections.length;index++){
+  try{await settingSections[index].prepare('default',scope=>loadSettingsSection(index,scope),{cacheOnly});}
+  catch(error){if(error.code!=='cache-miss')throw error;}
+ }
 }

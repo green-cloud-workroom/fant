@@ -298,6 +298,27 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // 설비 부품 — 기계/부품 마스터는 admin·office, 교체/입고/조정 이력은 production 포함 전 역할
+    match /equipments/{equipmentId} {
+      allow read: if isProductionApp();
+      allow create, update: if isProductionWriter();
+      allow delete: if isProductionWriter();
+    }
+
+    match /equipmentParts/{partId} {
+      allow read: if isProductionApp();
+      allow create: if isProductionWriter();
+      allow update: if isProductionStaff();
+      allow delete: if isProductionWriter();
+    }
+
+    match /equipmentPartLogs/{logId} {
+      allow read: if isProductionApp();
+      allow create: if isProductionStaff();
+      allow update: if false;
+      allow delete: if isProductionWriter();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

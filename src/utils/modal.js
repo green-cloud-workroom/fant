@@ -1,3 +1,5 @@
+import { registerModalDismiss } from './modalManager.js';
+let dismissCurrent = null;
 // 공통 모달 유틸 (묶음 1B)
 //
 // 브라우저 기본 prompt() / confirm() 대체용.
@@ -46,6 +48,7 @@ export function showPromptModal(opts = {}) {
 
   return new Promise((resolve) => {
     // 기존 모달 제거 (idempotent)
+    dismissCurrent?.();
     const existing = document.getElementById(OVERLAY_ID);
     if (existing) existing.remove();
 
@@ -78,9 +81,14 @@ export function showPromptModal(opts = {}) {
     // 입력 필드 자동 포커스
     setTimeout(() => input.focus(), 50);
 
+    const controller = new AbortController();
+    let unregister = () => {};
     const cleanup = () => {
+      controller.abort(); unregister(); dismissCurrent = null;
       if (overlay) overlay.remove();
     };
+    dismissCurrent = () => { cleanup(); resolve(null); };
+    unregister = registerModalDismiss(dismissCurrent);
 
     btnCancel.addEventListener('click', () => {
       cleanup();
@@ -134,6 +142,7 @@ export function showConfirmModal(opts = {}) {
   } = opts;
 
   return new Promise((resolve) => {
+    dismissCurrent?.();
     const existing = document.getElementById(OVERLAY_ID);
     if (existing) existing.remove();
 
@@ -160,9 +169,14 @@ export function showConfirmModal(opts = {}) {
 
     setTimeout(() => btnConfirm.focus(), 50);
 
+    const controller = new AbortController();
+    let unregister = () => {};
     const cleanup = () => {
+      controller.abort(); unregister(); dismissCurrent = null;
       if (overlay) overlay.remove();
     };
+    dismissCurrent = () => { cleanup(); resolve(false); };
+    unregister = registerModalDismiss(dismissCurrent);
 
     btnCancel.addEventListener('click', () => {
       cleanup();
@@ -189,6 +203,6 @@ export function showConfirmModal(opts = {}) {
         resolve(true);
         document.removeEventListener('keydown', escHandler);
       }
-    });
+    }, { signal: controller.signal });
   });
 }

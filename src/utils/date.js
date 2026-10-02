@@ -3,6 +3,7 @@
 
 import { db } from '../firebase.js';
 import { collection, getDocs } from 'firebase/firestore';
+import { sessionStore } from '../state/sessionStore.js';
 import {
   HOLIDAY_DATA_END_YEAR,
   HOLIDAY_REFRESH_NEEDED_BEFORE,
@@ -16,7 +17,13 @@ const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 let holidaysCache = [];
 let holidayInfoCache = buildStaticHolidayMap();
 let holidaysCacheLoaded = false;
+let holidaysCacheLoadedAt = 0;
+let holidaysLoadPending = null;
 let holidayDataExpiryWarned = false;
+sessionStore.onClear(() => {
+  holidaysCache = []; holidayInfoCache = buildStaticHolidayMap(); holidaysCacheLoaded = false;
+  holidaysCacheLoadedAt = 0; holidaysLoadPending = null;
+});
 
 /**
  * 주어진 Date 객체를 KST 기준 YYYY-MM-DD 문자열로 변환
@@ -294,8 +301,10 @@ export function formatKstDateWithDay(dateStr) {
  *
  * @returns {Promise<string[]>} 캐시된 휴일 배열 (YYYY-MM-DD)
  */
-export async function loadHolidaysCache() {
-  const snap = await getDocs(collection(db, 'holidays'));
+export async function loadHolidaysCache(scope = { getDocs }) {
+  const epoch = sessionStore.epoch;
+  const snap = await scope.getDocs(collection(db, 'holidays'));
+  if (epoch !== sessionStore.epoch) throw new Error('휴일 조회 중 세션이 변경되었습니다.');
   const merged = buildStaticHolidayMap();
   snap.docs.forEach(d => {
     const normalized = normalizeHolidayDoc(d.id, d.data());
@@ -309,7 +318,21 @@ export async function loadHolidaysCache() {
   holidayInfoCache = merged;
   holidaysCache = Object.keys(merged).sort();
   holidaysCacheLoaded = true;
+  holidaysCacheLoadedAt = Date.now();
   return holidaysCache;
+}
+
+// Avoid the duplicate startup read; recheck shared holiday changes after 30s.
+// Explicit holiday saves keep calling loadHolidaysCache() to force a refresh.
+export function ensureHolidaysCache(scope) {
+  if (scope) return scope.once('holidaySnapshot', () => loadHolidaysCache(scope));
+  if (holidaysCacheLoaded && Date.now() - holidaysCacheLoadedAt < 30_000) {
+    return Promise.resolve(holidaysCache);
+  }
+  if (!holidaysLoadPending) {
+    holidaysLoadPending = loadHolidaysCache().finally(() => { holidaysLoadPending = null; });
+  }
+  return holidaysLoadPending;
 }
 
 /**
