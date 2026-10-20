@@ -27,7 +27,7 @@ import { currentUser } from '../app.js';
  * @param {string} [entry.batchId]        - 같은 트랜잭션 묶음 식별
  * @returns {Promise<string>}             - 생성된 로그 문서 ID
  */
-export async function recordMeatLog(entry) {
+export async function recordMeatLog(entry,{writer}={}) {
   if (!entry || !entry.type) throw new Error('recordMeatLog: type 필수');
   if (!entry.date) throw new Error('recordMeatLog: date 필수');
   if (!entry.meatTypeId) throw new Error('recordMeatLog: meatTypeId 필수');
@@ -54,6 +54,6 @@ export async function recordMeatLog(entry) {
     timestamp: serverTimestamp(),
   };
 
-  const ref = await addDoc(collection(db, 'meatLogs'), docData);
+  const ref = await (writer?.addDoc||addDoc)(collection(db, 'meatLogs'), docData);
   return ref.id;
 }

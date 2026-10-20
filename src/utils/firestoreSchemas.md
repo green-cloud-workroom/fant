@@ -457,3 +457,79 @@ timestamp: Timestamp,
 
 **불변 규칙**:
 - 생성 후 수정/삭제 금지
+
+---
+
+## equipments/{auto-id} (신규 — 설비 부품)
+
+기계 마스터. 종류(category)로 묶고 별칭(alias)으로 개별 기계 구분 (예: 민서기 / 민서기 1호·2호).
+
+```js
+{
+  category: string,     // 기계 종류 (예: "민서기"). 별도 컬렉션 없이 문자열. 이름 변경 시 equipments + equipmentParts 스냅샷 일괄 갱신
+  alias: string,        // 별칭 (예: "민서기 1호"). 같은 category 안에서 유일
+  memo: string,
+  active: boolean,
+  sortOrder: number,    // 전체 단일 시퀀스 (종류별 DOM 순서를 이어붙여 재부여)
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
+}
+```
+
+**Rules**: read=isProductionApp / create·update·delete=isProductionWriter(admin·office)
+
+## equipmentParts/{auto-id} (신규 — 설비 부품)
+
+부품 마스터 + 현재 재고. 기계당 부품 여러 개.
+
+```js
+{
+  equipmentId: string,
+  equipmentCategory: string,   // 스냅샷 (기계 종류/별칭 변경 시 동기화)
+  equipmentAlias: string,
+  name: string,                // 부품명 (예: "날", "망")
+  spec: string,                // 규격
+  cycleValue: number,          // 교체 주기 값
+  cycleUnit: 'day' | 'week' | 'month',
+  lastReplacedAt: string|null, // YYYY-MM-DD
+  nextDueAt: string|null,      // YYYY-MM-DD = lastReplacedAt + 주기 (개월은 달력 기준, 말일 넘침 보정)
+  currentQty: number,          // 현재 재고 (0 이상)
+  minimumQty: number,          // 최소 재고 (0이면 부족 판정 안 함)
+  memo: string,
+  active: boolean,
+  sortOrder: number,
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
+}
+```
+
+**판정** (`services/equipmentParts.js` `getPartStatus`): `dday = nextDueAt - today`. 지남=dday<0, 임박=0≤dday≤7, 부족=minimumQty>0 && currentQty<minimumQty.
+
+**Rules**: read=isProductionApp / create·delete=isProductionWriter / update=isProductionStaff (production 역할도 교체·입고·조정으로 currentQty·lastReplacedAt·nextDueAt 갱신)
+
+## equipmentPartLogs/{auto-id} (신규 — 설비 부품)
+
+교체/입고/조정 이력. 작성 후 수정 금지.
+
+```js
+{
+  partId: string,
+  partName: string,            // 스냅샷
+  equipmentId: string,
+  equipmentCategory: string,
+  equipmentAlias: string,
+  type: 'replace' | 'in' | 'adjust',
+  qty: number,                 // 변동량 (교체 -1 또는 재고 0이면 0, 입고 +N, 조정 ±N)
+  before: number,
+  after: number,
+  date: string,                // YYYY-MM-DD (교체일/입고일/조정일)
+  staffName: string,
+  note: string,
+  timestamp: Timestamp,
+}
+```
+
+**Rules**: read=isProductionApp / create=isProductionStaff / update=false / delete=isProductionWriter (부품 삭제 시 cascade)
+
+**activityLogs 연동**: `action:'equipment'` (사무 로그) — subAction: create/update/delete/renameCategory/partCreate/partUpdate/partDelete/replace/in/adjust.
+자동 발행(메인 진입 시, `ensureAutoLog`): `minStock:alert` (kind:'part', dedupKey `minStock:part:{partId}`), `partDue:alert` (dedupKey `partDue:{partId}`) — 확인 필수, 매일 반복.

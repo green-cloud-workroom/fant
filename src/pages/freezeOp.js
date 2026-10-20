@@ -1,11 +1,16 @@
 import { db } from '../firebase.js';
 import {
-  collection, getDocs, doc, updateDoc, query, orderBy,
+  collection, getDocsFromServer as getDocs, doc, updateDoc, query, orderBy,
   writeBatch, increment
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import * as appState from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
+import {pageResource} from '../state/pageResources.js';
+import {pageRefresh} from '../utils/pageRefresh.js';
+import {getPageContext,registerPageCleanup} from '../utils/pageLifecycle.js';
+const freezeOpResource=pageResource('freezeOp');
+freezeOpResource.refresh=reload;
 
 const SLOT_COLORS = [
   '#4299E1', '#48BB78', '#ED8936', '#9F7AEA', '#F56565',
@@ -41,34 +46,38 @@ function canManageFreezeOp() {
 
 // ─── Entry points ─────────────────────────────────────────────────
 
-export async function renderFreezeOp() {
+export async function renderFreezeOp({force=false}={}) {
   _tabMode = false;
   const content = document.getElementById('mainContent');
   content.innerHTML = `<div style="padding:24px;"><p>동결가동 로딩 중...</p></div>`;
-  const [orders, lots] = await Promise.all([loadFreezeOrders(), loadFrozenPanLots()]);
+  const data=await loadFreezeOpModel({force});
+  if(!data)return;
+  const {orders,lots}=data;
   if (document.getElementById('mainContent') !== content) return;
   renderPage(orders, lots, { container: content, tabMode: false });
 }
 
-export async function renderFreezeOpInTab() {
+export async function renderFreezeOpInTab({force=false}={}) {
   _tabMode = true;
   const container = document.getElementById('freezeOpContent');
   if (!container) return;
   container.innerHTML = '<p style="color:#888;font-size:13px;padding:8px 0;">로딩 중...</p>';
-  const [orders, lots] = await Promise.all([loadFreezeOrders(), loadFrozenPanLots()]);
+  const data=await loadFreezeOpModel({force});
+  if(!data)return;
+  const {orders,lots}=data;
   if (document.getElementById('freezeOpContent') !== container) return;
   renderPage(orders, lots, { container, tabMode: true });
 }
 
 // ─── Data loaders ─────────────────────────────────────────────────
 
-async function loadFreezeOrders() {
-  const snap = await getDocs(query(collection(db, 'freezeOrders'), orderBy('date', 'desc')));
+async function loadFreezeOrders(scope={getDocs}) {
+  const snap = await scope.getDocs(query(collection(db, 'freezeOrders'), orderBy('date', 'desc')));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-async function loadFrozenPanLots() {
-  const snap = await getDocs(collection(db, 'frozenPanLots'));
+async function loadFrozenPanLots(scope={getDocs}) {
+  const snap = await scope.getDocs(collection(db, 'frozenPanLots'));
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .filter(l => !l.closed && Number(l.remaining || 0) > 0);
@@ -82,9 +91,21 @@ function buildStockMap(lots) {
   return map;
 }
 
-async function reload() {
-  const [orders, lots] = await Promise.all([loadFreezeOrders(), loadFrozenPanLots()]);
-  renderPage(orders, lots, { container: getContainer(), tabMode: _tabMode });
+async function loadFreezeOpModel({force=false}={}) {
+  registerPageCleanup(()=>{_slots=new Array(TOTAL_SLOTS).fill(null);_builderOrder=null;_activeProduct=null;_colorMap={};});
+  return freezeOpResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(freezeOpResource,options=>_tabMode?renderFreezeOpInTab(options):renderFreezeOp(options))});
+}
+
+export function disposeFreezeOpTab() {
+  freezeOpResource.active=false;freezeOpResource.disconnect();
+  _builderOrder=null;_slots=new Array(TOTAL_SLOTS).fill(null);_activeProduct=null;_colorMap={};
+}
+
+async function reload({force=false}={}) {
+  const container=getContainer(),tabMode=_tabMode,page=getPageContext();
+  const data=await loadFreezeOpModel({force});
+  if(!data||!container?.isConnected||(page&&!page.isCurrent()))return;
+  renderPage(data.orders,data.lots,{container,tabMode});
 }
 
 // ─── Page render ──────────────────────────────────────────────────
@@ -284,6 +305,9 @@ function showCreateModal(stock, lots) {
   addStockRow();
 
   document.getElementById('fo_save').addEventListener('click', async () => {
+ return runPageCommand(freezeOpResource,async command=>{
+  const {writeBatch}=commandWrites(command);
+
     const date = document.getElementById('fo_date').value;
     if (!date) { alert('날짜를 입력해주세요.'); return; }
 
@@ -342,10 +366,14 @@ function showCreateModal(stock, lots) {
     });
     await batch.commit();
 
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     await reload();
     alert('발주서 저장 완료! 동결판 재고가 차감되었습니다.');
-  });
+
+ },{roles:['admin','office']});
+});
 }
 
 // ─── Order Detail Modal (read-only for QC, also admin) ──────────
@@ -496,6 +524,9 @@ function showBuilderModal(order) {
   });
 
   document.getElementById('bp_confirm').addEventListener('click', async () => {
+ return runPageCommand(freezeOpResource,async command=>{
+  const {updateDoc}=commandWrites(command);
+
     const assigned = _slots.filter(Boolean).length;
     if (assigned === 0) { alert('배치된 항목이 없습니다.'); return; }
     const ok = await showConfirmModal({
@@ -512,10 +543,14 @@ function showBuilderModal(order) {
       updatedAt: new Date(),
     });
 
+    if(!command.isCurrent())return;
     closeModal();
+    if(!command.isCurrent())return;
     await reload();
     alert('배치 확정 완료!');
-  });
+
+ },{roles:['admin','office']});
+});
 }
 
 function renderBuilderProducts() {
@@ -688,6 +723,9 @@ function calcDeductions(items, lots) {
 }
 
 async function cancelOrder(order) {
+ return runPageCommand(freezeOpResource,async command=>{
+  const {writeBatch}=commandWrites(command);
+
   const batch = writeBatch(db);
   (order.deductions || []).forEach(d => {
     batch.update(doc(db, 'frozenPanLots', d.lotId), {
@@ -702,6 +740,8 @@ async function cancelOrder(order) {
     cancelledBy: getCurrentProductionRole() || '',
   });
   await batch.commit();
+
+ },{roles:['admin','office']});
 }
 
 // ─── A4 Print ────────────────────────────────────────────────────
@@ -774,3 +814,13 @@ function printLayout(order, slots, colorMap) {
   win.focus();
   win.print();
 }
+
+import {runPageCommand} from '../services/pageCommand.js';
+import {commandWrites} from '../services/commandWrites.js';
+
+// Read-only model construction shared by activation and idle preparation.
+async function loadInitialModel(scope) {
+    const [orders,lots]=await Promise.all([loadFreezeOrders(scope),loadFrozenPanLots(scope)]);
+    return {orders,lots};
+}
+export function preparePage({cacheOnly=true}={}) { return freezeOpResource.prepare?.('default',loadInitialModel,{cacheOnly}); }

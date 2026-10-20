@@ -1,7 +1,7 @@
 import {
   addDoc,
   collection,
-  getDocs,
+  getDocsFromServer as getDocs,
   orderBy,
   query,
   serverTimestamp,
@@ -26,22 +26,22 @@ export function pickLatestMeatPrice(history, dateStr) {
   return candidates[0] || null;
 }
 
-export async function loadMeatPriceRows(dateStr) {
-  const snap = await getDocs(query(collection(db, 'meatTypes'), orderBy('sortOrder')));
+export async function loadMeatPriceRows(dateStr, scope={getDocs}) {
+  const snap = await scope.getDocs(query(collection(db, 'meatTypes'), orderBy('sortOrder')));
   const meatTypes = snap.docs
     .map(doc => ({ id: doc.id, ...doc.data() }))
     .filter(item => item.active !== false);
 
   return Promise.all(meatTypes.map(async (meatType) => {
-    const historySnap = await getDocs(collection(db, 'meatTypes', meatType.id, 'priceHistory'));
+    const historySnap = await scope.getDocs(collection(db, 'meatTypes', meatType.id, 'priceHistory'));
     const history = historySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     const latest = pickLatestMeatPrice(history, dateStr);
     return { meatType, latest, history };
   }));
 }
 
-export async function addMeatPriceHistory(meatTypeId, payload) {
-  return addDoc(collection(db, 'meatTypes', meatTypeId, 'priceHistory'), {
+export async function addMeatPriceHistory(meatTypeId, payload, writer={addDoc}) {
+  return writer.addDoc(collection(db, 'meatTypes', meatTypeId, 'priceHistory'), {
     unitPrice: payload.unitPrice,
     effectiveDate: payload.effectiveDate,
     prevUnitPrice: payload.prevUnitPrice ?? null,

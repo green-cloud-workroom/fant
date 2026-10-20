@@ -6,11 +6,19 @@ export let currentUser = null;
 export let currentUserRole = null;
 
 // 사용자 정보 로드
-export async function loadUserInfo(user) {
+let userInfoVersion = 0;
+export async function loadUserInfo(user, forceRefresh = true) {
+  const version = ++userInfoVersion;
+  const tokenResult = await user.getIdTokenResult(forceRefresh);
+  if (version !== userInfoVersion || auth.currentUser?.uid !== user.uid) return false;
   currentUser = user;
-  const tokenResult = await user.getIdTokenResult(true);
   currentUserRole = tokenResult.claims.roles?.production || null;
+  if (!['admin', 'office', 'production'].includes(currentUserRole)) {
+    clearUserInfo(); throw new Error('생산관리 앱 접근 권한이 없습니다.');
+  }
+  return true;
 }
+export function clearUserInfo() { userInfoVersion++; currentUser = null; currentUserRole = null; }
 
 // 메뉴 목록
 export const MENUS = [
@@ -24,6 +32,7 @@ export const MENUS = [
   { id: 'frozenPan', label: '동결판 재고', roles: ['admin', 'office', 'production'] },
   { id: 'frozenSep', label: '동결 분리작업', roles: ['admin', 'office', 'production'] },
   { id: 'schedule', label: '입고 예정관리', roles: ['admin', 'office', 'production'] },
+  { id: 'equipment', label: '설비 부품', roles: ['admin', 'office', 'production'] },
   { id: 'recipe', label: '레시피 관리', roles: ['admin', 'office'] },
   { id: 'stats', label: '통계', roles: ['admin', 'office'] },
   { id: 'settings', label: '설정', roles: ['admin', 'office'] },
@@ -38,7 +47,13 @@ function getMenuFromHash() {
 
 export let currentMenu = getMenuFromHash() || sessionStorage.getItem('lastMenu') || 'main';
 
+let navigationHandler = null;
+export function registerNavigationHandler(handler) { navigationHandler = handler; }
 export function setCurrentMenu(menuId) {
+  if (navigationHandler) return navigationHandler(menuId);
+  return commitCurrentMenu(menuId);
+}
+export function commitCurrentMenu(menuId) {
   currentMenu = menuId;
   sessionStorage.setItem('lastMenu', menuId);
   if ((window.location.hash || '').replace('#', '') !== menuId) {

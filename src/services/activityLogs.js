@@ -20,7 +20,7 @@ import { currentUser } from '../app.js';
  * @param {object} [entry.details]   - 액션별 추가 정보 (기본 빈 객체)
  * @returns {Promise<string>}        - 생성된 로그 문서 ID
  */
-export async function recordActivity(entry) {
+export async function recordActivity(entry, {batch,writer}={}) {
   if (!entry || !entry.action || !entry.subAction) {
     throw new Error('recordActivity: action과 subAction 필수');
   }
@@ -46,7 +46,8 @@ export async function recordActivity(entry) {
     acknowledgedByUid: null,
   };
 
-  const ref = await addDoc(collection(db, 'activityLogs'), docData);
+  const ref = batch ? doc(collection(db,'activityLogs')) : await (writer?.addDoc||addDoc)(collection(db, 'activityLogs'), docData);
+  if(batch)batch.set(ref,docData);
   return ref.id;
 }
 

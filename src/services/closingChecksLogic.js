@@ -222,6 +222,7 @@ const OFFICE_LOG_ACTIONS = new Set([
 
 function classifyClosingLog(log) {
   const key = `${log.action}:${log.subAction}`;
+  if (key === 'production:receiptEmergencyEdit') return 'office';
   if (key === 'meat:adjust') return 'production';
   if (PRODUCTION_LOG_ACTIONS.has(log.action)) return 'production';
   if (OFFICE_LOG_ACTIONS.has(log.action)) return 'office';
