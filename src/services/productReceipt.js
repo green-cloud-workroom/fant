@@ -15,6 +15,17 @@ export async function saveProductReceipt({ action, refs, p, target, result, meth
       const latest = snapshots.map(s => s.exists() ? { id: s.id, ...s.data() } : null);
       if (fingerprint(latest) !== fingerprint(baseline)) throw new Error('생산·입고·마감 조건이 변경되었습니다. 화면을 다시 열어주세요.');
       if (latest[3]?.status === 'closed' && !emergency) throw new Error('마감된 날짜입니다. 화면을 다시 열어주세요.');
+      // 저장 직후 화면 갱신을 기다리지 못하고 같은 수량으로 다시 저장하면 재고앱에 같은 입고가 한 번 더 갔다
+      // (9/30 2건·10/16 1건, 6~17초 간격). 마지막으로 보낸 입고가 아직 살아 있고(대기·완료) 수량이 같으면 다시 보내지 않는다.
+      // 재고앱이 반려한 입고는 같은 수량이라도 다시 보낼 수 있다.
+      const lastSent = latest.slice(4).filter(Boolean).sort((a, b) => (b.revision || 0) - (a.revision || 0))[0];
+      if (lastSent && ['pending', 'completed', '입고완료'].includes(lastSent.status) &&
+          lastSent.plates === result.plates && lastSent.packs === result.totalPacks) {
+        // 생산방식은 기록용이라 재고앱으로 보내지 않는다 — 바뀌었으면 생산 기록만 고친다.
+        if ((p.receivedMethod ?? null) !== (method ?? null))
+          transaction.update(doc(db, 'productions', p.id), { receivedMethod: method, updatedAt: serverTimestamp() });
+        return { unchanged: true };
+      }
       const completed = latest.slice(4).filter(item => item?.status === 'completed' || item?.status === '입고완료');
       let correction = {};
       if (completed.length) {

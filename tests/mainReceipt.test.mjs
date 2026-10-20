@@ -249,3 +249,27 @@ test('resolving a duplicate latest receipt preserves the next linked correction 
   assert.equal(request.basisBoxes,5);assert.equal(request.boxes,10);
  } finally {await e.cleanup();}
 });
+
+test('same quantity saved again while the last receipt is pending or completed is not sent twice', async()=>{
+ for (const status of ['pending','completed']) {
+  const e=await setup();
+  try {
+   e.state.rows.productTransferRequests=[{id:'productions:past:1',sourceApp:'production',sourceCollection:'productions',sourceId:'past',eventType:'productReceipt',revision:1,plates:1,packs:100,boxes:5,remainderPacks:0,status}];
+   await e.page.openProductReceiptModal('past');e.fill('#pr_plates',1);await e.fire('#pr_confirm');
+   assert.equal(e.state.rows.productTransferRequests.length,1,status);
+   assert.equal(e.state.rows.productions[0].receivedRevision,1,status);
+   assert.ok(e.alerts.some(message=>message.includes('다시 보내지 않았습니다')),status);
+  } finally {await e.cleanup();}
+ }
+});
+
+test('same quantity can be sent again after inventory rejected the last receipt', async()=>{
+ const e=await setup();
+ try {
+  e.state.rows.productTransferRequests=[{id:'productions:past:1',sourceApp:'production',sourceCollection:'productions',sourceId:'past',eventType:'productReceipt',revision:1,plates:1,packs:100,boxes:5,remainderPacks:0,status:'rejected'}];
+  await e.page.openProductReceiptModal('past');e.fill('#pr_plates',1);await e.fire('#pr_confirm');
+  assert.ok(e.state.rows.productTransferRequests.some(row=>row.revision===2&&row.packs===100&&row.status==='pending'));
+  assert.ok(!e.alerts.some(message=>message.includes('다시 보내지 않았습니다')));
+ } finally {await e.cleanup();}
+});
+

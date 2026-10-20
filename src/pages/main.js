@@ -2356,9 +2356,11 @@ async function openProductReceiptModal(productionId) {
     button.disabled = true;
     let saved = false;
     try {
-      await saveProductReceipt({ action, refs, p, target, result: r, method, emergency, correctionReason, staff: getMainRoleStaffLabel() });
+      const outcome = await saveProductReceipt({ action, refs, p, target, result: r, method, emergency, correctionReason, staff: getMainRoleStaffLabel() });
       saved = true;
       cleanup();
+      if (outcome?.unchanged) alert('지난번에 보낸 입고와 수량이 같아 재고앱으로 다시 보내지 않았습니다.');
+      else markReceiptSent(p.id);
       await loadAllData();
       if (selectedProductionDate) {
         await selectProductionDate(selectedProductionDate);
@@ -2369,6 +2371,18 @@ async function openProductReceiptModal(productionId) {
       alert((saved ? '제품 입고 저장은 완료됐지만 화면을 갱신하지 못했습니다. 다시 불러와주세요: ' : '제품 입고 저장 중 오류가 발생했습니다: ') + (err.message || err));
     } finally { button.disabled = false; }
   });
+}
+
+// 목록을 다시 불러오는 몇 초 동안 카드가 그대로 보여 '안 됐나?' 하고 또 누르던 것을 막는다 — 갱신 전까지 카드를 '입고 보냄'으로 바꾸고 클릭을 끈다.
+function markReceiptSent(productionId) {
+  const card = [...document.querySelectorAll('.main-production-card')].find(item => item.dataset.id === productionId);
+  if (!card) return;
+  const sent = card.cloneNode(true);
+  sent.classList.remove('receivable');
+  sent.style.cursor = 'default';
+  sent.title = '입고를 재고앱으로 보냈습니다. 화면을 갱신하는 중입니다.';
+  sent.insertAdjacentHTML('beforeend', '<div class="receipt-sent-note" style="font-size:11px;color:#2e7d32;margin-top:4px;">✓ 입고 보냄 · 화면 갱신 중</div>');
+  card.replaceWith(sent);
 }
 
 async function loadReceiptStaffOptions(groups = ['senior', 'office']) {
