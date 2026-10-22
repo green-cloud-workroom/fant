@@ -23,7 +23,7 @@ test('changed product and a closed date stop a receipt before any write',async()
 test('settings entry performs zero reads; a changed system value is not overwritten',async()=>{
  const e=await pageEnvironment('settings',{instrument:'\nexport {handleNumberBlur};'});
  try{
-  await e.page.renderSettings();assert.equal(e.state.reads.length,0);assert.equal(e.document.querySelectorAll('details').length,8);
+  await e.page.renderSettings();assert.equal(e.state.reads.length,0);assert.equal(e.document.querySelectorAll('details').length,7);
   const input={value:'60'},values={maxPansPerBatch:45};await e.page.handleNumberBlur(input,{key:'maxPansPerBatch',type:'integer'},values);
   assert.equal(e.state.rows.settings.find(s=>s.id==='systemValues').maxPansPerBatch,60);
   e.state.rows.settings.find(s=>s.id==='systemValues').maxPansPerBatch=90;input.value='75';const count=e.state.writes.length;

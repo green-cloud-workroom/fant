@@ -3189,6 +3189,15 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   height: 100%;
 }
 
+.stats-section { margin-top: 24px; }
+.stats-wrap > .stats-detail-area { flex-shrink: 0; }
+.stats-table-scroll { overflow-x: auto; max-width: 100%; }
+.stats-section .stats-table { min-width: 680px; }
+.stats-section td { overflow-wrap: anywhere; }
+.stats-chart-block { margin-bottom: 24px; }
+.stats-chart-fold { flex-shrink: 0; }
+.stats-chart-fold > summary { cursor: pointer; padding: 12px 4px; color: #4A7C59; font-weight: 600; }
+
 /* 가로 탭 */
 .stats-tabs {
   display: flex;

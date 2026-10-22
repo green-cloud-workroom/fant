@@ -9,9 +9,9 @@ async function setup(){
   (await e.load('src/utils/pageLifecycle.js')).beginPage(e.nodes.mainContent,'stats');
   return {...e,stats,resource:(await e.load('src/state/pageResources.js')).pageResource('stats')};
 }
-test('all six statistical tabs preserve the fresh-server data with retained reads',async()=>{
+test('all three statistical tabs preserve the fresh-server data with retained reads',async()=>{
   const e=await setup(),server=(await e.load('src/services/serverReadScope.js')).createServerReadScope();
-  for(const tab of ['production','meat','bag','egg','daily','supplement']){
+  for(const tab of ['production','supply','usage']){
     const expected=await e.stats.loadStatsTab(tab,server);
     const actual=await e.resource.load(scope=>e.stats.loadStatsTab(tab,scope),{force:true});
     assert.equal(JSON.stringify(actual),JSON.stringify(expected),tab);
@@ -23,11 +23,11 @@ test('all six statistical tabs preserve the fresh-server data with retained read
 test('switching date ranges releases old statistical queries and rejects a late result',async()=>{
   const e=await setup();
   for(let i=0;i<100;i++){e.stats.setPeriodForTest('2026-09-'+String(i%28+1).padStart(2,'0'),'2026-09-30');await e.resource.load(scope=>e.stats.loadStatsTab('production',scope),{force:true});}
-  assert.equal((await e.load('src/state/displayReads.js')).displayPool.inspect().listeners,1);
+  assert.equal((await e.load('src/state/displayReads.js')).displayPool.inspect().listeners,3);
 });
 test('a tab click invalidates the old response during the debounce window',async()=>{
   const e=await setup();e.state.latencyMs=30;
-  e.stats.selectTabForTest('supplement');const old=e.stats.refreshStats();
+  e.stats.selectTabForTest('supply');const old=e.stats.refreshStats();
   e.stats.selectTabForTest('production');e.stats.scheduleRefresh();await old;
   assert.equal(e.stats.lastCountForTest(),0);
   (await e.load('src/utils/pageLifecycle.js')).disposePage();

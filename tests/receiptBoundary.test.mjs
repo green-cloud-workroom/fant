@@ -18,12 +18,15 @@ const root='C:/dev/fantapet-inventory/src';
 async function source(id,path){const m=new vm.SourceTextModule(stripTypeScriptTypes(await readFile(root+'/'+path,'utf8')),{context:ctx,identifier:id});mods.set(id,m);return m;}
 const types=await source('../../types/productReceipts','types/productReceipts.ts');await types.link(()=>{throw Error('Unexpected type import');});await types.evaluate();
 const wrap=(ref,s)=>ref.path.startsWith('productTransferRequests/')&&s.exists()?{...s,data:()=>types.namespace.normalizeProductTransferRequest(s.id,s.data())}:s;
-const api={...e.api,Timestamp:{fromMillis:n=>({toMillis:()=>n})},
+const api={...e.api,Timestamp:{fromMillis:n=>({toMillis:()=>n,toDate:()=>new Date(n)})},
   getDocs:async ref=>{const s=await e.api.getDocsFromServer(ref);const docs=s.docs.map(item=>ref.path==='productTransferRequests'?{...item,data:()=>types.namespace.normalizeProductTransferRequest(item.id,item.data())}:item);return {...s,docs,forEach:fn=>docs.forEach(fn)};},
   getDoc:async ref=>wrap(ref,await e.api.getDocFromServer(ref)),
   runTransaction:(_db,fn)=>e.api.runTransaction({},tx=>fn({...tx,get:async ref=>wrap(ref,await tx.get(ref))})),
 };
 synthetic('firebase/firestore',api);synthetic('../../lib/firebase',{db:{},auth:null});
+synthetic('../../lib/date',{todayKstDateInput:()=> '2026-09-14'});
+synthetic('./receiptCountCoverage',{loadReceiptCountCoverage:async()=>[],readReceiptCountCoverage:async()=>[],findReceiptAbsorbingCount:()=>null});
+synthetic('../shipping/outboundSettlementScopeService',{readOutboundScopes:async()=>[],prepareOutboundScopeWrite:async()=>({protocol:{version:1,scopes:{}},write(){}}),retryOutboundScope:callback=>callback()});
 synthetic('../../lib/firestore',{
   getProductReceiptDoc:id=>e.api.doc({},'productTransferRequests',id),
   productReceiptsCollection:()=>e.api.collection({},'productTransferRequests'),
