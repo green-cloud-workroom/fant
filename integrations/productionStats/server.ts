@@ -3,11 +3,10 @@
 import { createHash } from 'node:crypto';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { validDate } from './statsLogic.js';
 import { evaluateStatsAutomation, reconcileIssues, provenResolutions, confirmPayload, deliveryIdentity,
-  DELIVERY_RELEASED, AUTOMATION_VERSION, AUTOMATION_SOURCES, planStatsDeliveries } from './statsAutomation.js';
+  AUTOMATION_VERSION, AUTOMATION_SOURCES, planStatsDeliveries } from './statsAutomation.js';
 
 type Data = Record<string, any>;
 type Recipient = { uid: string; name: string; role: 'office' | 'owner' };
@@ -17,15 +16,6 @@ const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const todayKST = () => new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
 const configRef = () => getFirestore().doc('productionStatsAutomation/control');
 const allowedCompany = (p: Data) => p.payrollCompany === '판타펫' || p.workCompanies?.includes('판타펫');
-
-async function productionSession(uid?: string) {
-  if (!uid) throw new HttpsError('unauthenticated', '로그인이 필요합니다.');
-  const [user, profile] = await Promise.all([getAuth().getUser(uid), getFirestore().doc('users/' + uid).get()]);
-  const role = user.customClaims?.roles?.production;
-  if (user.disabled || !user.customClaims?.app?.includes('production') || !['admin', 'office'].includes(role)
-    || !profile.exists) throw new HttpsError('permission-denied', '통계 검증 권한이 없습니다.');
-  return { user, profile: profile.data()! };
-}
 
 export async function resolveStatsRecipients(ownerUid: string): Promise<Recipient[]> {
   if (!ownerUid || ownerUid.includes('/')) throw Error('대표 수신자 설정이 필요합니다.');
@@ -60,15 +50,10 @@ export async function previewStatsForServer(today = todayKST()) {
   const data = await readStatsSnapshot();
   return evaluateStatsAutomation(data, { today, complete: true } as any);
 }
-export const previewProductionStatsAutomation = onCall({ region: REGION }, async request => {
-  await productionSession(request.auth?.uid);
-  return previewStatsForServer();
-});
-
-// Disabled by code AND by absent server configuration. Config is Admin-only;
+// Personal-confirm delivery requires a server-only release environment AND Admin-only configuration.
 // do not reuse broadly client-writable settings/systemValues for release control.
 function deliveryAllowed(config: Data) {
-  return DELIVERY_RELEASED && config.deliveryEnabled === true && config.mode === 'live'
+  return process.env.PRODUCTION_STATS_CONFIRM_DELIVERY === 'enabled' && config.deliveryEnabled === true && config.mode === 'live'
     && config.validatedVersion === AUTOMATION_VERSION && validDate(config.activationDate)
     && config.activationDate <= todayKST();
 }

@@ -15,7 +15,7 @@ export function previewMarkup(result) {
       : c.kind === 'quantity' ? `${c.evidence.date} / ${fmt(c.evidence.qty)}${c.evidence.unit} / 중앙값 ${fmt(c.evidence.baseline)} / 표본 ${c.evidence.samples}`
         : `추정 ${fmt(c.evidence.estimatedDaysLeft)}일 / ${fmt(c.evidence.qty)}${c.evidence.unit}`, c.evidence.source || c.evidence.itemId]);
   const weekly = result.weekly;
-  return card('발송 없는 알림 검증', '<p>운영앱 개인 컨펌 발송은 차단되어 있습니다. 기존 알림은 그대로 유지합니다.</p>'
+  return card('발송 없는 알림 검증', '<p>이 검증 화면에서는 컨펌을 발송하지 않습니다. 자동 발송 여부는 서버 운영 설정을 따릅니다. 기존 알림은 그대로 유지합니다.</p>'
     + '<p>통계의 탭·조회기간과 별도로 최근 90일을 검증합니다. 조회 ' + esc(result.range.startDate) + ' ~ ' + esc(result.range.endDate)
     + ' · 후보 ' + candidates.length + '건 · 기준: 입고 간격 5개 이상, 수량 비교 6건 이상·중앙값 대비 10배 차이. 모두 검증용 추천입니다.</p>'
     + '<p>' + esc(result.snapshotNote || '') + '</p>'

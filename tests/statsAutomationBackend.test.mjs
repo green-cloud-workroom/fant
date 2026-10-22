@@ -44,7 +44,7 @@ async function backend({ approvedRelease = false } = {}) {
   class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : ['2026-10-22T03:00:00Z'])); }
     static now() { return Date.parse('2026-10-22T03:00:00Z'); } }
   class HttpsError extends Error { constructor(code, message) { super(message); this.code = code; } }
-  const context = vm.createContext({ console, Date: FixedDate, Buffer, structuredClone });
+  const context = vm.createContext({ console, Date: FixedDate, Buffer, structuredClone, process: { env: { PRODUCTION_STATS_CONFIRM_DELIVERY: approvedRelease ? 'enabled' : '' } } });
   const mocks = {
     'node:crypto': crypto,
     'firebase-admin/auth': { getAuth: () => ({ getUser: async uid => { if (!users.has(uid)) throw Error('missing auth'); return clone(users.get(uid)); } }) },
@@ -76,7 +76,7 @@ async function backend({ approvedRelease = false } = {}) {
   return { api, records, users, writes, reads, addRecipient, config, item };
 }
 
-test('real release-off constant blocks delivery even with live configuration and explicit direct handler call', async () => {
+test('missing server release environment blocks delivery even with live configuration and direct handler call', async () => {
   const e = await backend();
   const result = await e.api.deliverStatsIssue(e.item, e.config, () => { throw Error('Recipient lookup must not run'); });
   assert.equal(result.state, 'blocked'); assert.equal(e.reads.length, 0); assert.equal(e.writes.length, 0);

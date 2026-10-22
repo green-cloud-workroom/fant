@@ -29,7 +29,7 @@ test('preview escapes source labels and explains holds rather than treating unkn
   const html = page.previewMarkup({ range: { startDate: '2026-10-01', endDate: '2026-10-22' },
     candidates: [], held: [{ name: '<img onerror=evil()>', reason: '표본 부족' }], weekly: null });
   assert.ok(html.includes('&lt;img')); assert.ok(!html.includes('<img'));
-  assert.match(html, /발송은 차단/); assert.match(html, /표본 부족/);
+  assert.match(html, /이 검증 화면에서는 컨펌을 발송하지 않습니다/); assert.match(html, /표본 부족/);
 });
 test('one denied source aborts complete preview instead of treating missing stock as empty', async () => {
   const e = await environment({ session: true }), preview = await e.load('src/services/statsAutomationPreview.js');
