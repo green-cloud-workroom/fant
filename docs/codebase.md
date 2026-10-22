@@ -746,6 +746,8 @@ Newer settings UI stores which staff groups are exposed per menu. Each menu must
 
 ### `meatTypes`
 
+2026-10-22: `meatTypes/{id}/priceHistory` 원료 단가 이력은 유지하며 생산관리의 단가 관리 화면과 조회/저장 연결은 제거했다. 설정 영역은 7개다. 재고관리 통합의 스키마·가격 선택 규칙·권한 경계는 [단가 관리 핸드오프](UNIT_PRICE_INVENTORY_HANDOFF_20261022.md)를 따른다. 데이터 이관이나 규칙 변경은 수행하지 않았다.
+
 추가 필드:
 
 ```js

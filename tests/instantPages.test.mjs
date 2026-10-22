@@ -279,7 +279,7 @@ test('nested events stay isolated while two DOM fixtures coexist',async()=>{
  } finally {await first.cleanup();await second.cleanup();}
 });
 
-test('all eight setting sections retain real values without additional reads on revisit',async()=>{
+test('seven setting sections retain values without loading or writing retired price history',async()=>{
  const e=await pageEnvironment('settings',{instantRoutes:['settings']});
  try{
   async function openSections(){
@@ -290,6 +290,9 @@ test('all eight setting sections retain real values without additional reads on 
    }
   }
   await e.page.renderSettings();await openSections();
+  assert.equal(e.document.querySelectorAll('.settings-section').length,7);
+  assert.ok(!e.nodes.mainContent.textContent.includes('원료 단가 관리'));
+  assert.ok(!e.state.reads.some(read=>JSON.stringify(read).includes('priceHistory')));
   const reads=e.state.reads.length;
   await e.page.renderSettings();await openSections();
   assert.equal(e.state.reads.length,reads);
