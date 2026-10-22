@@ -127,6 +127,7 @@ async function loadMeatLogs(stage, scope={getDocs,getDoc}) {
 function getMeatLogTypeLabel(type) {
   const map = {
     frozenIncoming: '입고',
+    incomingQuantityCorrection: '입고량 이력 정정 · 재고 변동 없음',
     frozenOut: '전처리로 출고',
     processedIn: '전처리',
     processedOut: '재포장으로 출고',
@@ -593,7 +594,10 @@ function renderMeatLogCard(log, typeName) {
       '<div style="display:flex;align-items:center;gap:5px;min-width:0;">' +
         '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#444;font-size:12px;flex:1;">' + escapeHtml(log.meatNameSnapshot || typeName || '-') + '</span>' +
         '<span style="color:#777;font-size:11px;white-space:nowrap;">' + escapeHtml(formatMeatLogTimestamp(log.timestamp)) + '</span>' +
-        '<b style="color:' + (log.delta < 0 ? '#e53e3e' : '#2d7a3a') + ';font-size:12px;white-space:nowrap;">' + formatMeatLogQty(log.delta) + '</b>' +
+        '<b style="color:' + (log.delta < 0 ? '#e53e3e' : '#2d7a3a') + ';font-size:12px;white-space:nowrap;">' +
+          (log.type === 'incomingQuantityCorrection'
+            ? escapeHtml(Number(log.originalQtyG / 1000).toLocaleString('ko-KR', { maximumFractionDigits: 3 }) + 'kg → ' + Number(log.correctedQtyG / 1000).toLocaleString('ko-KR', { maximumFractionDigits: 3 }) + 'kg')
+            : formatMeatLogQty(log.delta)) + '</b>' +
       '</div>' +
       '<div style="display:flex;justify-content:space-between;gap:6px;margin-top:2px;color:#777;font-size:11px;">' +
         '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(log.staff || '-') + ' / ' + escapeHtml(log.reason || '-') + '</span>' +

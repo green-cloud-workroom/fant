@@ -1,12 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { productionEvents, supplyEvents, usageEvents, summarize, intervalSample, periodRows, kstDate } from '../src/services/statsLogic.js';
+import { incomingCorrectionId, applyIncomingCorrections } from '../src/services/incomingCorrections.js';
 
 const range = { startDate: '2026-09-01', endDate: '2026-09-30', today: '2026-09-30' };
 const p = (id, patch = {}) => ({ id, date: '2026-09-10', status: 'active', category: 'raw', recipeId: 'r1', recipeName: '치킨',
   received: true, receivedTotalPacks: 100, productionUnitQty: 50, productionUnitName: 'kg',
   ingredientsSnapshot: [{ name: '닭', meatTypeId: 'm1', requiredQtyG: 2000 }], ...patch });
 const stamp = date => new Date(date + 'T00:00:00+09:00');
+const correctedReceiptFixture = () => {
+  const original = { id: 'original', type: 'frozenIncoming', date: '2026-06-09', stage: 'frozen', meatTypeId: 'm', meatStockId: 's', meatNameSnapshot: '양제비추리', delta: 82973000 };
+  const basis = { id: 'basis', type: 'adjust', date: '2026-06-09', meatTypeId: 'm', meatStockId: 's', before: 82973000, after: 82973, delta: -82890027 };
+  const correction = { id: incomingCorrectionId('original'), type: 'incomingQuantityCorrection', schemaVersion: 1, scope: 'incomingQuantity', status: 'active',
+    correctionOf: original.id, basisAdjustmentId: basis.id, date: original.date, stage: original.stage, meatTypeId: original.meatTypeId,
+    meatStockId: original.meatStockId, originalQtyG: original.delta, correctedQtyG: 82973, delta: 0, changesStock: false, reason: '사용자 승인 정정' };
+  return { original, basis, correction };
+};
 const schedule = (id, patch = {}) => ({ id, type: 'meat', itemId: 'm1', itemNameSnapshot: '닭', status: 'completed',
   createdAt: stamp('2026-09-01'), date: '2026-09-09', completedAt: stamp('2026-09-10'), ...patch });
 
@@ -116,4 +125,36 @@ test('calendar and production-day averages have explicit different denominators;
   const [g] = summarize(events, range);
   assert.equal(g.calendarMean, 0.2); assert.equal(g.workingMean, 3);
   assert.deepEqual(periodRows(events, 'weekly').map(r => r.period), ['2026-08-31', '2026-09-07']);
+});
+
+test('an append-only incoming correction replaces one quantity without changing records, stock, dates or receipt counts', () => {
+  const { original, basis, correction } = correctedReceiptFixture();
+  const data = { meatLogs: [original, basis, correction, { ...original, id: 'second', date: '2026-06-24', delta: 67000 }],
+    meatStocks: [{ id: 's', remaining: 0, closed: true, initialQtyG: 82973000 }] };
+  const before = JSON.stringify(data), r = { ...range, startDate: '2026-06-01', endDate: '2026-06-30' };
+  const result = supplyEvents(data, r);
+  assert.equal(result.events.length, 2);
+  assert.equal(result.summaries[0].total, 149.973);
+  assert.equal(result.summaries[0].interval.mean, 15);
+  assert.equal(result.events.find(e => e.source === 'meatLogs/original').qty, 82.973);
+  assert.match(result.events[0].note, /재고 변동 없음/);
+  assert.equal(JSON.stringify(data), before);
+  assert.equal(usageEvents(data, r).events.length, 0);
+});
+
+test('a repeated copy of the same immutable correction cannot be counted twice', () => {
+  const { original, basis, correction } = correctedReceiptFixture();
+  const logs = applyIncomingCorrections([original, basis, correction, correction]);
+  assert.equal(logs.filter(l => l.type === 'frozenIncoming').length, 1);
+  assert.equal(logs.find(l => l.id === original.id).delta, 82973);
+});
+
+test('invalid, mismatched or competing incoming corrections stop supply projection', () => {
+  const { original, basis, correction } = correctedReceiptFixture();
+  for (const patch of [{ correctedQtyG: -1 }, { correctedQtyG: null }, { originalQtyG: 1 }, { changesStock: true },
+    { delta: -82890027 }, { date: '2026-10-22' }, { meatTypeId: 'other' }, { meatStockId: 'other' },
+    { correctionOf: 'missing' }, { basisAdjustmentId: 'missing' }, { id: 'competing' }, { reason: '' }]) {
+    assert.throws(() => supplyEvents({ meatLogs: [original, basis, { ...correction, ...patch }] }, range), /입고 정정 이력/);
+  }
+  assert.throws(() => applyIncomingCorrections([original, { ...basis, after: 0 }, correction]), /입고 정정 이력/);
 });

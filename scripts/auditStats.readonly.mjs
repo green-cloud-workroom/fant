@@ -76,7 +76,23 @@ function independent(range) {
     const amount = collection === 'meatLogs' ? log.delta : log.qty;
     if (!number(amount)) continue;
     const itemId = collection + ':' + (id ? log[id] || 'unlinked:' + log.id : 'egg');
-    if (log.type === incoming && amount > 0) take(supply, log, collection + '/' + log.id, amount / divisor, unit, incomingStage, itemId);
+    if (log.type === incoming && amount > 0) {
+      let incomingAmount = amount;
+      if (collection === 'meatLogs') {
+        const amendments = data.meatLogs.filter(r => r.type === 'incomingQuantityCorrection' && r.correctionOf === log.id);
+        equal('correction uniqueness/' + log.id, true, amendments.length <= 1);
+        if (amendments.length === 1) {
+          const amendment = amendments[0], basis = data.meatLogs.find(r => r.id === amendment.basisAdjustmentId);
+          equal('correction original quantity/' + log.id, amount, amendment.originalQtyG);
+          equal('correction changes no stock/' + log.id, false, amendment.changesStock);
+          equal('correction stock delta/' + log.id, 0, amendment.delta);
+          equal('correction evidence quantity/' + log.id, basis?.after, amendment.correctedQtyG);
+          equal('correction source date/' + log.id, log.date, amendment.date);
+          incomingAmount = amendment.correctedQtyG;
+        }
+      }
+      take(supply, log, collection + '/' + log.id, incomingAmount / divisor, unit, incomingStage, itemId);
+    }
     if (deducted.includes(log.type)) take(usage, log, collection + '/' + log.id, -amount / divisor, unit, usedStage, itemId);
   }
   for (const s of data.schedules) {
@@ -138,6 +154,9 @@ for (const range of ranges) {
     actual.supply.registrations.map(r => ({ source: r.source, date: r.date, prior: r.prior, processing: r.processing })).sort((a, b) => a.source.localeCompare(b.source)));
 }
 const anomalies = {
+  incomingQuantityCorrections: data.meatLogs.filter(l => l.type === 'incomingQuantityCorrection').map(l => ({
+    id: l.id, source: l.correctionOf, originalQtyG: l.originalQtyG, correctedQtyG: l.correctedQtyG, changesStock: l.changesStock,
+  })),
   missingDates: Object.fromEntries(collections.filter(c => !['frozenProducts', 'supplementTypes', 'productTransferRequests'].includes(c))
     .map(c => [c, data[c].filter(r => !isDate(r.date)).map(r => r.id)])),
   unconfirmed: productionEvents(data, ranges.at(-1)).unconfirmed,

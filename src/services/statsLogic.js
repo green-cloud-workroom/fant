@@ -1,5 +1,6 @@
 // Read-only statistical projections. Quantities come from historical records,
 // never from today's recipe, conversion, or stock balance.
+import { applyIncomingCorrections } from './incomingCorrections.js';
 const DAY = 86400000;
 export const quantity = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
 export function validDate(value) {
@@ -98,6 +99,7 @@ export function productionEvents(data, range) {
   return { events, unconfirmed, confirmed };
 }
 function logEvents(data) {
+  const meatLogs = applyIncomingCorrections(data.meatLogs || []);
   const supplements = new Map((data.supplementTypes || []).map(s => [s.id, s.name]));
   const specs = [
     ['meatLogs', 'frozenIncoming', 'meatTypeId', 'meatNameSnapshot', 'kg', 0.001, '원료'],
@@ -105,11 +107,13 @@ function logEvents(data) {
     ['eggLogs', 'in', null, null, '개', 1, '계란'],
     ['supplementLogs', 'in', 'supplementTypeId', null, '봉', 1, '영양제'],
   ];
-  return specs.flatMap(([collection, type, idField, nameField, unit, scale, stage]) => unique(data[collection] || [])
+  return specs.flatMap(([collection, type, idField, nameField, unit, scale, stage]) => unique(collection === 'meatLogs' ? meatLogs : data[collection] || [])
     .filter(log => log.type === type && !['deleted', 'cancelled', 'canceled'].includes(log.status))
     .map(log => ({ itemId: `${collection}:${idField ? log[idField] || 'unlinked:' + log.id : 'egg'}`,
       name: log[nameField] || (collection === 'supplementLogs' ? supplements.get(log.supplementTypeId) || log.supplementTypeId : null) || (stage === '계란' ? '계란' : `품목 미연결 (${log.id})`),
-      date: log.date, qty: quantity(collection === 'meatLogs' ? log.delta : log.qty), unit, scale, stage, source: `${collection}/${log.id}` }))
+      date: log.date, qty: quantity(collection === 'meatLogs' ? log.delta : log.qty), unit, scale, stage, source: `${collection}/${log.id}`,
+      note: log.incomingCorrection ? '입고량 정정: ' + log.incomingCorrection.originalQtyG / 1000 + 'kg → ' + log.incomingCorrection.correctedQtyG / 1000
+        + 'kg · 재고 변동 없음 · 근거 meatLogs/' + log.incomingCorrection.id + ' · ' + log.incomingCorrection.reason : '' }))
     .map(e => ({ ...e, qty: e.qty === null ? null : e.qty * e.scale })));
 }
 export function supplyEvents(data, range) {

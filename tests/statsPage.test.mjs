@@ -157,3 +157,26 @@ test('a session transition during the full Excel read cannot export the old sess
     assert.equal(e.state.writes.length, 0);
   } finally { await e.cleanup(); }
 });
+
+test('supply UI and Excel show an amended quantity and both source references while original and stock remain intact', async () => {
+  const e = await setup();
+  try {
+    const original = e.state.rows.meatLogs[0];
+    Object.assign(original, { delta: 82973000, stage: 'frozen', meatStockId: 'lot' });
+    e.state.rows.meatLogs.push({ id: 'basis', type: 'adjust', date: original.date, meatTypeId: original.meatTypeId, meatStockId: 'lot',
+      before: 82973000, after: 82973, delta: -82890027 });
+    e.state.rows.meatLogs.push({ id: 'incomingQuantity_v1_in', type: 'incomingQuantityCorrection', schemaVersion: 1,
+      scope: 'incomingQuantity', status: 'active', correctionOf: 'in', basisAdjustmentId: 'basis', date: original.date,
+      meatTypeId: original.meatTypeId, meatStockId: 'lot', stage: 'frozen', originalQtyG: 82973000,
+      correctedQtyG: 82973, delta: 0, changesStock: false, reason: '승인 정정' });
+    const before = JSON.stringify(e.state.rows);
+    await e.page.renderStats(); e.fire('[data-tab="supply"]'); await e.ready('supply');
+    const view = e.page.viewForTest();
+    assert.equal(view.events[0].qty, 82.973);
+    assert.match(e.document.getElementById('statsDetailArea').textContent, /meatLogs\/incomingQuantity_v1_in/);
+    assert.match(e.document.getElementById('statsDetailArea').textContent, /재고 변동 없음/);
+    await e.page.download(false);
+    assert.ok(JSON.stringify(e.downloads[0].book.sheets).includes('82.973'));
+    assert.equal(JSON.stringify(e.state.rows), before); assert.equal(e.state.writes.length, 0);
+  } finally { await e.cleanup(); }
+});
