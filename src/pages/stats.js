@@ -6,15 +6,18 @@ import { registerPageCleanup, getPageContext } from '../utils/pageLifecycle.js';
 import { pageResource } from '../state/pageResources.js';
 import { sessionStore } from '../state/sessionStore.js';
 import { validDate, productionEvents, supplyEvents, usageEvents, summarize, periodRows } from '../services/statsLogic.js';
+import { visualChoices, visualFilter, renderStatsVisuals, compactSection } from './statsVisuals.js';
 
 Chart.register(...registerables);
 const statsResource = pageResource('stats');
 const TABS = [{ id: 'production', label: '제품 생산' }, { id: 'supply', label: '원료 수급' }, { id: 'usage', label: '원료 사용' }];
-const COLORS = ['#4A7C59', '#5B89C9', '#C95B7A', '#8A6FB5', '#3DA89E', '#E07A5F'];
 let activeTab = 'production', startDate = '', endDate = '', aggregation = 'daily', periodMode = '1';
 let queryToken = 0, refreshTimer, statsRefreshTimer, statsResourceKey = '', loadedStatsKey = null;
 let lastData = null, lastView = null, lastProductionCount = 0, filterTerm = '', XLSX;
 const charts = [], tableLimits = new Map();
+const visualSelections = Object.fromEntries(TABS.map(t => [t.id, { scope: '', item: '', initialized: false }]));
+let calendarOffset = 0, calendarLimit = 20;
+const visualKey = () => JSON.stringify(visualSelections[activeTab]);
 const statsKey = () => JSON.stringify([activeTab, startDate, endDate, aggregation]);
 const escapeHtml = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 const display = value => value == null ? '확인 불가' : typeof value === 'number' ? value.toLocaleString('ko-KR', { maximumFractionDigits: 3 }) : String(value);
@@ -32,6 +35,8 @@ export async function renderStats() {
   if (!document.getElementById('mainContent')) return;
   queryToken++; clearTimeout(refreshTimer); clearTimeout(statsRefreshTimer); destroyAllCharts();
   activeTab = 'production'; aggregation = 'daily'; periodMode = '1'; filterTerm = '';
+  for (const selection of Object.values(visualSelections)) Object.assign(selection, { scope: '', item: '', initialized: false });
+  calendarOffset = 0; calendarLimit = 20;
   loadedStatsKey = null; lastData = null; lastView = null; lastProductionCount = 0;
   tableLimits.clear(); preset(1);
   registerPageCleanup(() => {
@@ -54,18 +59,18 @@ function renderStatsLayout() {
     '</div><input id="statsFilter" class="stats-date-input" aria-label="제품·원료 이름 검색" placeholder="제품·원료 이름 검색" value="' + escapeHtml(filterTerm) + '">' +
     '<button class="stats-download-btn" id="statsDownloadBtn" disabled>Excel 다운로드</button><button class="stats-download-btn" id="statsDownloadAllBtn" disabled>전체 다운로드</button>' +
     '<button class="stats-download-btn" id="statsReloadBtn">새로고침</button></div></div>' +
-    '<div class="stats-summary" id="statsSummary" role="status"></div><div class="stats-detail-area" id="statsOverviewArea"></div>' +
-    '<details class="stats-chart-fold" id="statsChartFold"><summary>추이 차트 보기</summary><div class="stats-chart-area" id="statsChartArea"></div></details>' +
+    '<div class="stats-summary" id="statsSummary" role="status"></div><div class="stats-visual-area" id="statsChartArea"></div>' +
+    '<div class="stats-detail-area" id="statsOverviewArea"></div>' +
     '<div class="stats-detail-area" id="statsDetailArea"></div></div>';
   host.querySelectorAll('.stats-tab').forEach(button => button.addEventListener('click', async () => {
     activeTab = button.dataset.tab; tableLimits.clear(); invalidateView(); renderStatsLayout(); await refreshStats();
   }));
   host.querySelectorAll('[data-months]').forEach(button => button.addEventListener('click', async () => {
-    periodMode = button.dataset.months; preset(periodMode); tableLimits.clear(); invalidateView(); renderStatsLayout(); await refreshStats();
+    periodMode = button.dataset.months; preset(periodMode); calendarOffset = 0; tableLimits.clear(); invalidateView(); renderStatsLayout(); await refreshStats();
   }));
   for (const id of ['statsStartDate', 'statsEndDate']) document.getElementById(id).addEventListener('change', async event => {
     if (id === 'statsStartDate') startDate = event.target.value; else endDate = event.target.value;
-    periodMode = 'custom'; tableLimits.clear(); invalidateView(); renderStatsLayout(); await refreshStats();
+    periodMode = 'custom'; calendarOffset = 0; tableLimits.clear(); invalidateView(); renderStatsLayout(); await refreshStats();
   });
   host.querySelectorAll('[data-agg]').forEach(button => button.addEventListener('click', async () => {
     aggregation = button.dataset.agg; tableLimits.clear(); invalidateView(); renderStatsLayout(); await refreshStats();
@@ -75,17 +80,13 @@ function renderStatsLayout() {
     if (loadedStatsKey === statsKey() && lastData) renderModel();
   });
   document.getElementById('statsReloadBtn').addEventListener('click', () => refreshStats({ force: true }));
-  document.getElementById('statsChartFold').addEventListener('toggle', event => {
-    destroyAllCharts();
-    if (event.target.open && loadedStatsKey === statsKey() && lastView) drawCharts(lastView.events);
-    else document.getElementById('statsChartArea')?.replaceChildren();
-  });
   document.getElementById('statsDownloadBtn').addEventListener('click', () => download(false));
   document.getElementById('statsDownloadAllBtn').addEventListener('click', () => download(true));
 }
 function invalidateView() {
   queryToken++; loadedStatsKey = null; lastData = null; lastView = null;
   destroyAllCharts();
+  for (const id of ['statsOverviewArea', 'statsChartArea', 'statsDetailArea']) document.getElementById(id)?.replaceChildren();
   const host = document.getElementById('mainContent');
   if (host?.dataset) { delete host.dataset.statsReadyTab; delete host.dataset.statsReadyKey; }
   for (const id of ['statsDownloadBtn', 'statsDownloadAllBtn']) { const button = document.getElementById(id); if (button) button.disabled = true; }
@@ -159,6 +160,7 @@ async function refreshStats({ force = false } = {}) {
     for (const id of ['statsDownloadBtn', 'statsDownloadAllBtn']) { const button = document.getElementById(id); if (button) button.disabled = false; }
   } catch (error) {
     if (!isCurrent()) return;
+    invalidateView();
     if (host?.dataset) host.dataset.pageFailed = 'stats';
     if (summary) summary.textContent = '통계 자료를 불러오지 못했습니다. 연결과 권한을 확인한 뒤 새로고침해주세요.';
     console.error('[stats] 로드 실패', error);
@@ -173,7 +175,7 @@ function buildView(tab, data, range, agg, filter = matches) {
   if (tab === 'production') {
     const projection = productionEvents(data, range), events = projection.events.filter(filter), groups = summarize(events, range);
     const unknown = projection.unconfirmed.filter(filter);
-    return { events, summary: '확정 기록 ' + events.length + '건 · 제품·단계·단위별 ' + groups.length + '항목 · 실적·유형 미확인 ' + unknown.length + '건',
+    return { events, groups, summary: '확정 기록 ' + events.length + '건 · 제품·단계·단위별 ' + groups.length + '항목 · 실적·유형 미확인 ' + unknown.length + '건',
       note: '생산일 기준. 생산 입력량은 참고값이며 실적 합계에 더하지 않습니다. 동결 생산(판), 포장(봉), 세트 조립을 각각 봅니다. 간격과 마지막 생산일은 조회기간 내 기록 기준입니다.',
       sections: [
         section('제품별 생산 실적', ['제품', '단계', '단위', '합계', '건수', '생산일수', '마지막 생산일', '회당 평균', '회당 최소', '회당 최대', '평균 간격(일)', '최소 간격', '최대 간격', '간격 표본 수'],
@@ -187,7 +189,7 @@ function buildView(tab, data, range, agg, filter = matches) {
   if (tab === 'supply') {
     const projection = supplyEvents(data, range), events = projection.events.filter(filter);
     const groups = projection.summaries.filter(filter), registrations = projection.registrations.filter(filter);
-    return { events, summary: '외부 입고 기록 ' + events.length + '건 · 품목·단위별 ' + groups.length + '항목 · 기간 내 입고 완료처리 ' + registrations.length + '건',
+    return { events, groups, registrationGroups: projection.registrationSummary.filter(filter), summary: '외부 입고 기록 ' + events.length + '건 · 품목·단위별 ' + groups.length + '항목 · 기간 내 입고 완료처리 ' + registrations.length + '건',
       note: '입고 기록일 기준이며 실제 도착일이 보장되지 않습니다. 전처리·재포장·조정 제외. 마지막 입고와 경과일은 조회 종료일 기준, 평균 간격은 조회기간 내 서로 다른 입고일 사이입니다. 기간 내 기록이 없으면 입고 0으로 단정하지 않습니다.',
       sections: [
         section('원료·봉투 입고', ['품목', '구분', '단위', '기간 입고 합계', '건당 평균', '입고 건수', '입고일수', '평균 간격(일)', '최소 간격', '최대 간격', '간격 표본 수', '종료일 기준 마지막 입고', '경과일'],
@@ -207,7 +209,7 @@ function buildView(tab, data, range, agg, filter = matches) {
   const projection = usageEvents(data, range), events = projection.events.filter(filter), groups = summarize(events, range);
   const calculated = events.filter(e => e.stage === '계산상 사용량');
   const productGroups = summarize(calculated.map(e => ({ ...e, itemId: JSON.stringify([e.itemId, e.product]), stage: e.product })), range);
-  return { events, summary: '계산상 원료 사용 기록 ' + calculated.length + '건 · 재고 변동 기록 ' + (events.length - calculated.length) + '건 · 수량·스냅샷 누락 ' + projection.missing.length + '건',
+  return { events, groups, productGroups, summary: '계산상 원료 사용 기록 ' + calculated.length + '건 · 재고 변동 기록 ' + (events.length - calculated.length) + '건 · 수량·스냅샷 누락 ' + projection.missing.length + '건',
     note: '계산상 사용량은 실적 확인 생산의 당시 레시피 스냅샷 기준입니다. 재고 순차감·계란 출고와 실제 투입 측정량은 다릅니다. 순차감은 복원을 부호대로 반영해 음수도 표시하며, 계산상 사용량과 더하지 않습니다. 차감일은 생산일과 다를 수 있습니다.',
     sections: [
       section('원료·봉투 사용 내역', ['품목', '기준', '단위', '기간 합계', '달력 일평균', '생산일·변동일 평균', '생산일·변동일수', '기록 수'],
@@ -239,57 +241,49 @@ function tableMarkup(s, index) {
 }
 function renderModel() {
   if (!lastData || loadedStatsKey !== statsKey()) return;
+  const evidenceOpen = document.getElementById('statsEvidenceFold')?.open;
   destroyAllCharts();
-  lastView = buildView(activeTab, lastData, currentRange(), aggregation);
+  const fullView = buildView(activeTab, lastData, currentRange(), aggregation);
+  const selection = visualSelections[activeTab], choices = visualChoices(fullView, selection, activeTab);
+  lastView = buildView(activeTab, lastData, currentRange(), aggregation, visualFilter(selection, matches));
+  lastView.selectionLabel = [choices.scopes.find(s => s.id === selection.scope)?.label,
+    choices.items.find(i => i.id === selection.item)?.label || '전체 품목'].filter(Boolean).join(' / ');
   lastProductionCount = activeTab === 'production' ? lastView.events.length : 0;
   const summary = document.getElementById('statsSummary'), overview = document.getElementById('statsOverviewArea'), detail = document.getElementById('statsDetailArea');
-  if (summary) summary.innerHTML = '<div class="stats-summary-row">' + escapeHtml(lastView.summary) + '</div><p class="stats-detail-note">' + escapeHtml(lastView.note) + '</p>';
-  if (overview) overview.innerHTML = tableMarkup(lastView.sections[0], 0);
-  if (detail) detail.innerHTML = lastView.sections.slice(1).map((s, i) => tableMarkup(s, i + 1)).join('');
+  if (summary) summary.innerHTML = '<div class="stats-summary-row">' + escapeHtml(lastView.summary) + '</div><p class="stats-detail-note">' + escapeHtml(lastView.note) +
+    ' 미확인·누락 건수에는 선택 단계·품목과 연결되지 않은 조회 원본 기록이 포함될 수 있습니다.</p>';
+  renderStatsVisuals({ host: document.getElementById('statsChartArea'), tab: activeTab, view: lastView, fullView, choices, selection,
+    range: currentRange(), aggregation, calendarOffset, calendarLimit,
+    onSelect: (field, value) => {
+      selection[field] = value;
+      if (field === 'scope') selection.item = '';
+      calendarOffset = 0; calendarLimit = 20; tableLimits.clear(); renderModel();
+    },
+    onCalendar: (action, step) => {
+      if (action === 'more') calendarLimit += 20;
+      else calendarOffset = Math.max(0, calendarOffset + step);
+      renderModel();
+    },
+    createChart: (node, config) => charts.push(new Chart(node, config)),
+  });
+  if (overview) overview.innerHTML = tableMarkup(compactSection(activeTab, lastView.sections[0]), 0);
+  if (detail) detail.innerHTML = '<details class="stats-evidence-fold" id="statsEvidenceFold"' + (evidenceOpen ? ' open' : '') + '><summary>상세 지표 · 원본 기록 · 집계 확인 사항</summary>' +
+    lastView.sections.map((s, i) => tableMarkup(s, i)).join('') + '</details>';
   for (const area of [overview, detail]) {
     area?.querySelectorAll('[data-more]').forEach(button => button.addEventListener('click', () => {
       const index = Number(button.dataset.more); tableLimits.set(index, (tableLimits.get(index) || 50) + 50); renderModel();
     }));
   }
-  if (document.getElementById('statsChartFold')?.open) drawCharts(lastView.events);
-}
-function drawCharts(events) {
-  const area = document.getElementById('statsChartArea');
-  if (!area) return;
-  const groups = new Map();
-  for (const e of events) {
-    const key = JSON.stringify([e.stage, e.unit]);
-    if (!groups.has(key)) groups.set(key, { stage: e.stage, unit: e.unit, events: [] });
-    groups.get(key).events.push(e);
-  }
-  area.innerHTML = groups.size ? [...groups.values()].map((g, i) => '<div class="stats-chart-block"><h3 class="stats-detail-title">' +
-    escapeHtml(g.stage + ' (' + g.unit + ')') + '</h3><div class="stats-chart-canvas-wrap"><canvas id="statsChart' + i + '" aria-label="' +
-    escapeHtml(g.stage + ' 추이') + '" role="img"></canvas></div></div>').join('') : '<div class="stats-placeholder">집계 가능한 기록 없음</div>';
-  [...groups.values()].forEach((group, i) => {
-    const rows = periodRows(group.events, aggregation), labels = [...new Set(rows.map(r => r.period))].sort();
-    const items = [...new Set(rows.map(r => r.itemId))];
-    const amounts = new Map(rows.map(r => [JSON.stringify([r.period, r.itemId]), r.qty]));
-    const names = new Map(rows.map(r => [r.itemId, r.name]));
-    const dataset = items.map((id, index) => ({
-      label: names.get(id),
-      data: labels.map(period => amounts.get(JSON.stringify([period, id])) ?? null),
-      borderColor: COLORS[index % COLORS.length], backgroundColor: COLORS[index % COLORS.length],
-      spanGaps: false, tension: 0, borderWidth: 2,
-    }));
-    charts.push(new Chart(document.getElementById('statsChart' + i), { type: 'line', data: { labels, datasets: dataset },
-      options: { responsive: true, maintainAspectRatio: false, scales: { y: { title: { display: true, text: group.unit } } },
-        plugins: { legend: { position: 'bottom' } } } }));
-  });
 }
 function sheetRows(view, tab) {
   return [[TABS.find(t => t.id === tab).label], ['기간', startDate, endDate], ['집계', aggregation], ['품목 검색', filterTerm],
-    [view.summary], [view.note], ...view.sections.flatMap(s => [[], [s.title], [s.note], s.headers, ...s.rows.map(row => row.map(value => value == null ? '확인 불가' : value))])];
+    ['조회 범위', view.selectionLabel || '모든 단계·품목'], [view.summary], [view.note], ...view.sections.flatMap(s => [[], [s.title], [s.note], s.headers, ...s.rows.map(row => row.map(value => value == null ? '확인 불가' : value))])];
 }
 async function download(all) {
   if (loadedStatsKey !== statsKey() || !lastData) return;
-  const page = getPageContext(), token = queryToken, epoch = sessionStore.epoch, key = statsKey(), term = filterTerm, range = currentRange(), agg = aggregation, tab = activeTab;
+  const page = getPageContext(), token = queryToken, epoch = sessionStore.epoch, key = statsKey(), selected = visualKey(), term = filterTerm, range = currentRange(), agg = aggregation, tab = activeTab;
   const button = document.getElementById(all ? 'statsDownloadAllBtn' : 'statsDownloadBtn');
-  const stillCurrent = () => (!page || page.isCurrent()) && epoch === sessionStore.epoch && token === queryToken && key === statsKey() && term === filterTerm;
+  const stillCurrent = () => (!page || page.isCurrent()) && epoch === sessionStore.epoch && token === queryToken && key === statsKey() && term === filterTerm && selected === visualKey();
   if (button) button.disabled = true;
   try {
     XLSX ||= await import('../utils/spreadsheet.js');
@@ -298,7 +292,7 @@ async function download(all) {
     if (!stillCurrent()) return;
     const workbook = XLSX.utils.book_new();
     (all ? TABS : TABS.filter(t => t.id === tab)).forEach((t, i) => {
-      const view = buildView(t.id, data[i], range, agg);
+      const view = all ? buildView(t.id, data[i], range, agg) : lastView;
       const sheet = XLSX.utils.aoa_to_sheet(sheetRows(view, t.id));
       sheet['!cols'] = Array.from({ length: 14 }, () => ({ wch: 22 }));
       XLSX.utils.book_append_sheet(workbook, sheet, t.label);
@@ -307,7 +301,11 @@ async function download(all) {
   } catch (error) {
     if (stillCurrent()) alert('통계를 다운로드하지 못했습니다. 연결과 권한을 확인해주세요.');
     console.error('[stats] 다운로드 실패', error);
-  } finally { if (stillCurrent() && button) button.disabled = false; }
+  } finally {
+    // A local selection may cancel export while the same loaded screen remains usable.
+    if (button && (!page || page.isCurrent()) && epoch === sessionStore.epoch &&
+      document.getElementById(button.id) === button && loadedStatsKey === statsKey()) button.disabled = false;
+  }
 }
 export function preparePage({ cacheOnly = true } = {}) {
   const today = getTodayKST(), range = { startDate: today.slice(0, 7) + '-01', endDate: today, today };

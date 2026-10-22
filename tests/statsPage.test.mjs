@@ -129,7 +129,7 @@ test('page disposal rejects late reads and destroys every chart', async () => {
   const e = await setup();
   try {
     await e.page.renderStats();
-    e.document.getElementById('statsChartFold').open = true; e.fire('#statsChartFold', 'toggle');
+    // Charts now render immediately rather than behind a disclosure.
     assert.ok(e.chartInstances.length > 0);
     const before = e.nodes.mainContent.innerHTML;
     e.state.latencyMs = 30;
@@ -140,6 +140,124 @@ test('page disposal rejects late reads and destroys every chart', async () => {
     assert.equal(e.document.getElementById('statsDetailArea').textContent, '');
     assert.ok(e.chartInstances.every(chart => chart.destroyed));
     assert.notEqual(e.nodes.mainContent.innerHTML, before);
+  } finally { await e.cleanup(); }
+});
+
+test('production visualization isolates stage/units, follows item selection without reads, and exports the selected full evidence', async () => {
+  const e = await setup();
+  try {
+    e.state.rows.productions.push({ ...e.state.rows.productions[0], id: 'other', recipeId: 'r2', recipeName: '다른 치킨', receivedTotalPacks: 30 });
+    e.state.rows.productions.push({ ...e.state.rows.productions[0], id: 'freeze', recipeId: 'r3', recipeName: '동결 치킨', category: 'freezeDry', receivedFreezeType: 'breadPan', receivedFreezeQty: 7 });
+    await e.page.renderStats();
+    const reads = e.state.reads.length;
+    const chart = () => e.chartInstances.filter(c => !c.destroyed).at(-1).config;
+    assert.equal(chart().type, 'bar');
+    assert.deepEqual(Array.from(chart().data.datasets[0].data), [150]);
+    assert.equal(e.page.viewForTest().events.length, 2);
+    const item = e.document.querySelector('[data-visual-select="item"]');
+    Object.defineProperty(item, 'value', { value: 'recipe:r2', configurable: true });
+    e.fire('[data-visual-select="item"]', 'change');
+    assert.equal(e.page.viewForTest().events[0]?.qty, 30);
+    assert.equal(e.page.viewForTest().events.length, 1);
+    await e.page.download(false);
+    const text = JSON.stringify(e.downloads[0].book);
+    assert.match(text, /다른 치킨/); assert.ok(!text.includes('동결 치킨'));
+    assert.match(text, /회당 최소/);
+    assert.equal(e.state.reads.length, reads);
+    assert.equal(e.state.writes.length, 0);
+  } finally { await e.cleanup(); }
+});
+
+test('signed usage charts preserve restorations, ID boundaries and the two average denominators', async () => {
+  const e = await setup();
+  try {
+    e.state.rows.meatLogs.push(
+      { id: 'deduct', type: 'productionDeduct', date: '2026-09-02', meatTypeId: 'm', meatNameSnapshot: '닭', delta: -8000 },
+      { id: 'restore', type: 'productionRollback', date: '2026-09-03', meatTypeId: 'm', meatNameSnapshot: '닭', delta: 3000 });
+    await e.page.renderStats(); e.fire('[data-tab="usage"]'); await e.ready('usage');
+    const scope = e.document.querySelector('[data-visual-select="scope"]');
+    Object.defineProperty(scope, 'value', { value: JSON.stringify(['재고 순차감', 'kg']), configurable: true });
+    e.fire('[data-visual-select="scope"]', 'change');
+    const item = e.document.querySelector('[data-visual-select="item"]');
+    Object.defineProperty(item, 'value', { value: 'meatLogs:m', configurable: true });
+    e.fire('[data-visual-select="item"]', 'change');
+    const config = e.chartInstances.filter(c => !c.destroyed).at(-1).config;
+    assert.deepEqual(Array.from(config.data.datasets[0].data), [8, -3]);
+    assert.equal(config.options.scales.y.beginAtZero, true);
+    const g = e.page.viewForTest().groups[0];
+    assert.equal(g.total, 5); assert.equal(g.calendarMean, 5 / 14); assert.equal(g.workingMean, 2.5);
+    assert.match(e.document.querySelector('#statsChartArea').textContent, /조회기간 전체 14일/);
+    assert.equal(e.state.writes.length, 0);
+  } finally { await e.cleanup(); }
+});
+
+test('supply keeps prior-period last receipt unknown quantities and filters registration by IDs rather than names', async () => {
+  const e = await setup();
+  try {
+    e.state.rows.meatLogs[0].date = '2026-08-01';
+    e.state.rows.meatLogs.push({ id: 'another', type: 'frozenIncoming', date: '2026-09-03', meatTypeId: 'other', meatNameSnapshot: '닭', delta: 1000 });
+    e.state.rows.schedules.push({ ...e.state.rows.schedules[0], id: 'other-schedule', itemId: 'other' });
+    await e.page.renderStats(); e.fire('[data-tab="supply"]'); await e.ready('supply');
+    const item = e.document.querySelector('[data-visual-select="item"]');
+    Object.defineProperty(item, 'value', { value: 'meatLogs:m', configurable: true });
+    e.fire('[data-visual-select="item"]', 'change');
+    const view = e.page.viewForTest();
+    assert.equal(view.groups[0].total, null); assert.equal(view.groups[0].lastDate, '2026-08-01');
+    assert.equal(view.groups[0].interval.count, 0);
+    assert.equal(view.registrationGroups[0].rows.length, 1);
+    assert.equal(view.registrationGroups[0].rows[0].source, 'schedules/schedule');
+    assert.match(e.document.querySelector('#statsChartArea').textContent, /기간 내 유효한 입고 기록 없음/);
+    assert.match(e.document.querySelector('#statsChartArea').textContent, /확인 불가/);
+    assert.equal(e.document.querySelector('#statsTimelineChart'), null);
+  } finally { await e.cleanup(); }
+});
+
+test('calendar shows only recorded days and drilldown, and a query failure removes all visible charts', async () => {
+  const e = await setup();
+  try {
+    await e.page.renderStats();
+    assert.equal(e.document.querySelectorAll('[data-calendar-date]').length, 1);
+    e.fire('[data-calendar-date="2026-09-03"]');
+    assert.match(e.document.querySelector('#statsCalendarSelection').textContent, /120.*productions\/confirmed/s);
+    e.state.failures.add('productions');
+    await e.page.refreshStats({ force: true });
+    assert.equal(e.document.querySelector('#statsChartArea').textContent, '');
+    assert.ok(e.chartInstances.every(c => c.destroyed));
+    assert.equal(e.state.writes.length, 0);
+  } finally { await e.cleanup(); }
+});
+
+test('a local visualization selection during a pending full export cannot export the prior selection', async () => {
+  const e = await setup();
+  try {
+    e.state.rows.productions.push({ ...e.state.rows.productions[0], id: 'other', recipeId: 'r2', recipeName: '다른 치킨' });
+    await e.page.renderStats(); await e.page.download(false); e.downloads.length = 0;
+    e.state.latencyMs = 30;
+    const pending = e.page.download(true);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    e.fire('[data-visual-item="recipe:r2"]');
+    await pending;
+    assert.equal(e.downloads.length, 0);
+    assert.equal(e.document.getElementById('statsDownloadAllBtn').disabled, false);
+  } finally { await e.cleanup(); }
+});
+
+test('usage visualization keeps equally named unlinked snapshots selectable as separate source identities', async () => {
+  const e = await setup();
+  try {
+    e.state.rows.productions[0].ingredientsSnapshot.push({ name: '닭', requiredQtyG: 3000 }, { name: '닭', requiredQtyG: 5000 });
+    await e.page.renderStats(); e.fire('[data-tab="usage"]'); await e.ready('usage');
+    assert.equal(e.page.viewForTest().events.length, 1);
+    assert.equal(e.page.viewForTest().events[0].qty, 1); // Linked item is the initial selection.
+    const options = [...e.document.querySelectorAll('[data-visual-select="item"] option')];
+    assert.equal(options.length, 3); assert.equal(new Set(options.map(o => o.getAttribute('value'))).size, 3);
+    assert.equal(options.filter(o => o.textContent.includes('ID 미연결')).length, 2);
+    const item = e.document.querySelector('[data-visual-select="item"]');
+    Object.defineProperty(item, 'value', { value: 'ingredient:unlinked:confirmed:1', configurable: true });
+    e.fire('[data-visual-select="item"]', 'change');
+    assert.equal(e.page.viewForTest().groups.length, 1);
+    assert.equal(e.page.viewForTest().events[0].qty, 3);
+    assert.equal(e.state.writes.length, 0);
   } finally { await e.cleanup(); }
 });
 
