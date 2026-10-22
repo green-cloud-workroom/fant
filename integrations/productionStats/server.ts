@@ -6,7 +6,7 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { validDate } from './statsLogic.js';
 import { evaluateStatsAutomation, reconcileIssues, provenResolutions, confirmPayload, deliveryIdentity,
-  AUTOMATION_VERSION, AUTOMATION_SOURCES, planStatsDeliveries } from './statsAutomation.js';
+  AUTOMATION_VERSION, AUTOMATION_SOURCES, planStatsDeliveries, confirmAdjustmentPatch } from './statsAutomation.js';
 
 type Data = Record<string, any>;
 type Recipient = { uid: string; name: string; role: 'office' | 'owner' };
@@ -79,7 +79,10 @@ export async function deliverStatsIssue(item: Data, config: Data, resolve = reso
         || (old.statsSource?.notificationLevel || 0) !== (item.notificationLevel || 0) || old.boardPublic !== false)) throw Error('기존 컨펌 식별 불일치');
       if (!requests[index]!.exists) { tx.create(db.doc('confirmRequests/' + id), {
         ...confirmPayload(item, recipient, today, id), createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() }); count++; }
-
+      else {
+        const contextPatch = confirmAdjustmentPatch(old, item);
+        if (contextPatch) tx.update(db.doc('confirmRequests/' + id), { ...contextPatch, updatedAt: FieldValue.serverTimestamp() });
+      }
     }
     return count;
   });

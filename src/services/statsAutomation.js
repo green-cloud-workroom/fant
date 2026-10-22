@@ -25,6 +25,51 @@ const issue = (kind, key, title, evidence, extra = {}) => ({ kind, key: JSON.str
   evidence, severity: 'attention', target: kind === 'registration' ? 'schedule' : 'stats',
   recipientRoles: kind === 'registration' ? ['office'] : ['office', 'owner'], ...extra });
 
+function timestampMillis(value) {
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  const seconds = value?.seconds ?? value?._seconds;
+  if (number(seconds)) return seconds * 1000 + (value.nanoseconds ?? value._nanoseconds ?? 0) / 1e6;
+  return typeof value === 'string' ? Date.parse(value) : NaN;
+}
+export function followingStockAdjustments(data, event, today) {
+  if (!event.source?.startsWith('meatLogs/')) return [];
+  const source = (data.meatLogs || []).find(row => 'meatLogs/' + row.id === event.source);
+  const started = timestampMillis(source?.timestamp);
+  if (source?.type !== 'frozenIncoming' || !source.meatStockId || !source.meatTypeId || !source.stage || !Number.isFinite(started)) return [];
+  return (data.meatLogs || []).filter(row => row.type === 'adjust' && row.id
+    && !['deleted', 'cancelled', 'canceled'].includes(row.status)
+    && row.meatStockId === source.meatStockId && row.meatTypeId === source.meatTypeId && row.stage === source.stage
+    && validDate(row.date) && row.date >= source.date && row.date <= today
+    && timestampMillis(row.timestamp) > started
+    && timestampMillis(row.timestamp) <= Date.parse(today + 'T23:59:59.999+09:00')
+    && [row.before, row.after, row.delta].every(number) && Math.abs(row.after - row.before - row.delta) < 1e-6)
+    .sort((a, b) => timestampMillis(a.timestamp) - timestampMillis(b.timestamp) || String(a.id).localeCompare(String(b.id)))
+    .map(row => ({ source: 'meatLogs/' + row.id, stockSource: 'meatStocks/' + source.meatStockId,
+      at: new Date(timestampMillis(row.timestamp)).toISOString(), before: row.before / 1000, after: row.after / 1000,
+      unit: 'kg', staff: typeof row.staff === 'string' && row.staff.trim() ? row.staff : '미기재',
+      reason: typeof row.reason === 'string' && row.reason.trim() ? row.reason : '미기재' }));
+}
+
+export function adjustmentContextText(item) {
+  const rows = item.kind === 'quantity' ? item.evidence.followingAdjustments || [] : [];
+  if (!rows.length) return '';
+  const fmt = n => n.toLocaleString('ko-KR', { maximumFractionDigits: 3 });
+  return ['[같은 재고 건의 후속 조정 이력]', ...rows.map(row =>
+    `${new Date(Date.parse(row.at) + 9 * 3600000).toISOString().slice(0, 19).replace('T', ' ')} KST · ${fmt(row.before)}${row.unit} → ${fmt(row.after)}${row.unit}\n담당: ${row.staff} / 사유: ${row.reason}\n조정 원본: ${row.source}`),
+    '재고 조정 이력이며, 원본 입고량이 정정됐다는 의미는 아닙니다.'].join('\n');
+}
+
+// Supplement existing system text without reopening, acknowledging or overwriting a conversation.
+export function confirmAdjustmentPatch(existing, item) {
+  if (item.kind !== 'quantity' || existing.cancelled || existing.statsResolvedAt || typeof existing.body !== 'string') return null;
+  const next = adjustmentContextText(item), previous = existing.statsAdjustmentContextText || '';
+  if (next === previous) return null;
+  if (previous && !existing.body.endsWith('\n\n' + previous)) return null;
+  const base = previous ? existing.body.slice(0, -previous.length - 2) : existing.body;
+  return { body: base + (next ? '\n\n' + next : ''), statsAdjustmentContextText: next };
+}
+
 // Same item, unit, stage and (for calculated use) product, using only earlier days.
 // Restorations are not compared to positive deductions; corrections are applied by supplyEvents.
 export function quantityAssessment(candidate, history, policy = DEFAULT_POLICY) {
@@ -121,7 +166,7 @@ export function evaluateStatsAutomation(data, { today, complete = false, policy 
       const assessment = quantityAssessment(event, comparisons.get(eventKey(event)), policy);
       if (assessment.state === 'review') candidates.push(issue('quantity', [event.source, event.itemId, event.stage],
         event.name + ' 수량 확인', { ...assessment, source: event.source, itemId: event.itemId, qty: event.qty,
-          date: event.date, stage: event.stage }, { severity: 'review', target: event.itemId.startsWith('meatLogs:') ? 'meat' : 'stats' }));
+          date: event.date, stage: event.stage, followingAdjustments: followingStockAdjustments(data, event, today) }, { severity: 'review', target: event.itemId.startsWith('meatLogs:') ? 'meat' : 'stats' }));
     }
   }
   for (const stock of currentStocks(data)) {
@@ -200,11 +245,13 @@ export function deliveryIdentity(item, recipientUid) {
 export function confirmPayload(item, recipient, today, requestId) {
   const system = { uid: 'system:production-stats', name: '생산 통계 알림' };
   const weekly = item.kind === 'weekly';
+  const context = adjustmentContextText(item);
   return { kind: weekly ? '공유' : '요청', requesterUid: system.uid, requesterName: system.name,
     approverUid: recipient.uid, approverName: recipient.name,
     participantUids: [system.uid, recipient.uid], participantNames: { [system.uid]: system.name, [recipient.uid]: recipient.name },
     date: today, effectiveDate: today, deferredFrom: null, title: item.title,
-    body: [item.title, evidenceText(item), '확인은 읽음 표시입니다. 원본의 문제 해결 상태와 별도입니다.'].join('\n'),
+    body: [item.title, evidenceText(item), '확인은 읽음 표시입니다. 원본의 문제 해결 상태와 별도입니다.'].join('\n') + (context ? '\n\n' + context : ''),
+    ...(context ? { statsAdjustmentContextText: context } : {}),
     linkUrl: 'https://green-cloud-workroom.github.io/fant/#' + (['schedule', 'meat', 'stats'].includes(item.target) ? item.target : 'stats'),
     statsSource: { version: AUTOMATION_VERSION, key: item.key, episode: item.episode || 1,
       escalation: item.escalation || 0, notificationLevel: item.notificationLevel || 0 },

@@ -142,3 +142,19 @@ test('confirm-only contract has no popup handlers or delivery documents, even fo
   const recipients = await e.api.resolveStatsRecipients('owner');
   assert.ok(recipients.every(r => !('popup' in r)));
 });
+
+
+test('existing acknowledged confirm receives adjustment context in place with zero new deliveries', async () => {
+  const e=await backend({approvedRelease:true});e.addRecipient('office','office');e.addRecipient('owner','owner');
+  e.item.kind='quantity';e.records.set('productionStatsAutomation/control',e.config);
+  await e.api.deliverStatsIssue(e.item,e.config);
+  const first=[...e.records].find(([p,d])=>p.startsWith('confirmRequests/')&&d.approverUid==='office');
+  Object.assign(first[1],{acknowledgedUids:['office'],acknowledgements:[{uid:'office',at:'seen'}],replies:[{text:'보존'}]});
+  const preserved=structuredClone(first[1]);
+  e.item.evidence.followingAdjustments=[{source:'meatLogs/adjust',at:'2026-10-22T05:14:33Z',before:47.5,after:475,unit:'kg',staff:'박형수',reason:'실수'}];
+  assert.equal((await e.api.deliverStatsIssue(e.item,e.config)).created,0);
+  const updated=e.records.get(first[0]);assert.match(updated.body,/47.5kg → 475kg/);
+  for(const key of ['acknowledgedUids','acknowledgements','replies','contentRevision','lastActorUid','createdAt','status','statsSource']) assert.deepEqual(updated[key],preserved[key]);
+  const writes=e.writes.length;await e.api.deliverStatsIssue(e.item,e.config);assert.equal(e.writes.length,writes);
+  assert.equal([...e.records.keys()].filter(p=>p.startsWith('confirmRequests/')).length,2);
+});

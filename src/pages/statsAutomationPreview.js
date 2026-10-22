@@ -1,5 +1,6 @@
 import { loadAutomationPreview } from '../services/statsAutomationPreview.js';
 import { registerPageCleanup } from '../utils/pageLifecycle.js';
+import { adjustmentContextText } from '../services/statsAutomation.js';
 
 const esc = v => String(v ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
   .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
@@ -13,7 +14,8 @@ export function previewMarkup(result) {
     c.recipientRoles.map(r => r === 'owner' ? '대표' : '사무팀').join('·'),
     c.kind === 'registration' ? `최근 ${c.evidence.lastDate} / 평균 ${fmt(c.evidence.meanInterval)}일 / 표본 ${c.evidence.samples}`
       : c.kind === 'quantity' ? `${c.evidence.date} / ${fmt(c.evidence.qty)}${c.evidence.unit} / 중앙값 ${fmt(c.evidence.baseline)} / 표본 ${c.evidence.samples}`
-        : `추정 ${fmt(c.evidence.estimatedDaysLeft)}일 / ${fmt(c.evidence.qty)}${c.evidence.unit}`, c.evidence.source || c.evidence.itemId]);
+        : `추정 ${fmt(c.evidence.estimatedDaysLeft)}일 / ${fmt(c.evidence.qty)}${c.evidence.unit}`, c.evidence.source || c.evidence.itemId,
+    adjustmentContextText(c) || '해당 이력 없음']);
   const weekly = result.weekly;
   return card('발송 없는 알림 검증', '<p>이 검증 화면에서는 컨펌을 발송하지 않습니다. 자동 발송 여부는 서버 운영 설정을 따릅니다. 기존 알림은 그대로 유지합니다.</p>'
     + '<p>통계의 탭·조회기간과 별도로 최근 90일을 검증합니다. 조회 ' + esc(result.range.startDate) + ' ~ ' + esc(result.range.endDate)
@@ -21,7 +23,7 @@ export function previewMarkup(result) {
     + '<p>' + esc(result.snapshotNote || '') + '</p>'
     + '<p>입고 집계 제외 ' + (result.coverage?.excludedReceipts ?? '미확인')
     + '건 · 사용량 근거 누락 ' + (result.coverage?.missingUsage ?? '미확인') + '건</p>')
-    + card('알림 후보 · 발송 안 함', candidates.length ? table(['내용', '등급', '예정 수신자', '판단 근거', '원본'], candidates) : '<p>현재 조건에 맞는 후보가 없습니다. 데이터 완전성·미확인 항목도 확인해주세요.</p>')
+    + card('알림 후보 · 발송 안 함', candidates.length ? table(['내용', '등급', '예정 수신자', '판단 근거', '원본', '후속 조정'], candidates) : '<p>현재 조건에 맞는 후보가 없습니다. 데이터 완전성·미확인 항목도 확인해주세요.</p>')
     + card('판단 보류·기존 알림과 중복 제외', table(['품목', '이유'], result.held.map(r => [r.name || '공통', r.reason])))
     + (weekly ? card(`지난주 공유 미리보기 (${weekly.startDate} ~ ${weekly.endDate})`, '<p>주간 요약도 운영앱 개인 컨펌으로 전달할 예정입니다. ' + esc(weekly.note) + '</p>'
       + table(['구분', '품목', '단계·기준', '수량', '단위'], ['production', 'supply', 'usage'].flatMap((key, i) => weekly[key].map(r => [['생산', '입고', '사용'][i], r.name, r.stage, r.total, r.unit])))

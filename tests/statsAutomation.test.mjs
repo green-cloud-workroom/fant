@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AUTOMATION_SOURCES, DELIVERY_RELEASED, DEFAULT_POLICY, addDays, automationRange,
   evaluateStatsAutomation, quantityAssessment, weeklySummary, reconcileIssues, provenResolutions,
-  deliveryIdentity, confirmPayload, workingDaysBetween, planStatsDeliveries } from '../src/services/statsAutomation.js';
+  deliveryIdentity, confirmPayload, workingDaysBetween, planStatsDeliveries, followingStockAdjustments, confirmAdjustmentPatch } from '../src/services/statsAutomation.js';
 
 export function fixture() {
   const data = Object.fromEntries(AUTOMATION_SOURCES.map(k => [k, []]));
@@ -182,4 +182,35 @@ test('meaningful worsening creates one new notification level and improvement do
   assert.notEqual(deliveryIdentity(first[shortage.key], 'office'), deliveryIdentity(worse[shortage.key], 'office'));
   const better = reconcileIssues(worse, { ...result, candidates: [{ ...shortage, evidence: { ...shortage.evidence, estimatedDaysLeft: 0.8 } }] }, { today: '2026-10-24' });
   assert.equal(deliveryIdentity(worse[shortage.key], 'office'), deliveryIdentity(better[shortage.key], 'office'));
+});
+
+
+test('following adjustment context requires the same stock, material, stage, later timestamp and valid arithmetic', () => {
+  const original = {id:'receipt',type:'frozenIncoming',meatStockId:'lot',meatTypeId:'heart',stage:'frozen',date:'2026-10-22',timestamp:'2026-10-22T05:13:58Z',delta:47500};
+  const adjustment = {id:'adjustment',type:'adjust',meatStockId:'lot',meatTypeId:'heart',stage:'frozen',date:'2026-10-22',timestamp:'2026-10-22T05:14:33Z',before:47500,after:475000,delta:427500,staff:'담당자',reason:'실수'};
+  const invalid = [{meatStockId:'another-lot'},{meatTypeId:'other'},{stage:'processed'},{timestamp:'2026-10-22T05:13:58Z'},
+    {timestamp:'2026-10-22T05:12:00Z'},{timestamp:null},{date:'2026-10-23'},{timestamp:'2026-10-23T05:00:00Z'},{delta:1},{status:'deleted'}];
+  const data={meatLogs:[original,adjustment,...invalid.map((patch,i)=>({...adjustment,id:'invalid-'+i,...patch}))]};
+  const before=JSON.stringify(data), rows=followingStockAdjustments(data,{source:'meatLogs/receipt'},'2026-10-22');
+  assert.equal(rows.length,1); assert.equal(rows[0].before,47.5); assert.equal(rows[0].after,475);
+  assert.equal(rows[0].staff,'담당자'); assert.equal(rows[0].reason,'실수'); assert.equal(rows[0].source,'meatLogs/adjustment');
+  assert.equal(JSON.stringify(data),before); assert.deepEqual(followingStockAdjustments(data,{source:'bagLogs/receipt'},'2026-10-22'),[]);
+});
+
+test('adjustment context does not change quantity verdict or delivery identity and updates only its own suffix', () => {
+  const data=fixture(); const last=data.meatLogs.at(-1); last.delta=82973000;last.timestamp='2026-10-15T00:00:00Z';
+  const original=evaluate(data).candidates.find(c=>c.kind==='quantity');assert.ok(original);
+  data.meatLogs.push({id:'later-adjustment',type:'adjust',meatTypeId:last.meatTypeId,meatStockId:last.meatStockId,stage:last.stage,
+    date:'2026-10-15',timestamp:'2026-10-15T00:00:35Z',before:82973000,after:82973,delta:82973-82973000,staff:'담당자',reason:'단위 실수'});
+  const enriched=evaluate(data).candidates.find(c=>c.kind==='quantity');
+  assert.equal(enriched.evidence.qty,original.evidence.qty);assert.equal(enriched.evidence.ratio,original.evidence.ratio);
+  assert.equal(deliveryIdentity(enriched,'office'),deliveryIdentity(original,'office'));
+  const old=confirmPayload(original,{uid:'office',name:'사무'},'2026-10-22','id');
+  const patch=confirmAdjustmentPatch(old,enriched);assert.ok(patch);
+  assert.match(patch.body,/단위 실수/);assert.match(patch.body,/82,973kg → 82.973kg/);
+  assert.ok(patch.body.startsWith(old.body));assert.deepEqual(Object.keys(patch).sort(),['body','statsAdjustmentContextText']);
+  const applied={...old,...patch};assert.equal(confirmAdjustmentPatch(applied,enriched),null);
+  assert.equal(confirmAdjustmentPatch({...applied,body:applied.body+'추가 메모'},enriched),null);
+  assert.equal(confirmAdjustmentPatch({...old,cancelled:true},enriched),null);
+  const fresh=confirmPayload(enriched,{uid:'office',name:'사무'},'2026-10-22','id');assert.equal(fresh.body,patch.body);
 });
