@@ -1,4 +1,5 @@
 import { registerCloseModal } from '../utils/modalManager.js';
+import { checkQuantityBeforeSave } from '../services/statsAutomationRuntime.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocsFromServer as getDocs, doc, query, orderBy, getDocFromServer as getDoc
@@ -676,6 +677,9 @@ function showCompleteModal(s) {
         const qtyG = isCountIncomingUnit(s.orderedUnit)
           ? (actualUnit === 'g' ? actual : actual * Number(s.orderedUnitGrams || 0))
           : (s.orderedUnit === 'kg' ? actual * 1000 : actual);
+        const quantityReview = await checkQuantityBeforeSave({ itemId: 'meatLogs:' + s.itemId,
+          date: today, qty: qtyG / 1000, unit: 'kg', stage: '원료' }, command.isCurrent);
+        if (!quantityReview.approved) return;
         const stockUpdatedAt = new Date();
         const newStockRef = await addDoc(collection(db, 'meatStocks'), {
           meatTypeId: s.itemId,
@@ -693,6 +697,7 @@ function showCompleteModal(s) {
 
         await recordMeatLog({
           type: 'frozenIncoming',
+          ...(quantityReview.review ? { statsQuantityReview: quantityReview.review } : {}),
           date: today,
           meatTypeId: s.itemId,
           meatNameSnapshot: s.itemNameSnapshot,
@@ -722,6 +727,9 @@ function showCompleteModal(s) {
       if (bagSnap.exists()) {
         const bagData = bagSnap.data();
         const qtyPcs = s.orderedUnit === '박스' ? actual * (bagData.piecesPerBox || 1) : actual;
+        const quantityReview = await checkQuantityBeforeSave({ itemId: 'bagLogs:' + s.itemId,
+          date: today, qty: qtyPcs, unit: '장', stage: '봉투' }, command.isCurrent);
+        if (!quantityReview.approved) return;
         const before = bagData.currentQty || 0;
         const after = before + qtyPcs;
         const stockUpdatedAt = new Date();
@@ -736,6 +744,7 @@ function showCompleteModal(s) {
           bagTypeId: s.itemId,
           bagNameSnapshot: s.itemNameSnapshot,
           type: 'incoming', qty: qtyPcs,
+          ...(quantityReview.review ? { statsQuantityReview: quantityReview.review } : {}),
           before, after,
           staffName: staff,
           note: `입고예정 완료`,
@@ -758,6 +767,9 @@ function showCompleteModal(s) {
       const current = eggSnap.exists() ? eggSnap.data().currentQty : 0;
       const minQty = eggSnap.exists() ? eggSnap.data().minimumQty : 0;
       const qtyEgg = s.orderedUnit === '판' ? actual * 30 : actual;
+      const quantityReview = await checkQuantityBeforeSave({ itemId: 'eggLogs:egg', date: today,
+        qty: qtyEgg, unit: '개', stage: '계란' }, command.isCurrent);
+      if (!quantityReview.approved) return;
       const after = current + qtyEgg;
       const stockUpdatedAt = new Date();
 
@@ -770,6 +782,7 @@ function showCompleteModal(s) {
       const eggLogRef = await addDoc(collection(db, 'eggLogs'), {
         date: today, timestamp: new Date(),
         type: 'in', qty: qtyEgg,
+        ...(quantityReview.review ? { statsQuantityReview: quantityReview.review } : {}),
         before: current, after,
         staffName: staff, note: '입고예정 완료',
       });

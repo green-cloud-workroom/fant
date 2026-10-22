@@ -1,0 +1,144 @@
+// Local-only backend contract tests. All Firebase modules are synthetic; no ADC/network.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import * as crypto from 'node:crypto';
+import * as core from '../src/services/statsAutomation.js';
+import { validDate } from '../src/services/statsLogic.js';
+const requireBackend = createRequire(new URL('../../fantapet-inventory/functions/package.json', import.meta.url));
+const ts = requireBackend('typescript');
+
+async function backend({ approvedRelease = false } = {}) {
+  const records = new Map(), users = new Map(), writes = [], reads = [];
+  const clone = v => v == null ? v : structuredClone(v);
+  const get = (obj, path) => path.split('.').reduce((v, k) => v?.[k], obj);
+  const doc = path => ({ path, get: async () => snapshot(path), update: async patch => {
+    assert.ok(records.has(path)); records.set(path, { ...records.get(path), ...clone(patch) }); writes.push(path);
+  } });
+  function snapshot(path) { return { id: path.split('/').at(-1), ref: doc(path), exists: records.has(path), data: () => clone(records.get(path)) }; }
+  function collection(path, filters = []) { return { path, filters,
+    where: (field, op, value) => collection(path, [...filters, { field, value }]),
+    get: async () => querySnapshot({ path, filters }) }; }
+  function querySnapshot(ref) {
+    reads.push(ref.path);
+    return { docs: [...records.keys()].filter(path => path.split('/').slice(0, -1).join('/') === ref.path
+      && ref.filters.every(f => get(records.get(path), f.field) === f.value)).map(snapshot) };
+  }
+  // Serialize transactions to model conflict retries without exposing a real SDK.
+  let queue = Promise.resolve();
+  const db = { doc, collection, runTransaction: (fn, options) => {
+    const work = queue.then(async () => {
+      const staged = [];
+      const tx = { get: async ref => { reads.push(ref.path); return ref.filters ? querySnapshot(ref) : snapshot(ref.path); },
+        set: (ref, value) => staged.push(() => { records.set(ref.path, clone(value)); writes.push(ref.path); }),
+        create: (ref, value) => staged.push(() => { assert.ok(!records.has(ref.path), 'create-only conflict'); records.set(ref.path, clone(value)); writes.push(ref.path); }),
+        update: (ref, value) => staged.push(() => { assert.ok(records.has(ref.path)); records.set(ref.path, { ...records.get(ref.path), ...clone(value) }); writes.push(ref.path); }) };
+      const result = await fn(tx);
+      if (options?.readOnly) assert.equal(staged.length, 0);
+      staged.forEach(write => write()); return result;
+    });
+    queue = work.catch(() => {}); return work;
+  } };
+  class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : ['2026-10-22T03:00:00Z'])); }
+    static now() { return Date.parse('2026-10-22T03:00:00Z'); } }
+  class HttpsError extends Error { constructor(code, message) { super(message); this.code = code; } }
+  const context = vm.createContext({ console, Date: FixedDate, Buffer, structuredClone });
+  const mocks = {
+    'node:crypto': crypto,
+    'firebase-admin/auth': { getAuth: () => ({ getUser: async uid => { if (!users.has(uid)) throw Error('missing auth'); return clone(users.get(uid)); } }) },
+    'firebase-admin/firestore': { getFirestore: () => db, FieldValue: { serverTimestamp: () => 'SERVER_TIME' } },
+    'firebase-functions/v2/https': { onCall: (_, handler) => handler, HttpsError },
+    'firebase-functions/v2/scheduler': { onSchedule: (_, handler) => handler },
+    './statsAutomation.js': { ...core, DELIVERY_RELEASED: approvedRelease },
+    './statsLogic.js': { validDate },
+  };
+  const source = ts.transpileModule(await readFile('integrations/productionStats/server.ts', 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const module = new vm.SourceTextModule(source, { context });
+  await module.link(id => {
+    const exports = mocks[id]; if (!exports) throw Error('Unexpected/live import: ' + id);
+    return new vm.SyntheticModule(Object.keys(exports), function () { for (const [k, v] of Object.entries(exports)) this.setExport(k, v); }, { context });
+  });
+  await module.evaluate();
+  const api = module.namespace;
+  function addRecipient(uid, role, overrides = {}) {
+    const profile = { displayName: uid, status: '재직', payrollCompany: '판타펫', teamType: role === 'owner' ? '기타' : '사무', ...overrides };
+    records.set('users/' + uid, profile);
+    users.set(uid, { disabled: false, customClaims: { app: ['operations', 'production'],
+      roles: { operations: { role: role === 'owner' ? '대표' : '직원' }, production: role === 'owner' ? 'admin' : 'office' } } });
+  }
+  const config = { mode: 'live', deliveryEnabled: true, ownerUid: 'owner', activationDate: '2026-10-22', validatedVersion: core.AUTOMATION_VERSION };
+  const item = { kind: 'shortage', key: 'shortage:egg', episode: 1, escalation: 0, popup: true,
+    title: '계란 소진 위험 검토', recipientRoles: ['office', 'owner'], target: 'stats',
+    evidence: { itemId: 'eggLogs:egg', qty: 1, unit: '개', calendarDailyMean: 6, estimatedDaysLeft: 1 / 6, note: '추정' } };
+  return { api, records, users, writes, reads, addRecipient, config, item };
+}
+
+test('real release-off constant blocks delivery even with live configuration and explicit direct handler call', async () => {
+  const e = await backend();
+  const result = await e.api.deliverStatsIssue(e.item, e.config, () => { throw Error('Recipient lookup must not run'); });
+  assert.equal(result.state, 'blocked'); assert.equal(e.reads.length, 0); assert.equal(e.writes.length, 0);
+  e.records.set('productionStatsAutomation/control', e.config);
+  assert.equal((await e.api.runStatsShadow()).state, 'disabled'); assert.equal(e.writes.length, 0);
+});
+test('shadow daily evaluates source in read-only snapshot, writes only verification collections', async () => {
+  const e = await backend(); e.records.set('productionStatsAutomation/control', { mode: 'shadow', shadowEnabled: true });
+  const result = await e.api.runStatsShadow();
+  assert.equal(result.actualDeliveries, 0);
+  assert.ok(e.writes.length > 0);
+  assert.ok(e.writes.every(p => p.startsWith('productionStatsAutomation/') || p.startsWith('productionStatsAutomationReports/')));
+});
+test('missing control disables schedule without scanning operational sources', async () => {
+  const e = await backend(); assert.equal((await e.api.runStatsShadow()).state, 'disabled');
+  assert.equal(e.writes.length, 0); assert.ok(!e.reads.includes('meatLogs'));
+});
+test('synthetic approved release: retries and simultaneous attempts create one private request per recipient', async () => {
+  const e = await backend({ approvedRelease: true }); e.addRecipient('office', 'office'); e.addRecipient('owner', 'owner');
+  e.records.set('productionStatsAutomation/control', e.config);
+  await Promise.all([e.api.deliverStatsIssue(e.item, e.config), e.api.deliverStatsIssue(e.item, e.config)]);
+  await e.api.deliverStatsIssue(e.item, e.config);
+  const requests = [...e.records].filter(([p]) => p.startsWith('confirmRequests/'));
+  assert.equal(requests.length, 2);
+  assert.ok(requests.every(([, d]) => d.boardPublic === false && d.participantUids.length === 2));
+  const office = requests.find(([, d]) => d.approverUid === 'office'); office[1].acknowledgedUids = ['office'];
+  await e.api.deliverStatsIssue(e.item, e.config);
+  assert.deepEqual(e.records.get(office[0]).acknowledgedUids, ['office']);
+  assert.equal(requests.find(([, d]) => d.approverUid === 'owner')[1].acknowledgedUids, undefined);
+});
+test('invalid or disabled recipient aborts whole delivery and validates actual operations claims', async () => {
+  for (const broken of ['disabled', 'otherCompany', 'wrongClaim', 'resigned']) {
+    const e = await backend({ approvedRelease: true }); e.addRecipient('office', 'office'); e.addRecipient('owner', 'owner');
+    if (broken === 'disabled') e.users.get('owner').disabled = true;
+    if (broken === 'otherCompany') e.records.get('users/owner').payrollCompany = '은수';
+    if (broken === 'wrongClaim') e.users.get('owner').customClaims.roles.operations.role = '직원';
+    if (broken === 'resigned') e.records.get('users/owner').status = '퇴사';
+    e.records.set('productionStatsAutomation/control', e.config);
+    await assert.rejects(e.api.deliverStatsIssue(e.item, e.config)); assert.equal(e.writes.length, 0);
+  }
+});
+test('release control is rechecked inside transaction before any delivery write', async () => {
+  const e = await backend({ approvedRelease: true }); e.addRecipient('office', 'office'); e.addRecipient('owner', 'owner');
+  e.records.set('productionStatsAutomation/control', { ...e.config, deliveryEnabled: false });
+  await assert.rejects(e.api.deliverStatsIssue(e.item, e.config)); assert.equal(e.writes.length, 0);
+});
+test('an existing mismatched fixed-ID request aborts delivery without overwriting or partial recipients', async () => {
+  const e = await backend({ approvedRelease: true }); e.addRecipient('office', 'office'); e.addRecipient('owner', 'owner');
+  e.records.set('productionStatsAutomation/control', e.config);
+  const id = 'stats-' + crypto.createHash('sha256').update(core.deliveryIdentity(e.item, 'owner')).digest('hex');
+  e.records.set('confirmRequests/' + id, { approverUid: 'other', body: 'preserve' });
+  await assert.rejects(e.api.deliverStatsIssue(e.item, e.config));
+  assert.equal(e.writes.length, 0); assert.equal(e.records.get('confirmRequests/' + id).body, 'preserve');
+});
+test('confirm-only contract has no popup handlers or delivery documents, even for production-authorized recipients', async () => {
+  const e = await backend({ approvedRelease: true }); e.addRecipient('office', 'office'); e.addRecipient('owner', 'owner');
+  e.records.set('productionStatsAutomation/control', e.config);
+  await e.api.deliverStatsIssue(e.item, e.config);
+  assert.equal(e.api.productionStatsInbox, undefined);
+  assert.equal(e.api.acknowledgeProductionStatsPopup, undefined);
+  assert.ok(e.writes.every(p => p.startsWith('confirmRequests/')));
+  assert.ok(!e.reads.includes('productionStatsDeliveries'));
+  const recipients = await e.api.resolveStatsRecipients('owner');
+  assert.ok(recipients.every(r => !('popup' in r)));
+});

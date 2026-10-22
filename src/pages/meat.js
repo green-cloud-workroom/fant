@@ -1,4 +1,5 @@
 import { registerCloseModal } from '../utils/modalManager.js';
+import { checkQuantityBeforeSave } from '../services/statsAutomationRuntime.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocsFromServer as getDocs, doc, addDoc, updateDoc, query, orderBy, limit, startAfter, getDocFromServer as getDoc, where, writeBatch, setDoc
@@ -1215,6 +1216,10 @@ function showAddFrozenModal(options = {}) {
 
     const qtyG = unit === 'kg' ? weight * 1000 : weight;
 
+    const quantityReview = await checkQuantityBeforeSave({ itemId: 'meatLogs:' + meatTypeId,
+      name: meatName, date, qty: qtyG / 1000, unit: 'kg', stage: '원료' }, command.isCurrent);
+    if (!quantityReview.approved) return;
+
     const stockRef = await addDoc(collection(db, 'meatStocks'), {
       meatTypeId,
       meatNameSnapshot: meatName,
@@ -1231,6 +1236,7 @@ function showAddFrozenModal(options = {}) {
 
     await recordMeatLog({
       type: 'frozenIncoming',
+      ...(quantityReview.review ? { statsQuantityReview: quantityReview.review } : {}),
       date,
       meatTypeId,
       meatNameSnapshot: meatName,

@@ -58,7 +58,9 @@ function renderStatsLayout() {
     [['daily', '일별'], ['weekly', '주별'], ['monthly', '월별']].map(([id, label]) => '<button class="stats-agg-btn ' + (aggregation === id ? 'active' : '') + '" data-agg="' + id + '">' + label + '</button>').join('') +
     '</div><input id="statsFilter" class="stats-date-input" aria-label="제품·원료 이름 검색" placeholder="제품·원료 이름 검색" value="' + escapeHtml(filterTerm) + '">' +
     '<button class="stats-download-btn" id="statsDownloadBtn" disabled>Excel 다운로드</button><button class="stats-download-btn" id="statsDownloadAllBtn" disabled>전체 다운로드</button>' +
-    '<button class="stats-download-btn" id="statsReloadBtn">새로고침</button></div></div>' +
+    '<button class="stats-download-btn" id="statsReloadBtn">새로고침</button>' +
+    '<button class="stats-download-btn" id="statsAutomationPreviewBtn">알림 검증 · 발송 없음</button></div></div>' +
+    '<div id="statsAutomationPreviewArea" aria-live="polite"></div>' +
     '<div class="stats-summary" id="statsSummary" role="status"></div><div class="stats-visual-area" id="statsChartArea"></div>' +
     '<div class="stats-detail-area" id="statsOverviewArea"></div>' +
     '<div class="stats-detail-area" id="statsDetailArea"></div></div>';
@@ -80,6 +82,19 @@ function renderStatsLayout() {
     if (loadedStatsKey === statsKey() && lastData) renderModel();
   });
   document.getElementById('statsReloadBtn').addEventListener('click', () => refreshStats({ force: true }));
+  document.getElementById('statsAutomationPreviewBtn').addEventListener('click', async () => {
+    const host = document.getElementById('statsAutomationPreviewArea'), page = getPageContext();
+    const button = document.getElementById('statsAutomationPreviewBtn');
+    if (!host || button.disabled) return;
+    button.disabled = true;
+    const current = () => (!page || page.isCurrent()) && document.getElementById('statsAutomationPreviewArea') === host;
+    try {
+      const { openStatsAutomationPreview } = await import('./statsAutomationPreview.js');
+      if (current()) await openStatsAutomationPreview(host, current);
+    } catch {
+      if (current()) host.textContent = '알림 검증 화면을 불러오지 못했습니다. 다시 시도해주세요.';
+    } finally { if (current()) button.disabled = false; }
+  });
   document.getElementById('statsDownloadBtn').addEventListener('click', () => download(false));
   document.getElementById('statsDownloadAllBtn').addEventListener('click', () => download(true));
 }

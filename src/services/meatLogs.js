@@ -51,6 +51,7 @@ export async function recordMeatLog(entry,{writer}={}) {
     uid,
     reason: entry.reason || null,
     batchId: entry.batchId || null,
+    ...(entry.statsQuantityReview ? { statsQuantityReview: entry.statsQuantityReview } : {}),
     timestamp: serverTimestamp(),
   };
 

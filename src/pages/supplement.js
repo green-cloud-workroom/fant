@@ -1,4 +1,5 @@
 import { registerCloseModal } from '../utils/modalManager.js';
+import { checkQuantityBeforeSave } from '../services/statsAutomationRuntime.js';
 import { db } from '../firebase.js';
 import {
   collection, doc, getDocFromServer as getDoc, getDocsFromServer as getDocs, limit, orderBy, query, where,
@@ -739,6 +740,10 @@ async function saveIncomingCell(supplementTypeId, date, qty, staffName) {
   return withReadCommand(supplementResource,command=>saveIncomingCellWithCommand(supplementTypeId, date, qty, staffName,command),{roles:['admin','office','production']});
 }
 async function saveIncomingCellWithCommand(supplementTypeId, date, qty, staffName,command) {
+  const page = getPageContext();
+  const quantityReview = await checkQuantityBeforeSave({ itemId: 'supplementLogs:' + supplementTypeId,
+    date, qty, unit: '봉', stage: '영양제' }, () => !page || page.isCurrent());
+  if (!quantityReview.approved || (page && !page.isCurrent())) throw Error('입고 저장을 취소했습니다.');
   const stockRef = doc(db, 'supplementStock', supplementTypeId);
   const logRef = doc(collection(db, 'supplementLogs'));
 
@@ -759,6 +764,7 @@ async function saveIncomingCellWithCommand(supplementTypeId, date, qty, staffNam
       timestamp: serverTimestamp(),
       supplementTypeId,
       type: 'in',
+      ...(quantityReview.review ? { statsQuantityReview: quantityReview.review } : {}),
       qty,
       before,
       after,

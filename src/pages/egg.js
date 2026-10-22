@@ -1,4 +1,5 @@
 import { registerCloseModal } from '../utils/modalManager.js';
+import { checkQuantityBeforeSave } from '../services/statsAutomationRuntime.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocsFromServer as getDocs, doc, getDocFromServer as getDoc, query, orderBy, limit
@@ -371,6 +372,9 @@ function showEggModal(type, eggStock) {
     if(page&&!page.isCurrent())return;
 
     const delta = isIn ? qty : -qty;
+    const quantityReview = await checkQuantityBeforeSave({ itemId: 'eggLogs:egg', name: '계란', date,
+      qty, unit: '개', stage: isIn ? '계란' : '계란 출고', direction: isIn ? 'supply' : 'usage' }, () => !page || page.isCurrent());
+    if (!quantityReview.approved || (page && !page.isCurrent())) return;
     const before = eggStock.currentQty;
     const after = before + delta;
 
@@ -384,6 +388,7 @@ function showEggModal(type, eggStock) {
       date,
       timestamp: new Date(),
       type: isIn ? 'in' : 'out',
+      ...(quantityReview.review ? { statsQuantityReview: quantityReview.review } : {}),
       qty: delta,
       before,
       after,

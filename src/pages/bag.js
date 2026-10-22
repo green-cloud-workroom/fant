@@ -1,4 +1,5 @@
 import { registerCloseModal } from '../utils/modalManager.js';
+import { checkQuantityBeforeSave } from '../services/statsAutomationRuntime.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocsFromServer as getDocs, doc, query, orderBy, limit, getDocFromServer as getDoc, where, writeBatch
@@ -574,6 +575,9 @@ function showBagIncomingModal(bag) {
     if(page&&!page.isCurrent())return;
 
     const before = bag.currentQty || 0;
+    const quantityReview = await checkQuantityBeforeSave({ itemId: 'bagLogs:' + bag.id, name: bag.name,
+      date, qty, unit: '장', stage: '봉투' }, () => !page || page.isCurrent());
+    if (!quantityReview.approved || (page && !page.isCurrent())) return;
     const after = before + qty;
 
     const patch = {
@@ -587,6 +591,7 @@ function showBagIncomingModal(bag) {
       bagTypeId: bag.id,
       bagNameSnapshot: bag.name,
       type: 'incoming',
+      ...(quantityReview.review ? { statsQuantityReview: quantityReview.review } : {}),
       qty,
       before,
       after,
