@@ -62,6 +62,7 @@ for (const instant of [true, false]) test('three tabs render confirmed facts, pr
     assert.equal(e.page.viewForTest().events[0].qty, 120);
     assert.match(e.nodes.mainContent.textContent, /실적·유형 미확인 1건/);
     const reads = e.state.reads.length;
+    assert.ok(!e.state.reads.some(r => /stockLedger|statsCorrections/.test(r.path)), 'product output remains independent of correction evidence');
     await e.page.renderStats();
     assert.equal(e.state.reads.length, reads);
     e.fire('[data-tab="supply"]'); await e.ready('supply');
@@ -71,7 +72,9 @@ for (const instant of [true, false]) test('three tabs render confirmed facts, pr
     assert.equal(e.page.viewForTest().events[0].qty, 1);
     assert.match(e.nodes.mainContent.textContent, /생산일·변동일 평균/);
     assert.equal(e.state.writes.length, 0);
-    assert.ok(!e.state.reads.some(r => /equipment|forecast|Transfer|stockLedger/.test(r.path)));
+    assert.ok(!e.state.reads.some(r => /equipment|forecast|Transfer/.test(r.path)));
+    assert.ok(e.state.reads.some(r => r.path === 'stockLedger'), 'material statistics validate ledger evidence');
+    assert.ok(e.state.reads.some(r => r.path === 'statsCorrections'));
   } finally { await e.cleanup(); }
 });
 
@@ -296,5 +299,42 @@ test('supply UI and Excel show an amended quantity and both source references wh
     await e.page.download(false);
     assert.ok(JSON.stringify(e.downloads[0].book.sheets).includes('82.973'));
     assert.equal(JSON.stringify(e.state.rows), before); assert.equal(e.state.writes.length, 0);
+  } finally { await e.cleanup(); }
+});
+
+test('validated exclusions and production returns agree across table, chart and export; failed evidence blocks both tabs', async () => {
+  const e = await setup();
+  try {
+    const cancelled = { ...e.state.rows.meatLogs[0], id: 'cancelled', delta: 960000 };
+    const deduction = { ...e.state.rows.meatLogs[0], id: 'deduction', type: 'productionDeduct', delta: -1000 };
+    const returned = { ...e.state.rows.meatLogs[0], id: 'return', type: 'repackedIn', delta: 100, batchId: 'productionCompletion:2026-09-02' };
+    e.state.rows.meatLogs.push(cancelled, deduction, returned);
+    const c = (kind, row) => ({ id: kind, schemaVersion: 1, status: 'active', changesStock: false, kind,
+      source: 'meatLogs/' + row.id, reason: '검증된 정정 근거', evidence: [{ path: 'meatLogs/' + row.id, expected: { ...row } }] });
+    e.state.rows.statsCorrections = [c('excludeSupply', cancelled), c('includeUsage', returned)];
+    const before = JSON.stringify(e.state.rows);
+    await e.page.renderStats(); e.fire('[data-tab="supply"]'); await e.ready('supply');
+    assert.equal(e.page.viewForTest().groups[0].total, 10);
+    assert.match(e.document.getElementById('statsDetailArea').textContent, /취소 입고 제외/);
+    await e.page.download(false);
+    assert.ok(!e.page.viewForTest().events.some(r => r.source === 'meatLogs/cancelled'));
+    assert.ok(JSON.stringify(e.downloads[0].book).includes('검증된 정정 근거'));
+    e.fire('[data-tab="usage"]'); await e.ready('usage');
+    const scope = e.document.querySelector('[data-visual-select="scope"]');
+    Object.defineProperty(scope, 'value', { value: JSON.stringify(['재고 순차감', 'kg']), configurable: true });
+    e.fire('[data-visual-select="scope"]', 'change');
+    assert.equal(e.page.viewForTest().groups[0].total, .9);
+    const chart = e.chartInstances.filter(c => !c.destroyed).at(-1).config;
+    assert.ok(chart.data.datasets[0].data.every(q => Math.abs(q - .9) < 1e-12));
+    await e.page.download(false);
+    assert.ok(JSON.stringify(e.downloads.at(-1).book).includes('통계 정정'));
+    assert.equal(JSON.stringify(e.state.rows), before); assert.equal(e.state.writes.length, 0);
+    // A later source edit invalidates the preserved evidence. No stale export is possible.
+    e.state.rows.meatLogs.find(r => r.id === 'return').delta++;
+    await e.state.notify('meatLogs');
+    for (let i = 0; i < 50 && !e.nodes.mainContent.dataset.pageFailed; i++) await new Promise(resolve => setTimeout(resolve, 30));
+    assert.match(e.nodes.mainContent.textContent, /통계 자료를 불러오지 못했습니다/);
+    assert.ok(e.document.getElementById('statsDownloadBtn').disabled);
+    assert.equal(e.state.writes.length, 0);
   } finally { await e.cleanup(); }
 });

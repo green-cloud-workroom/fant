@@ -127,7 +127,11 @@ async function loadStatsTab(tab, scope = { getDocs }, range = currentRange()) {
     return { productions, frozenLogs, frozenProducts };
   }
   const names = tab === 'supply' ? ['meatLogs', 'bagLogs', 'eggLogs', 'supplementLogs'] : ['productions', 'meatLogs', 'bagLogs', 'eggLogs', 'supplementLogs'];
-  const tasks = names.map(name => readRows(scope, name, range, tab === 'supply'));
+  // Correction evidence can follow its source outside the selected dates.
+  // Read complete historical logs; apply the date cohort only in the projection.
+  const tasks = names.map(name => readMaster(scope, name));
+  names.push('statsCorrections', 'stockLedger');
+  tasks.push(readMaster(scope, 'statsCorrections'), readMaster(scope, 'stockLedger'));
   tasks.push(readMaster(scope, 'supplementTypes'));
   names.push('supplementTypes');
   if (tab === 'supply') {
@@ -205,8 +209,12 @@ function buildView(tab, data, range, agg, filter = matches) {
     const projection = supplyEvents(data, range), events = projection.events.filter(filter);
     const groups = projection.summaries.filter(filter), registrations = projection.registrations.filter(filter);
     return { events, groups, registrationGroups: projection.registrationSummary.filter(filter), summary: '외부 입고 기록 ' + events.length + '건 · 품목·단위별 ' + groups.length + '항목 · 기간 내 입고 완료처리 ' + registrations.length + '건',
-      note: '입고 기록일 기준이며 실제 도착일이 보장되지 않습니다. 전처리·재포장·조정 제외. 마지막 입고와 경과일은 조회 종료일 기준, 평균 간격은 조회기간 내 서로 다른 입고일 사이입니다. 기간 내 기록이 없으면 입고 0으로 단정하지 않습니다.',
+      note: '입고 기록일 기준이며 실제 도착일이 보장되지 않습니다. 검증된 취소는 제외하고 입고 사유의 조정은 별도 근거로 반영합니다. 확인 대기 건이 있는 합계는 원본 기록 기준 잠정값입니다. 마지막 입고와 경과일은 조회 종료일 기준, 평균 간격은 조회기간 내 서로 다른 입고일 사이입니다.',
       sections: [
+        section('통계 정정·확인 대기', ['원본 기록', '처리', '사유'], [
+          ...projection.adjustments.map(c => [c.source, c.kind === 'excludeSupply' ? '취소 입고 제외' : '입고 분류 반영', c.reason]),
+          ...projection.pending.map(c => [c.source, '확인 대기 · 관련 자동 판단 보류', c.reason]),
+        ], '현재 재고와 원본 이력은 변경하지 않습니다. 확인 대기는 오류로 확정한 것이 아닙니다.'),
         section('원료·봉투 입고', ['품목', '구분', '단위', '기간 입고 합계', '건당 평균', '입고 건수', '입고일수', '평균 간격(일)', '최소 간격', '최대 간격', '간격 표본 수', '종료일 기준 마지막 입고', '경과일'],
           groups.map(g => [g.name, g.stage, g.unit, g.total, g.amounts.mean, g.amounts.count, g.interval.days, ...distribution(g.interval), g.lastDate, g.elapsed])),
         periodSection(events, agg),
@@ -225,7 +233,7 @@ function buildView(tab, data, range, agg, filter = matches) {
   const calculated = events.filter(e => e.stage === '계산상 사용량');
   const productGroups = summarize(calculated.map(e => ({ ...e, itemId: JSON.stringify([e.itemId, e.product]), stage: e.product })), range);
   return { events, groups, productGroups, summary: '계산상 원료 사용 기록 ' + calculated.length + '건 · 재고 변동 기록 ' + (events.length - calculated.length) + '건 · 수량·스냅샷 누락 ' + projection.missing.length + '건',
-    note: '계산상 사용량은 실적 확인 생산의 당시 레시피 스냅샷 기준입니다. 재고 순차감·계란 출고와 실제 투입 측정량은 다릅니다. 순차감은 복원을 부호대로 반영해 음수도 표시하며, 계산상 사용량과 더하지 않습니다. 차감일은 생산일과 다를 수 있습니다.',
+    note: '계산상 사용량은 실적 확인 생산의 당시 레시피 스냅샷 기준입니다. 순차감은 검증된 자동 재포장 반환·복원을 부호대로 반영합니다. 확인 대기가 있는 품목의 합계는 잠정값이며 실제 투입 측정량과 다릅니다. 계산상 사용량과 더하지 않습니다.',
     sections: [
       section('원료·봉투 사용 내역', ['품목', '기준', '단위', '기간 합계', '달력 일평균', '생산일·변동일 평균', '생산일·변동일수', '기록 수'],
         groups.map(g => [g.name, g.stage, g.unit, g.total, g.calendarMean, g.workingMean, g.interval.days, g.events.length]),
@@ -234,6 +242,8 @@ function buildView(tab, data, range, agg, filter = matches) {
       section('제품별 계산상 원료 사용량', ['원료', '제품', '단위', '계산상 사용량'], productGroups.map(g => [g.name, g.stage, g.unit, g.total])),
       section('사용량 근거 기록', ['기준 날짜', '품목', '기준', '수량', '단위', '원본 기록', '제품·생산 연결', '비고'], eventRows(events)),
       section('집계 확인 사항', ['구분', '원본 기록'], [
+        ...projection.classifications.map(c => [c.classification === 'test' ? '테스트 확인 · 사용 통계 제외 · ' + c.reason : '실사 보정 확인 · 실제 사용량 합산 제외 · ' + c.reason, c.source]),
+        ...projection.pending.map(c => ['확인 대기 · ' + c.reason, c.source]),
         ...projection.missing.map(source => ['수량·스냅샷 누락', source]),
         ...projection.unconfirmed.filter(filter).map(r => ['실적 미확인 · 계산상 사용량 제외', r.source]),
       ], '품목 ID가 없는 원료는 이름만으로 다른 생산의 원료와 합치지 않습니다. 미확인·누락 값을 0으로 대체하지 않습니다.'),

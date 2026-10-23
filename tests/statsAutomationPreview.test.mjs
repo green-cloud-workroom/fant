@@ -36,3 +36,14 @@ test('one denied source aborts complete preview instead of treating missing stoc
   e.state.failures.add('eggStock');
   await assert.rejects(preview.loadAutomationPreview()); assert.equal(e.state.writes.length, 0);
 });
+
+test('following stock adjustment reason and actor render as escaped text in preview', async () => {
+  const e=await environment({session:true}),page=await e.load('src/pages/statsAutomationPreview.js');
+  const html=page.previewMarkup({range:{startDate:'2026-10-01',endDate:'2026-10-22'},held:[],weekly:null,
+    candidates:[{kind:'quantity',title:'수량 확인',severity:'review',recipientRoles:['office'],evidence:{
+      date:'2026-10-22',qty:47.5,unit:'kg',baseline:960,samples:7,source:'meatLogs/original',
+      followingAdjustments:[{at:'2026-10-22T05:14:33Z',before:47.5,after:475,unit:'kg',source:'meatLogs/adjust',staff:'<담당자>',reason:'<script>사유</script>'}]
+    }}]});
+  assert.match(html,/47.5kg → 475kg/);assert.match(html,/후속 조정/);
+  assert.ok(html.includes('&lt;script&gt;사유&lt;/script&gt;'));assert.ok(!html.includes('<script>'));
+});

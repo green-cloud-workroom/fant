@@ -2,11 +2,12 @@
 // No production deployment or enabling is performed by that script.
 import { createHash } from 'node:crypto';
 import { getAuth } from 'firebase-admin/auth';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { getFirestore, FieldValue, type QuerySnapshot } from 'firebase-admin/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { validDate } from './statsLogic.js';
 import { evaluateStatsAutomation, reconcileIssues, provenResolutions, confirmPayload, deliveryIdentity,
-  AUTOMATION_VERSION, AUTOMATION_SOURCES, planStatsDeliveries, confirmAdjustmentPatch } from './statsAutomation.js';
+  AUTOMATION_VERSION, AUTOMATION_SOURCES, planStatsDeliveries, confirmAdjustmentPatch, followingStockAdjustments } from './statsAutomation.js';
 
 type Data = Record<string, any>;
 type Recipient = { uid: string; name: string; role: 'office' | 'owner' };
@@ -130,6 +131,47 @@ export async function runStatsShadow() {
 }
 export const productionStatsShadowDaily = onSchedule({ region: REGION, schedule: '0 9 * * *',
   timeZone: 'Asia/Seoul', maxInstances: 1 }, async () => { await runStatsShadow(); });
+
+// This path can update existing context only. It never evaluates or sends a new alert.
+export async function enrichStatsForAdjustment(logId: string) {
+  if (!logId || logId.includes('/')) return { updated: 0, created: 0 };
+  const db = getFirestore();
+  return db.runTransaction(async tx => {
+    const [control, adjustment] = await Promise.all([tx.get(configRef()), tx.get(db.doc('meatLogs/' + logId))]);
+    const row = adjustment.data();
+    if (!deliveryAllowed(control.data() || {}) || row?.type !== 'adjust' || !row.meatStockId || !row.meatTypeId || !row.stage) return { updated: 0, created: 0 };
+    const stockLogs = await tx.get(db.collection('meatLogs').where('meatStockId', '==', row.meatStockId));
+    const data: { meatLogs: Data[] } = { meatLogs: stockLogs.docs.map(s => ({ ...s.data(), id: s.id })) };
+    const items = new Map<string, Data>();
+    for (const source of data.meatLogs) {
+      if (source.type !== 'frozenIncoming' || ['deleted', 'cancelled', 'canceled'].includes(source.status)) continue;
+      const reference = 'meatLogs/' + source.id;
+      const following: Data[] = followingStockAdjustments(data, { source: reference }, todayKST());
+      if (!following.some(a => a.source === 'meatLogs/' + logId)) continue;
+      const key = JSON.stringify(['quantity', [reference, 'meatLogs:' + source.meatTypeId, '원료']]);
+      items.set(key, { kind: 'quantity', evidence: { followingAdjustments: following } });
+    }
+    const keys = [...items.keys()], snapshots: QuerySnapshot[] = [];
+    for (let start = 0; start < keys.length; start += 10) snapshots.push(await tx.get(
+      db.collection('confirmRequests').where('statsSource.key', 'in', keys.slice(start, start + 10))));
+    let updated = 0;
+    for (const snapshot of snapshots) for (const request of snapshot.docs) {
+      const old = request.data(), item = items.get(old.statsSource?.key);
+      if (!item || old.requesterUid !== 'system:production-stats' || old.boardPublic !== false
+        || old.statsSource?.version !== AUTOMATION_VERSION || !old.approverUid
+        || request.id !== 'stats-' + hash(deliveryIdentity(old.statsSource, old.approverUid))) continue;
+      const patch = confirmAdjustmentPatch(old, item);
+      if (patch) { tx.update(request.ref, { ...patch, updatedAt: FieldValue.serverTimestamp() }); updated++; }
+    }
+    return { updated, created: 0 };
+  });
+}
+
+export const onProductionStatsAdjustmentCreated = onDocumentCreated({ region: REGION,
+  document: 'meatLogs/{logId}', maxInstances: 1, retry: true }, async event => {
+  if (event.data?.data()?.type !== 'adjust') return;
+  return enrichStatsForAdjustment(event.params.logId);
+});
 
 async function resolveDeliveredIssue(key: string, episode: number, config: Data) {
   if (!deliveryAllowed(config)) return;

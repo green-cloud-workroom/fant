@@ -1,6 +1,7 @@
 // Read-only statistical projections. Quantities come from historical records,
 // never from today's recipe, conversion, or stock balance.
 import { applyIncomingCorrections } from './incomingCorrections.js';
+import { resolveStatsCorrections, correctedEvent } from './statsCorrections.js';
 const DAY = 86400000;
 export const quantity = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
 export function validDate(value) {
@@ -98,7 +99,8 @@ export function productionEvents(data, range) {
   }
   return { events, unconfirmed, confirmed };
 }
-function logEvents(data) {
+function logEvents(data, corrections) {
+  const excluded = new Set(corrections.filter(c => c.kind === 'excludeSupply').map(c => c.source));
   const meatLogs = applyIncomingCorrections(data.meatLogs || []);
   const supplements = new Map((data.supplementTypes || []).map(s => [s.id, s.name]));
   const specs = [
@@ -108,16 +110,19 @@ function logEvents(data) {
     ['supplementLogs', 'in', 'supplementTypeId', null, '봉', 1, '영양제'],
   ];
   return specs.flatMap(([collection, type, idField, nameField, unit, scale, stage]) => unique(collection === 'meatLogs' ? meatLogs : data[collection] || [])
-    .filter(log => log.type === type && !['deleted', 'cancelled', 'canceled'].includes(log.status))
+    .filter(log => log.type === type && !excluded.has(collection + '/' + log.id) && !['deleted', 'cancelled', 'canceled'].includes(log.status))
     .map(log => ({ itemId: `${collection}:${idField ? log[idField] || 'unlinked:' + log.id : 'egg'}`,
       name: log[nameField] || (collection === 'supplementLogs' ? supplements.get(log.supplementTypeId) || log.supplementTypeId : null) || (stage === '계란' ? '계란' : `품목 미연결 (${log.id})`),
       date: log.date, qty: quantity(collection === 'meatLogs' ? log.delta : log.qty), unit, scale, stage, source: `${collection}/${log.id}`,
       note: log.incomingCorrection ? '입고량 정정: ' + log.incomingCorrection.originalQtyG / 1000 + 'kg → ' + log.incomingCorrection.correctedQtyG / 1000
         + 'kg · 재고 변동 없음 · 근거 meatLogs/' + log.incomingCorrection.id + ' · ' + log.incomingCorrection.reason : '' }))
-    .map(e => ({ ...e, qty: e.qty === null ? null : e.qty * e.scale })));
+    .map(e => ({ ...e, qty: e.qty === null ? null : e.qty * e.scale })))
+    .concat(corrections.filter(c => c.kind === 'includeSupply').map(c => correctedEvent(c, data)));
 }
 export function supplyEvents(data, range) {
-  const candidates = logEvents(data);
+  const corrections = resolveStatsCorrections(data), candidates = logEvents(data, corrections);
+  const pending = corrections.filter(c => c.kind === 'hold' && c.metric === 'supply').map(c => ({ ...c,
+    event: candidates.find(e => e.source === c.source) })).filter(c => c.event && c.event.date <= range.endDate);
   const invalid = e => e.qty === null || e.qty <= 0 || !validDate(e.date);
   const excludedReceipts = candidates.filter(e => invalid(e) && (!validDate(e.date) || inRange(e.date, range)));
   const history = candidates.filter(e => !invalid(e) && e.date <= range.endDate && e.date <= range.today);
@@ -149,10 +154,15 @@ export function supplyEvents(data, range) {
     if (!registrationGroups.has(row.itemId)) registrationGroups.set(row.itemId, { name: row.name, stage: row.stage, rows: [] });
     registrationGroups.get(row.itemId).rows.push(row);
   }
-  return { events, summaries, registrations, excludedSchedules, excludedReceipts,
+  const adjustments = corrections.filter(c => c.kind !== 'hold' && c.kind.includes('Supply')).filter(c => {
+    const [collection, id] = c.source.split('/'); return inRange(data[collection]?.find(r => r.id === id)?.date, range);
+  });
+  return { events, summaries, registrations, excludedSchedules, excludedReceipts, adjustments, pending,
     registrationSummary: [...registrationGroups.values()].map(g => ({ ...g, prior: sample(g.rows.map(r => r.prior)), processing: sample(g.rows.map(r => r.processing)) })) };
 }
 export function usageEvents(data, range) {
+  const corrections = resolveStatsCorrections(data);
+  const excluded = new Set(corrections.filter(c => c.kind === 'excludeUsage').map(c => c.source));
   const { confirmed, unconfirmed } = productionEvents({ productions: data.productions }, range);
   const events = [], missing = [];
   for (const p of confirmed) {
@@ -172,6 +182,7 @@ export function usageEvents(data, range) {
     ['eggLogs', ['out'], null, null, '개', 1, '계란 출고'],
     ['supplementLogs', ['autoDeduct'], 'supplementTypeId', null, '봉', 1, '영양제 순차감'],
   ]) for (const log of unique(data[collection] || [])) {
+    if (excluded.has(collection + '/' + log.id)) continue;
     if (!types.includes(log.type) || !inRange(log.date, range) || log.date > range.today || ['deleted', 'cancelled', 'canceled'].includes(log.status)) continue;
     const qty = quantity(collection === 'meatLogs' ? log.delta : log.qty);
     if (qty === null) { missing.push(`${collection}/${log.id}`); continue; }
@@ -180,5 +191,14 @@ export function usageEvents(data, range) {
       date: log.date, qty: -qty * scale, unit, stage, product: log.relatedProductionId || '제품 연결 미기록',
       source: `${collection}/${log.id}`, note: '기록일 기준 · 실제 투입 측정량과 다름' });
   }
-  return { events, missing, unconfirmed };
+  const additions = corrections.filter(c => c.kind === 'includeUsage').map(c => correctedEvent(c, data))
+    .filter(e => inRange(e.date, range) && e.date <= range.today);
+  events.push(...additions);
+  const pending = corrections.filter(c => c.kind === 'hold' && c.metric === 'usage').filter(c => {
+    const [collection, id] = c.source.split('/'); return inRange(data[collection]?.find(r => r.id === id)?.date, range);
+  });
+  const classifications = corrections.filter(c => ['excludeUsage', 'classifyUsage'].includes(c.kind)).filter(c => {
+    const [collection, id] = c.source.split('/'); return inRange(data[collection]?.find(r => r.id === id)?.date, range);
+  });
+  return { events, missing, unconfirmed, pending, adjustments: additions, classifications };
 }

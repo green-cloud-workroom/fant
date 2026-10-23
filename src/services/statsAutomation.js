@@ -5,7 +5,7 @@ export const AUTOMATION_VERSION = 'stats-shadow-v1';
 // Release requires a separate reviewed code change. No UI/config can enable delivery.
 export const DELIVERY_RELEASED = false;
 export const AUTOMATION_SOURCES = Object.freeze(['productions', 'frozenLogs', 'frozenProducts', 'meatLogs',
-  'bagLogs', 'eggLogs', 'supplementLogs', 'supplementTypes', 'schedules', 'bagTypes', 'eggStock']);
+  'bagLogs', 'eggLogs', 'supplementLogs', 'supplementTypes', 'schedules', 'bagTypes', 'eggStock', 'stockLedger', 'statsCorrections']);
 export const DEFAULT_POLICY = Object.freeze({ lookbackDays: 90, minIntervals: 5, minAmounts: 6,
   anomalyRatio: 10, registrationBufferDays: 2, escalationWorkingDays: 2 });
 const number = x => typeof x === 'number' && Number.isFinite(x);
@@ -113,7 +113,10 @@ function comparableUsage(data, usage) {
 }
 function stockUsageUncertain(stock, data, usage) {
   const collection = stock.itemId.split(':')[0], types = collection === 'eggLogs' ? ['out'] : ['autoDeduct', 'autoDeductReverse'];
-  return usage.missing.some(source => source.startsWith(collection + '/'))
+  return [...usage.pending, ...usage.classifications.filter(c => c.classification === 'stockReconciliation')].some(c => {
+    const [name, id] = c.source.split('/'), row = data[name]?.find(r => r.id === id);
+    return name === collection && stock.itemId === name + ':' + (row?.bagTypeId || (name === 'eggLogs' ? 'egg' : ''));
+  }) || usage.missing.some(source => source.startsWith(collection + '/'))
     || (data[collection] || []).some(log => types.includes(log.type)
       && !['deleted', 'cancelled', 'canceled'].includes(log.status) && !validDate(log.date));
 }
@@ -125,7 +128,7 @@ export function weeklySummary(data, today) {
   return { key: 'weekly:' + startDate, startDate, endDate, kind: '공유',
     production: clean(summarize(production.events, range)), supply: clean(summarize(supply.events, range)),
     usage: clean(summarize(usage.events, range)),
-    unknown: { production: production.unconfirmed.length, supply: supply.excludedReceipts.length, usage: usage.missing.length },
+    unknown: { production: production.unconfirmed.length, supply: supply.excludedReceipts.length + supply.pending.length, usage: usage.missing.length + usage.pending.length },
     note: '단계·단위를 합산하지 않음. 계산상 사용량과 재고 순차감은 별도. 기록 없음은 사용 0의 증거가 아님.' };
 }
 
@@ -135,10 +138,14 @@ export function evaluateStatsAutomation(data, { today, complete = false, policy 
   if (!complete || AUTOMATION_SOURCES.some(name => !Array.isArray(data[name]))) return { version: AUTOMATION_VERSION, mode: 'shadow', range, candidates,
     held: [{ reason: '전체 원본 읽기 완료 확인 필요' }], weekly: null, deliveryEnabled: false };
   const supply = supplyEvents(data, range), usage = usageEvents(data, range);
+  const pendingSupply = new Set(supply.pending.map(c => c.event.itemId));
+  held.push(...supply.pending.map(c => ({ source: c.source, itemId: c.event.itemId, reason: c.reason })),
+    ...usage.pending.map(c => ({ source: c.source, reason: c.reason })));
   const schedules = data.schedules || [];
   for (const group of supply.summaries) {
     if (!linked(group.events[0]?.itemId)) continue;
     const itemId = group.events[0].itemId;
+    if (pendingSupply.has(itemId)) continue;
     if (supply.excludedReceipts.some(e => e.itemId === itemId)) {
       held.push({ itemId, name: group.name, reason: '입고 이력에 유효하지 않은 수량·날짜 포함' }); continue;
     }
@@ -163,6 +170,7 @@ export function evaluateStatsAutomation(data, { today, complete = false, policy 
       comparisons.get(key).push(event);
     }
     for (const event of events) {
+      if (pendingSupply.has(event.itemId)) continue;
       const assessment = quantityAssessment(event, comparisons.get(eventKey(event)), policy);
       if (assessment.state === 'review') candidates.push(issue('quantity', [event.source, event.itemId, event.stage],
         event.name + ' 수량 확인', { ...assessment, source: event.source, itemId: event.itemId, qty: event.qty,
@@ -171,7 +179,7 @@ export function evaluateStatsAutomation(data, { today, complete = false, policy 
   }
   for (const stock of currentStocks(data)) {
     if (stockUsageUncertain(stock, data, usage)) {
-      held.push({ itemId: stock.itemId, name: stock.name, reason: '기간 내 미확인·누락 이력 존재: 부분 사용량으로 소진 예측 안 함' }); continue;
+      held.push({ itemId: stock.itemId, name: stock.name, reason: '실사 보정 또는 미확인·누락 이력: 부분 사용량으로 소진 예측 안 함' }); continue;
     }
     const events = usage.events.filter(e => e.itemId === stock.itemId && e.unit === stock.unit);
     const total = events.reduce((sum, e) => sum + e.qty, 0);
@@ -275,7 +283,8 @@ export function planStatsDeliveries(issues, weekly, { today, activationDate }) {
   if (!validDate(activationDate) || activationDate > today) return [];
   const rows = Object.values(issues).filter(row => row.state === 'open' && row.evaluationState !== 'held'
     && (row.kind !== 'quantity' || row.evidence.date >= activationDate));
-  if (new Date(today).getUTCDay() === 1 && weekly && weekly.endDate >= activationDate) rows.push({
+  if (new Date(today).getUTCDay() === 1 && weekly && weekly.endDate >= activationDate
+    && !weekly.unknown?.supply && !weekly.unknown?.usage) rows.push({
     key: weekly.key, kind: 'weekly', title: '지난주 생산·원료 운영 요약', evidence: weekly,
     episode: 1, escalation: 0, target: 'stats', recipientRoles: ['office', 'owner'] });
   return rows;
@@ -285,6 +294,7 @@ export function provenResolutions(previous, data, today) {
   const range = automationRange(today), supply = supplyEvents(data, range), usage = usageEvents(data, range);
   return Object.values(previous).filter(row => {
     if (row.state !== 'open') return false;
+    if (supply.pending.some(c => c.event.itemId === row.evidence.itemId)) return false;
     if (row.kind === 'registration') return (data.schedules || []).some(s => s.status === 'scheduled'
       && scheduleItem(s) === row.evidence.itemId && validDate(s.date) && s.date >= today
       && s.date <= addDays(row.evidence.suggestedDate, DEFAULT_POLICY.registrationBufferDays))
@@ -292,6 +302,7 @@ export function provenResolutions(previous, data, today) {
     if (row.kind === 'quantity') {
       const [collection, id] = row.evidence.source.split('/');
       if ((data[collection] || []).some(s => s.id === id && ['deleted', 'cancelled', 'canceled'].includes(s.status))) return true;
+      if (supply.adjustments.some(c => c.kind === 'excludeSupply' && c.source === row.evidence.source)) return true;
       const events = row.evidence.stage === '계산상 사용량' || row.evidence.stage?.includes('차감')
         || row.evidence.stage === '계란 출고' ? comparableUsage(data, usage) : supply.events;
       const event = events.find(e => e.source === row.evidence.source && e.itemId === row.evidence.itemId && e.stage === row.evidence.stage);
