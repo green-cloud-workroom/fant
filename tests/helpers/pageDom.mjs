@@ -29,6 +29,8 @@ export async function pageEnvironment(route,{baselineRef,instrument='',role='off
   if(node.ownerDocument!==document || decorated.has(node))return node;
   decorated.add(node);
   if(node.tagName==='SELECT'){
+    // Native select.options exposes HTMLOptionElement.text even without querying options separately.
+    [...node.options].forEach(decorate);
     Object.defineProperty(node,'selectedIndex',{configurable:true,get(){return [...this.options].findIndex(option=>option.selected);}});
     Object.defineProperty(node,'value',{configurable:true,
       get(){return [...this.options].find(option=>option.selected)?.value||this.options[0]?.value||'';},

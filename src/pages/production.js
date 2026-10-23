@@ -1,3 +1,4 @@
+import {showStatus} from '../utils/statusToast.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
@@ -20,10 +21,15 @@ import {canLeavePage,markFieldsSaved} from '../utils/formDraft.js';
 const productionResource=pageResource('production');
 let productionResourceDate='';
 async function runProductionCommand(callback) {
-  const page=getPageContext();let committed=false;
-  try{return await withReadWorkflow(productionResource,async command=>{command.isCurrent=()=>!page||page.isCurrent();try{return await callback(command);}finally{committed=command.committed;}});}
+  const page=getPageContext();let committed=false,continueWith=null;
+  try{return await withReadWorkflow(productionResource,async command=>{command.isCurrent=()=>!page||page.isCurrent();try{const result=await callback(command);continueWith=result?.continueWith||null;return result;}finally{committed=command.committed;}});}
   catch(error){console.error('[생산 저장]',error);alert((committed?'일부 저장이 완료되었습니다. 중복 저장하지 말고 최신 자료를 확인해주세요. ':'')+error.message);}
-  finally{if(committed && (!page||page.isCurrent()) && !productionResource.blocked)await renderProduction({force:true});}
+  finally{if(committed && (!page||page.isCurrent()) && !productionResource.blocked){
+    await renderProduction({force:true});
+    if(continueWith&&(!page||page.isCurrent())&&selectedDate===continueWith.date){
+      selectedProductionId=null;await showProductionForm(null,continueWith);
+    }
+  }}
 }
 
 let recipes = [];
@@ -575,7 +581,7 @@ async function persistProductionCardOrderWithCommand(command) {
   }
 }
 
-async function showProductionForm(production) {
+async function showProductionForm(production, draft=null) {
   const isNew = !production;
   const canManageProduction = currentUserRole === 'admin' || currentUserRole === 'office';
   const form = document.getElementById('productionForm');
@@ -591,7 +597,7 @@ async function showProductionForm(production) {
               data-name="${getRecipeDisplayName(r)}"
               data-category="${r.category}"
               data-color="${r.color || '#4A7C59'}"
-              ${production?.recipeId === r.id ? 'selected' : ''}>
+              ${(production?.recipeId||draft?.recipeId) === r.id ? 'selected' : ''}>
               ${getRecipeDisplayName(r)}
             </option>
           `).join('')}
@@ -623,6 +629,7 @@ async function showProductionForm(production) {
       <!-- 참고 수치 -->
       <div id="pf_refs" style="font-size:11px;color:#888;margin-bottom:12px;"></div>
 
+      ${isNew&&canManageProduction?`<label style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><input type="checkbox" id="pf_continue" ${draft?'checked':''} />저장 후 같은 제품 계속 입력</label>`:''}
       ${canManageProduction ? `<button class="btn-primary" id="btnSaveProduction" style="width:100%;">${isNew ? '저장' : '수정'}</button>` : ''}
     </div>
   `;
@@ -655,7 +662,7 @@ async function showProductionForm(production) {
 
   function renderProductionUnitControl(recipe) {
     const presets = getUnitPresets(recipe);
-    const currentQty = production?.productionUnitQty;
+    const currentQty = production?.productionUnitQty ?? draft?.qty;
     const hasCurrentQty = currentQty !== undefined && currentQty !== null && currentQty !== '';
     const allowLegacyEdit = !isNew && hasCurrentQty;
     const unitName = getProductionUnitName(recipe);
@@ -691,6 +698,9 @@ async function showProductionForm(production) {
     unitBlocked = false;
     updateSaveButtonState();
 
+    if(draft?.direct&&recipe?.id===draft.recipeId){
+      qtySelect.value='custom';qtyDirectInput.value=draft.qty;qtyDirectInput.style.display='';return;
+    }
     if (allowLegacyEdit && !presets.includes(Number(currentQty))) {
       qtySelect.value = 'custom';
       qtyDirectInput.value = currentQty;
@@ -770,9 +780,6 @@ async function showProductionForm(production) {
 
   function handleQtyModeChange() {
     qtyDirectInput.style.display = qtySelect.value === 'custom' ? '' : 'none';
-    if (qtySelect.value !== 'custom') {
-      qtyDirectInput.value = '';
-    }
     updateIngredients();
     updateConversionCalculation(recipes.find(r => r.id === recipeSelect.value));
   }
@@ -1176,7 +1183,10 @@ async function showProductionForm(production) {
     await applyRoundsAndBatches(selectedDate,command);
     if(!command.isCurrent())return;
     refreshProductionCardsView();
-    alert(isNew ? '저장 완료!' : '수정 완료!');
+    showStatus(isNew ? '저장 완료!' : '수정 완료!');
+    if(isNew&&document.getElementById('pf_continue')?.checked){
+      return {continueWith:{date:selectedDate,recipeId,qty,direct:qtySelect.value==='custom'}};
+    }
   }));
 }
 

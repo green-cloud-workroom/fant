@@ -1,3 +1,4 @@
+import {showStatus} from '../utils/statusToast.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
@@ -913,7 +914,7 @@ function showEditIncomingModal(product, log) {
     closeModal();
     if(!command.isCurrent())return;
     await showProductDetail(product);
-    alert('수정 완료!');
+    showStatus('수정 완료!');
 
  },{roles:['admin','office']});
 });
@@ -933,13 +934,21 @@ async function getFrozenStockByProduct() {
 }
 
 async function showIncomingModal(product) {
+  const page=getPageContext();
   const today = getToday();
   const futureStr = addMonthsKST(18);
+  let previewBag=null;
+  if(product.bagTypeId){
+    try{const snap=await getDoc(doc(db,'bagTypes',product.bagTypeId));
+      if(snap.exists()&&Number.isFinite(Number(snap.data().currentQty)))previewBag={name:snap.data().name||'연결 봉투',qty:Number(snap.data().currentQty)};
+    }catch{/* Preview is optional; the existing save-time server check remains authoritative. */}
+  }
 
   // 샘플세트: 구성품 자동차감 준비
   const isSampleSet = getFrozenProductKind(product) === 'sampleSet';
   const components = isSampleSet ? normalizeComponents(product.components) : [];
   const stockMap = components.length > 0 ? await getFrozenStockByProduct() : {};
+  if(page&&!page.isCurrent())return;
   const getComponentName = (id) => frozenProducts.find(p => p.id === id)?.name || '(삭제된 제품)';
 
   showModal(`
@@ -956,6 +965,7 @@ async function showIncomingModal(product) {
       <label>봉지수 *</label>
       <input type="number" id="m_qty" placeholder="봉지수 입력" />
     </div>
+    ${product.bagTypeId?'<p id="m_bagPreview" role="status" aria-live="polite" style="font-size:12px;margin:8px 0"></p>':''}
     ${components.length > 0 ? `
       <div class="form-group" id="m_compPreview" style="background:#f7f7f7;border-radius:6px;padding:10px 12px;font-size:12.5px;color:#555;">
         세트 수량을 입력하면 구성품 차감 내역이 표시됩니다.
@@ -973,6 +983,16 @@ async function showIncomingModal(product) {
       <button class="btn-primary" id="btnSaveIncoming">입고</button>
     </div>
   `);
+
+  const updateBagPreview=()=>{
+    const el=document.getElementById('m_bagPreview');if(!el)return;
+    if(!previewBag){el.textContent='봉투 재고를 확인하지 못했습니다. 저장 시 다시 확인합니다.';return;}
+    const qty=parseInt(document.getElementById('m_qty').value)||0;
+    el.textContent=qty>0?`${previewBag.name} · 현재 ${previewBag.qty}장 · 필요 ${qty}장 · 예상 잔량 ${previewBag.qty-qty}장${qty>previewBag.qty?' (부족)':''}`:`${previewBag.name} · 현재 ${previewBag.qty}장 (저장 시 최신 재고 재확인)`;
+    el.style.color=qty>previewBag.qty?'#b33333':'#555';
+  };
+  document.getElementById('m_qty').addEventListener('input',updateBagPreview);
+  updateBagPreview();
 
   // 구성품 차감 미리보기
   if (components.length > 0) {
@@ -1169,7 +1189,7 @@ async function showIncomingModal(product) {
     closeModal();
     if(!command.isCurrent())return;
     await showProductDetail(product);
-    alert('입고 등록 완료!');
+    showStatus('입고 등록 완료!');
 
  },{roles:['admin','office','production']});
 });
