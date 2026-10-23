@@ -1,0 +1,1 @@
+import"./index-ma4KNorl.js";import"./statsLogic-DzOJ9VIB.js";import"./statsAutomation-iM-YCgy0.js";async function e(e,t=()=>!0){return{approved:!0,review:null}}export{e as t};
