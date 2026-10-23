@@ -17,11 +17,28 @@ export function bindMovementForm({db,name,filter,onCancel,reasonInput,filterInpu
   const kind=document.getElementById('movement_kind'),source=document.getElementById('movement_source'),group=document.getElementById('movement_source_group'),host=kind?.closest('.modal-overlay')||kind?.parentElement?.parentElement;
   const operationId=doc(collection(db,name)).id;let rows=[],revision=0,loading=false;
   const updateReasonUi=()=>{
+    const direction=document.getElementById('m_adjustType');
+    if(direction){
+      if(kind.value==='usage')direction.value='minus';
+      if(kind.value==='receipt')direction.value='plus';
+      direction.disabled=['usage','receipt','cancel'].includes(kind.value);
+    }
+    const signed=document.getElementById('sup_adj_qty');
+    if(signed){
+      const fixed=['usage','receipt'].includes(kind.value);
+      signed.readOnly=kind.value==='cancel';
+      if(fixed&&signed.value!=='')signed.value=Math.abs(Number(signed.value));
+      if(fixed)signed.setAttribute('min','1');else signed.removeAttribute('min');
+      signed.placeholder=fixed?'수량 입력 (봉)':'증가: +5  감소: -3';
+      const label=signed.closest('.form-group')?.querySelector('label');
+      if(label)label.textContent=fixed?'수량(봉) *':'증감(봉) *';
+    }
     const input=document.getElementById('movement_reason')||reasonInput,required=movementReasonRequired(kind?.value);
     if(input){
       input.required=required;
       const label=input.closest('.form-group')?.querySelector('label');
-      if(label)label.textContent=required?'처리 사유 *':'처리 사유 (선택)';
+      if(label)label.textContent=required?'처리 사유 *':input.id==='m_note'||input.id==='m_memo'?'비고·사유 (선택)':'처리 사유 (선택)';
+      input.maxLength=200;
       input.placeholder=required?'실사 보정·취소·테스트 사유를 입력해주세요':'필요한 경우에만 입력해주세요';
     }
     const hint=document.getElementById('movement_hint');

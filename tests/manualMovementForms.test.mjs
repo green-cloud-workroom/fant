@@ -26,7 +26,7 @@ test('incoming offers receipt or test; a test saves a zero movement without chan
   e.page.showBagIncomingModal(e.state.rows.bagTypes[0]);
   const select=e.document.querySelector('#movement_kind');assert.equal(select.value,'receipt');
   assert(select.querySelector('option[value="cancel"]').hasAttribute('disabled'));
-  e.fill('#movement_kind','test');e.fill('#movement_reason','입력 동작 테스트');e.fill('#m_qty','20');
+  e.fill('#movement_kind','test');e.fill('#m_note','입력 동작 테스트');e.fill('#m_qty','20');
   const staff=e.document.querySelector('#m_staff');staff.innerHTML='<option value="검증" selected>검증</option>';
   await e.fire('#btnSaveBagIncoming');
   assert.equal(e.state.rows.bagTypes[0].currentQty,100,e.alerts.join('\n'));

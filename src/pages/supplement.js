@@ -667,7 +667,8 @@ function openAdjustModal(typeId, typeName, entryDate=getTodayKST(), initialQty=n
   if(initialQty!==null)document.getElementById('sup_adj_qty').value=initialQty;
   document.getElementById('btnSaveSupAdj')?.addEventListener('click', async () => {
     const selection=readMovementForm(getMovement);if(!selection)return;
-    const signedQty = Number(document.getElementById('sup_adj_qty')?.value || '');
+    const enteredQty = Number(document.getElementById('sup_adj_qty')?.value || '');
+    const signedQty = selection.kind==='usage'?-Math.abs(enteredQty):selection.kind==='receipt'?Math.abs(enteredQty):enteredQty;
     const reason = selection.reason;
     const staffName = document.getElementById('sup_adj_staff')?.value || '';
     if (!Number.isFinite(signedQty) || signedQty === 0 || !Number.isInteger(signedQty)) {

@@ -609,7 +609,7 @@ function showCompleteModal(s) {
   const isCountMeatOrder = s.type === 'meat' && isCountIncomingUnit(s.orderedUnit);
   showModal(`
     <h3 class="modal-title">입고 완료 처리 — ${s.itemNameSnapshot}</h3>
-    ${movementFields({incoming:true})}
+    ${movementFields({incoming:true,reasonField:false})}
     <p style="font-size:12px;color:#888;margin-bottom:16px;">발주수량: ${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)}</p>
     <div class="form-group">
       <label>실제 수량 *</label>
@@ -641,7 +641,7 @@ function showCompleteModal(s) {
     </div>
   `);
 
-  const getMovement=bindMovementForm({db,name:s.type==='meat'?'meatLogs':s.type==='bag'?'bagLogs':'eggLogs',filter:{}});
+  const getMovement=bindMovementForm({db,name:s.type==='meat'?'meatLogs':s.type==='bag'?'bagLogs':'eggLogs',filter:{},reasonInput:document.getElementById('m_memo')});
   document.getElementById('btnSaveComplete').addEventListener('click', () => runScheduleCommand(async command=>{
     const {getDoc}=command;
     try {

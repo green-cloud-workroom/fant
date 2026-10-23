@@ -1149,7 +1149,7 @@ function showAddFrozenModal(options = {}) {
 
   showModal(`
     <h3 class="modal-title">${title}</h3>
-    ${movementFields({incoming:true})}
+    ${movementFields({incoming:true,reasonField:false})}
     <div class="form-group">
       <label>${itemLabel} 종류 *</label>
       <select id="m_meatType">
@@ -1191,7 +1191,7 @@ function showAddFrozenModal(options = {}) {
     </div>
   `);
 
-  const getMovement=bindMovementForm({db,name:'meatLogs',filter:{}});
+  const getMovement=bindMovementForm({db,name:'meatLogs',filter:{},reasonInput:document.getElementById('m_note')});
   document.getElementById('btnSaveFrozen').addEventListener('click', async () => {
  return runPageCommand(meatResource,async command=>{
   const {addDoc,recordActivity,recordMeatLog}=commandWrites(command);

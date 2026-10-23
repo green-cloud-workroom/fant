@@ -310,7 +310,7 @@ function showEggModal(type, eggStock) {
 
   showModal(`
     <h3 class="modal-title">계란 ${isIn ? '입고' : '출고'}</h3>
-    ${movementFields({incoming:isIn,allowed:isIn?['receipt','test']:['usage','reconciliation','test'],defaultKind:isIn?'receipt':'usage'})}
+    ${movementFields({incoming:isIn,allowed:isIn?['receipt','test']:['usage','reconciliation','test'],defaultKind:isIn?'receipt':'usage',reasonField:!isIn})}
     <p style="font-size:12px;color:#888;margin-bottom:16px;">현재 재고: ${currentQty}개</p>
     ${outQtyFormGroup}
     <div class="form-group">
@@ -357,7 +357,7 @@ function showEggModal(type, eggStock) {
     });
   }
 
-  const getMovement=bindMovementForm({db,name:'eggLogs',filter:{},onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);const direction=document.getElementById('m_adjustType');if(direction)direction.value=delta>0?'plus':'minus';},reasonInput:document.getElementById('m_reason')});
+  const getMovement=bindMovementForm({db,name:'eggLogs',filter:{},onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);const direction=document.getElementById('m_adjustType');if(direction)direction.value=delta>0?'plus':'minus';},reasonInput:document.getElementById(isIn?'m_note':'m_reason')});
   document.getElementById('btnSaveEgg').addEventListener('click', () => runEggSave(async () => {
     const page=getPageContext();
     const selection=readMovementForm(getMovement);if(!selection)return;

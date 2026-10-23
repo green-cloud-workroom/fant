@@ -524,7 +524,7 @@ function showEditBagModal(bag) {
 function showBagIncomingModal(bag) {
   showModal(`
     <h3 class="modal-title">봉투 입고 등록 — ${bag.name}</h3>
-    ${movementFields({incoming:true})}
+    ${movementFields({incoming:true,reasonField:false})}
     <div class="form-row">
       <div class="form-group">
         <label>수량(장) *</label>
@@ -561,7 +561,7 @@ function showBagIncomingModal(bag) {
     document.getElementById('m_boxCalc').textContent = `${Math.floor(qty / bag.piecesPerBox)}박스`;
   });
 
-  const getMovement=bindMovementForm({db,name:'bagLogs',filter:{bagTypeId:bag.id},onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);document.getElementById('m_adjustType').value=delta>0?'plus':'minus';},reasonInput:document.getElementById('m_reason')});
+  const getMovement=bindMovementForm({db,name:'bagLogs',filter:{bagTypeId:bag.id},onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);document.getElementById('m_adjustType').value=delta>0?'plus':'minus';},reasonInput:document.getElementById('m_note')});
   document.getElementById('btnSaveBagIncoming').addEventListener('click', async () => {
     const page=getPageContext();
     const selection=readMovementForm(getMovement); if(!selection)return;

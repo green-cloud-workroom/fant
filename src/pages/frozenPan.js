@@ -613,7 +613,7 @@ function showBreadPanIncomingModal() {
   }
 
   showModal(`
-    ${movementFields({incoming:true,reasonField:true})}
+    ${movementFields({incoming:true,reasonField:false})}
     <h3 class="modal-title">빵판 입고</h3>
     <div class="form-row">
       <div class="form-group">
@@ -651,7 +651,7 @@ function showBreadPanIncomingModal() {
     </div>
   `);
 
-  const getMovement=bindMovementForm({db,name:'breadPanLogs',filter:()=>({lotId:document.getElementById('m_lot')?.value||''}),filterInputs:[document.getElementById('m_lot')],onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);document.getElementById('m_adjustType').value=delta>0?'plus':'minus';},reasonInput:document.getElementById('m_reason')});
+  const getMovement=bindMovementForm({db,name:'breadPanLogs',filter:()=>({lotId:document.getElementById('m_lot')?.value||''}),filterInputs:[document.getElementById('m_lot')],onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);document.getElementById('m_adjustType').value=delta>0?'plus':'minus';},reasonInput:document.getElementById('m_note')});
   document.getElementById('btnSaveBreadPanIncoming').addEventListener('click', async () => {
  return runPageCommand(frozenPanResource,async command=>{
   const {addDoc}=commandWrites(command);
