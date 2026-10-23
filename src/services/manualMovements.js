@@ -73,11 +73,14 @@ export async function saveManualMovement({db,command,name,stockId,log,selection,
       if(!row.date||row.date>log.date)throw Error('취소일은 원본 기록일보다 빠를 수 없습니다.');
       delta=-movementAmount(row);originalKind=originalMovementKind(row);
       sourceScheduleId=row.manualMovement?.scheduleId||null;
-      if(entered!==delta)throw Error('취소 수량은 원본의 반대 수량이어야 합니다.');
+      // Some old meat lots have fractional grams after recipe conversion.
+      // Computing (remaining + inverse) - remaining can lose a few ULPs.
+      const roundingTolerance=Number.EPSILON*8*Math.max(1,Math.abs(before),Math.abs(before+delta),Math.abs(delta));
+      if(Math.abs(entered-delta)>roundingTolerance)throw Error('취소 수량은 원본의 반대 수량이어야 합니다.');
     }
     const after=before+delta;
     if(!Number.isFinite(after)||after<0)throw Error('처리 후 재고가 음수입니다. 이미 사용한 입고는 전량 취소할 수 없습니다.');
-    const metadata={version:1,kind,reason,enteredAmount:entered,operationId:selection.operationId,
+    const metadata={version:1,kind,reason,enteredAmount:kind==='cancel'?delta:entered,operationId:selection.operationId,
       cancelOf:kind==='cancel'?selection.cancelOf:null,originalKind,changesStock:kind!=='test',scheduleId:scheduleChange?.id||sourceScheduleId};
     const value={...log,reason:kind==='cancel'?`${reason} · 취소 원본: ${name}/${selection.cancelOf}`:reason,
       [name==='meatLogs'?'delta':'qty']:delta,before,after,manualMovement:metadata,uid,
