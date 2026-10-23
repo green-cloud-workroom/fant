@@ -1621,7 +1621,7 @@ function showAdjustModal(id, name, remaining) {
 
     const selection=readMovementForm(getMovement);if(!selection)return;
     const inputVal = document.getElementById('m_actualRemaining').value;
-    const reason = document.getElementById('m_adjustReason').value.trim();
+    const reason = selection.reason;
     const staff = document.getElementById('m_staff').value;
 
     if (inputVal === '' || isNaN(parseFloat(inputVal))) {
@@ -1633,8 +1633,8 @@ function showAdjustModal(id, name, remaining) {
       alert('실제 잔량은 0 이상이어야 합니다.\n잔량이 음수가 될 수 없습니다.');
       return;
     }
-    if (!reason || !staff) {
-      alert('사유와 담당자는 필수입니다.');
+    if (!staff) {
+      alert('담당자는 필수입니다.');
       return;
     }
     const delta = newRemaining - remaining;

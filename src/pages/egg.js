@@ -303,7 +303,7 @@ function showEggModal(type, eggStock) {
   ` : `
     <div class="form-group">
       <label>남은 재고(개) *</label>
-      <input type="number" id="m_remaining" placeholder="실사 후 남은 개수" min="0" max="${currentQty}" />
+      <input type="number" id="m_remaining" placeholder="남은 개수 입력" min="0" max="${currentQty}" />
       <div id="m_outPreview" style="font-size:12px;color:#888;margin-top:4px;">출고량: -</div>
     </div>
   `;
@@ -472,10 +472,10 @@ function showEggAdjustModal(eggStock) {
     const selection=readMovementForm(getMovement);if(!selection)return;
     const type = document.getElementById('m_adjustType').value;
     const qty = parseInt(document.getElementById('m_qty').value);
-    const reason = document.getElementById('m_reason').value.trim();
+    const reason = selection.reason;
     const staff = document.getElementById('m_staff').value;
 
-    if (!qty || !reason || !staff) { alert('조정량, 사유, 담당자는 필수입니다.'); return; }
+    if (!qty || !staff) { alert('조정량과 담당자는 필수입니다.'); return; }
     const today = getToday();
     if (await blockIfClosed(today)) return;
 

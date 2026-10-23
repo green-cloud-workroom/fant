@@ -668,14 +668,10 @@ function openAdjustModal(typeId, typeName, entryDate=getTodayKST(), initialQty=n
   document.getElementById('btnSaveSupAdj')?.addEventListener('click', async () => {
     const selection=readMovementForm(getMovement);if(!selection)return;
     const signedQty = Number(document.getElementById('sup_adj_qty')?.value || '');
-    const reason = document.getElementById('sup_adj_reason')?.value.trim() || '';
+    const reason = selection.reason;
     const staffName = document.getElementById('sup_adj_staff')?.value || '';
     if (!Number.isFinite(signedQty) || signedQty === 0 || !Number.isInteger(signedQty)) {
       alert('수동조정 수량은 0이 아닌 정수로 입력해주세요. (예: +5, -3)');
-      return;
-    }
-    if (!reason) {
-      alert('수동조정 사유를 입력해주세요.');
       return;
     }
     if (!staffName) {

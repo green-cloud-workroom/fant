@@ -1,5 +1,5 @@
 import {collection,doc,getDocsFromServer,query,where,runTransaction,serverTimestamp} from 'firebase/firestore';
-import {MOVEMENT_LABELS,movementAmount,movementKind,cancellableMovement,originalMovementKind} from './manualMovementLogic.js';
+import {MOVEMENT_LABELS,movementAmount,movementKind,cancellableMovement,originalMovementKind,movementReason,movementReasonRequired} from './manualMovementLogic.js';
 
 const specs = {
   meatLogs:{stock:'meatStocks',field:'remaining',keys:['meatTypeId','meatStockId','stage']},
@@ -25,10 +25,10 @@ export async function saveManualMovement({db,command,name,stockId,log,selection,
   const spec=specs[name],kind=selection?.kind;
   if (!spec||!MOVEMENT_LABELS[kind]||!selection?.operationId||!log.date||!Number.isFinite(movementAmount(log))||movementAmount(log)===0
     ||!(log.staff||log.staffName))throw Error('처리 구분·수량·날짜·담당자를 확인해주세요.');
-  const reason=(selection.reason||log.reason||log.note||'').trim();
+  const reason=movementReason(kind, selection.reason||log.reason||log.note||'');
   if(!/^\d{4}-\d{2}-\d{2}$/.test(log.date)||!Number.isFinite(Date.parse(log.date))||new Date(log.date).toISOString().slice(0,10)!==log.date)throw Error('유효한 날짜를 입력해주세요.');
   if(reason.length>200)throw Error('사유는 200자 이내로 입력해주세요.');
-  if (kind!=='receipt'&&!reason)throw Error('처리 사유를 입력해주세요.');
+  if (movementReasonRequired(kind)&&!reason)throw Error('처리 사유를 입력해주세요.');
   const entered=movementAmount(log);
   const identityKey={meatLogs:'meatStockId',bagLogs:'bagTypeId',supplementLogs:'supplementTypeId',breadPanLogs:'lotId',frozenPanLogs:'lotId'}[name];
   if(!stockId||(identityKey&&log[identityKey]!==stockId)||name==='eggLogs'&&stockId!=='global')throw Error('재고와 기록의 품목 연결이 일치하지 않습니다.');

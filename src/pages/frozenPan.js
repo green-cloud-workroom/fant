@@ -755,12 +755,11 @@ async function showBreadPanAdjustModal() {
     const lotId = document.getElementById('m_lot').value;
     const adjustType = document.getElementById('m_adjustType').value;
     const qtyInput = round2(parseFloat(document.getElementById('m_qty').value) || 0);
-    const reason = document.getElementById('m_reason').value.trim();
+    const reason = selection.reason;
     const staffName = document.getElementById('m_staff').value;
 
     if (!lotId) { alert('대상 lot을 선택해주세요.'); return; }
     if (qtyInput <= 0) { alert('수량은 0보다 커야 합니다.'); return; }
-    if (!reason) { alert('사유를 입력해주세요.'); return; }
     if (!staffName) { alert('담당자를 선택해주세요.'); return; }
 
     // 부호 적용
@@ -865,12 +864,11 @@ async function showFrozenPanAdjustModal() {
     const lotId = document.getElementById('m_lot').value;
     const adjustType = document.getElementById('m_adjustType').value;
     const qtyInput = parseInt(document.getElementById('m_qty').value, 10);
-    const reason = document.getElementById('m_reason').value.trim();
+    const reason = selection.reason;
     const staffName = document.getElementById('m_staff').value;
 
     if (!lotId) { alert('대상 lot을 선택해주세요.'); return; }
     if (!Number.isInteger(qtyInput) || qtyInput <= 0) { alert('수량은 0보다 큰 정수여야 합니다.'); return; }
-    if (!reason) { alert('사유를 입력해주세요.'); return; }
     if (!staffName) { alert('담당자를 선택해주세요.'); return; }
 
     const delta = adjustType === 'plus' ? qtyInput : -qtyInput;

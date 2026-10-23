@@ -1,5 +1,8 @@
 // One persisted classification contract for entry, statistics and notifications.
 export const MOVEMENT_LABELS = Object.freeze({receipt:'실제 입고',usage:'사용',reconciliation:'실사 보정',cancel:'오입력 취소',test:'테스트'});
+export const movementReasonRequired = kind => ['reconciliation','cancel','test'].includes(kind);
+// Keep persisted usage records compatible with existing readers that require a reason.
+export const movementReason = (kind, reason) => String(reason ?? '').trim() || (kind === 'usage' ? '사용' : '');
 export const movementAmount = row => row?.delta ?? row?.qty;
 export const movementLabel = (row,fallback) => MOVEMENT_LABELS[row?.manualMovement?.kind] || fallback;
 export function movementKind(row) {

@@ -1,6 +1,6 @@
 import {collection,doc} from 'firebase/firestore';
 import {listCancellationSources} from '../services/manualMovements.js';
-import {MOVEMENT_LABELS,movementAmount} from '../services/manualMovementLogic.js';
+import {MOVEMENT_LABELS,movementAmount,movementReason,movementReasonRequired} from '../services/manualMovementLogic.js';
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const sourceLabel=(name,row)=>{
   const amount=movementAmount(row),unit={meatLogs:'kg',bagLogs:'장',eggLogs:'개',supplementLogs:'봉',breadPanLogs:'kg',frozenPanLogs:'판'}[name];
@@ -16,7 +16,24 @@ export function readMovementForm(getter) {
 export function bindMovementForm({db,name,filter,onCancel,reasonInput,filterInputs=[]}) {
   const kind=document.getElementById('movement_kind'),source=document.getElementById('movement_source'),group=document.getElementById('movement_source_group'),host=kind?.closest('.modal-overlay')||kind?.parentElement?.parentElement;
   const operationId=doc(collection(db,name)).id;let rows=[],revision=0,loading=false;
+  const updateReasonUi=()=>{
+    const input=document.getElementById('movement_reason')||reasonInput,required=movementReasonRequired(kind?.value);
+    if(input){
+      input.required=required;
+      const label=input.closest('.form-group')?.querySelector('label');
+      if(label)label.textContent=required?'처리 사유 *':'처리 사유 (선택)';
+      input.placeholder=required?'실사 보정·취소·테스트 사유를 입력해주세요':'필요한 경우에만 입력해주세요';
+    }
+    const hint=document.getElementById('movement_hint');
+    if(hint)hint.textContent=({receipt:'실제 입고로 재고에 반영합니다. 사유는 선택입니다.',
+      usage:'실제 사용으로 재고에서 차감합니다. 사유는 입력하지 않아도 됩니다.',
+      reconciliation:'실제로 확인한 재고 차이를 보정합니다. 보정 사유를 입력해주세요.',
+      cancel:'취소할 원본을 선택해주세요. 원본은 보존하고 반대 수량으로 취소합니다. 취소 사유는 필수입니다.',
+      test:'테스트는 재고에 반영하지 않습니다. 테스트 사유를 입력해주세요.'})[kind?.value]||'처리 목적에 맞는 구분을 선택해주세요.';
+  };
+  updateReasonUi();
   kind?.addEventListener('change',async()=>{
+    updateReasonUi();
     const request=++revision;group.hidden=kind.value!=='cancel';group.style.display=kind.value==='cancel'?'block':'none';source.value='';
     if(kind.value!=='cancel')return;
     loading=true;source.disabled=true;source.innerHTML='<option value="">원본 기록 조회 중…</option>';
@@ -30,8 +47,8 @@ export function bindMovementForm({db,name,filter,onCancel,reasonInput,filterInpu
   return ()=>{
     if(!kind?.value||kind.selectedOptions?.[0]?.disabled)throw Error('처리 구분을 선택해주세요.');
     if(kind.value==='cancel'&&(loading||!rows.some(r=>r.id===source.value)))throw Error('취소할 원본을 선택해주세요.');
-    const reason=(document.getElementById('movement_reason')?.value||reasonInput?.value||'').trim();
-    if(kind.value!=='receipt'&&!reason)throw Error('처리 사유를 입력해주세요.');
+    const reason=movementReason(kind.value,document.getElementById('movement_reason')?.value||reasonInput?.value||'');
+    if(movementReasonRequired(kind.value)&&!reason)throw Error('처리 사유를 입력해주세요.');
     return {kind:kind.value,reason,cancelOf:kind.value==='cancel'?source.value:null,operationId};
   };
 }

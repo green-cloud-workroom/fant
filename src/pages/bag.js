@@ -668,10 +668,10 @@ function showBagAdjustModal(bag) {
     const selection=readMovementForm(getMovement); if(!selection)return;
     const type = document.getElementById('m_adjustType').value;
     const qty = parseInt(document.getElementById('m_qty').value);
-    const reason = document.getElementById('m_reason').value.trim();
+    const reason = selection.reason;
     const staff = document.getElementById('m_staff').value;
 
-    if (!qty || !reason || !staff) { alert('조정량, 사유, 담당자는 필수입니다.'); return; }
+    if (!qty || !staff) { alert('조정량과 담당자는 필수입니다.'); return; }
     const today = getToday();
     if (await blockIfClosed(today)) return;
 
