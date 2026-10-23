@@ -1,3 +1,4 @@
+import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
 import {currentUser} from '../app.js';
 import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
@@ -301,16 +302,20 @@ function showEggModal(type, eggStock) {
       <input type="number" id="m_qty" placeholder="개수 입력" />
     </div>
   ` : `
-    <div class="form-group">
+    <div class="form-group" id="m_usageGroup">
+      <label>사용량(개) *</label>
+      <input type="number" id="m_usageQty" min="1" step="1" placeholder="사용한 개수 입력" />
+    </div>
+    <div class="form-group" id="m_remainingGroup" hidden style="display:none">
       <label>남은 재고(개) *</label>
       <input type="number" id="m_remaining" placeholder="남은 개수 입력" min="0" max="${currentQty}" />
-      <div id="m_outPreview" style="font-size:12px;color:#888;margin-top:4px;">출고량: -</div>
     </div>
+    <div id="m_outPreview" style="font-size:12px;color:#888;margin-top:4px;">출고량: -</div>
   `;
 
   showModal(`
     <h3 class="modal-title">계란 ${isIn ? '입고' : '출고'}</h3>
-    ${movementFields({incoming:isIn,allowed:isIn?['receipt','test']:['usage','reconciliation','test'],defaultKind:isIn?'receipt':'usage',reasonField:!isIn})}
+    ${movementFields({incoming:isIn,allowed:isIn?['receipt','test']:['usage','reconciliation','test'],defaultKind:isIn?'receipt':'usage',reasonField:false})}
     <p style="font-size:12px;color:#888;margin-bottom:16px;">현재 재고: ${currentQty}개</p>
     ${outQtyFormGroup}
     <div class="form-group">
@@ -335,29 +340,23 @@ function showEggModal(type, eggStock) {
   `);
 
   if (!isIn) {
-    document.getElementById('m_remaining').addEventListener('input', (e) => {
-      const remaining = parseInt(e.target.value);
-      const preview = document.getElementById('m_outPreview');
-      if (isNaN(remaining) || remaining < 0) {
-        preview.textContent = '출고량: -';
-        preview.style.color = '#888';
-      } else {
-        const outQty = currentQty - remaining;
-        if (outQty < 0) {
-          preview.textContent = `남은 재고가 현재(${currentQty}개)보다 많습니다`;
-          preview.style.color = '#e53e3e';
-        } else if (outQty === 0) {
-          preview.textContent = '출고량: 0개 (변동 없음)';
-          preview.style.color = '#888';
-        } else {
-          preview.textContent = `출고량: ${outQty}개`;
-          preview.style.color = '#2d7a3a';
-        }
+    const mode=document.getElementById('movement_kind');
+    const update=()=>{
+      const usage=mode.value==='usage';
+      for(const [id,visible] of [['m_usageGroup',usage],['m_remainingGroup',!usage]]){
+        const group=document.getElementById(id);group.hidden=!visible;group.style.display=visible?'block':'none';
       }
-    });
+      const amount=Number(document.getElementById(usage?'m_usageQty':'m_remaining').value);
+      const blank=document.getElementById(usage?'m_usageQty':'m_remaining').value==='';
+      const remaining=usage?currentQty-amount:amount;
+      document.getElementById('m_outPreview').textContent=blank?'출고량: -':remaining<0||remaining>currentQty?'수량을 확인해주세요':`사용량: ${currentQty-remaining}개 · 남은 재고: ${remaining}개`;
+    };
+    mode.addEventListener('change',update);
+    document.getElementById('m_usageQty').addEventListener('input',update);
+    document.getElementById('m_remaining').addEventListener('input',update);
   }
 
-  const getMovement=bindMovementForm({db,name:'eggLogs',filter:{},onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);const direction=document.getElementById('m_adjustType');if(direction)direction.value=delta>0?'plus':'minus';},reasonInput:document.getElementById(isIn?'m_note':'m_reason')});
+  const getMovement=bindMovementForm({db,name:'eggLogs',filter:{},onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);const direction=document.getElementById('m_adjustType');if(direction)direction.value=delta>0?'plus':'minus';},reasonInput:document.getElementById('m_note')});
   document.getElementById('btnSaveEgg').addEventListener('click', () => runEggSave(async () => {
     const page=getPageContext();
     const selection=readMovementForm(getMovement);if(!selection)return;
@@ -365,6 +364,10 @@ function showEggModal(type, eggStock) {
     if (isIn) {
       qty = parseInt(document.getElementById('m_qty').value);
       if (!qty) { alert('수량을 입력해주세요.'); return; }
+    } else if(selection.kind==='usage') {
+      qty=Number(document.getElementById('m_usageQty').value);
+      if(!Number.isInteger(qty)||qty<=0){alert('사용량은 1 이상의 정수로 입력해주세요.');return;}
+      if(qty>currentQty){alert(`사용량이 현재 재고(${currentQty}개)보다 많을 수 없습니다.`);return;}
     } else {
       const remaining = parseInt(document.getElementById('m_remaining').value);
       if (isNaN(remaining) || remaining < 0) { alert('남은 재고를 입력해주세요.'); return; }
@@ -426,7 +429,7 @@ function showEggModal(type, eggStock) {
     if(page&&!page.isCurrent())return;
     closeModal();
     await renderEgg({force:true});
-    alert(`${isIn ? '입고' : '출고'} 완료!`);
+    showStatus(`${isIn ? '입고' : '출고'} 완료!`);
   }));
 }
 
@@ -524,7 +527,7 @@ function showEggAdjustModal(eggStock) {
     if(page&&!page.isCurrent())return;
     closeModal();
     await renderEgg({force:true});
-    alert('조정 완료!');
+    showStatus('조정 완료!');
   }));
 }
 

@@ -1,3 +1,4 @@
+import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
 import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
 import {saveManualMovement} from '../services/manualMovements.js';
@@ -1235,7 +1236,7 @@ function showAddFrozenModal(options = {}) {
     closeModal();
     if(!command.isCurrent())return;
     renderTab(returnTab);
-    alert('입고 등록 완료!');
+    showStatus('입고 등록 완료!');
 
  },{roles:['admin','office','production']});
 });
@@ -1404,7 +1405,7 @@ function showAddProcessedModal() {
     closeModal();
     if(!command.isCurrent())return;
     renderTab('processed');
-    alert('전처리 등록 완료!');
+    showStatus('전처리 등록 완료!');
 
  },{roles:['admin','office','production']});
 });
@@ -1580,7 +1581,7 @@ function showAddRepackedModal() {
     closeModal();
     if(!command.isCurrent())return;
     renderTab('repacked');
-    alert('재포장 등록 완료!');
+    showStatus('재포장 등록 완료!');
 
  },{roles:['admin','office','production']});
 });
@@ -1592,7 +1593,12 @@ function showAdjustModal(id, name, remaining) {
     <h3 class="modal-title">수동 재고 조정 — ${name}</h3>
     ${movementFields({reasonField:false})}
     <p style="font-size:12px;color:#888;margin-bottom:16px;">기존 잔량: <strong>${(remaining/1000).toFixed(1)}kg</strong> (${remaining}g)</p>
-    <div class="form-group">
+    <div class="form-group" id="m_usageGroup" hidden style="display:none">
+      <label>사용량 (g) *</label>
+      <input type="number" id="m_usageQty" min="0" step="any" placeholder="사용한 중량(g) 입력" />
+      <p id="m_usagePreview" style="font-size:12px;color:#666"></p>
+    </div>
+    <div class="form-group" id="m_remainingGroup">
       <label>실제 잔량 (g) *</label>
       <input type="number" id="m_actualRemaining" placeholder="실제 잔량(g) 입력" min="0" step="1" />
       <p style="font-size:11px;color:#aaa;margin-top:4px;">실제로 남아있는 양을 g 단위로 입력하세요. 0 이상만 가능.</p>
@@ -1614,21 +1620,33 @@ function showAdjustModal(id, name, remaining) {
     </div>
   `);
 
+  const updateUsage=()=>{
+    const usage=document.getElementById('movement_kind').value==='usage';
+    for(const [id,visible] of [['m_usageGroup',usage],['m_remainingGroup',!usage]]){
+      const group=document.getElementById(id);group.hidden=!visible;group.style.display=visible?'block':'none';
+    }
+    const input=document.getElementById('m_usageQty');
+    document.getElementById('m_usagePreview').textContent=input.value===''?'':`남은 재고: ${remaining-Number(input.value)}g`;
+  };
+  document.getElementById('movement_kind').addEventListener('change',updateUsage);
+  document.getElementById('m_usageQty').addEventListener('input',updateUsage);
   const getMovement=bindMovementForm({db,name:'meatLogs',filter:{meatStockId:id},onCancel:delta=>{document.getElementById('m_actualRemaining').value=remaining+delta;},reasonInput:document.getElementById('m_adjustReason')});
   document.getElementById('btnSaveAdjust').addEventListener('click', async () => {
  return runPageCommand(meatResource,async command=>{
   const {getDoc,updateDoc,recordActivity,recordMeatLog}=commandWrites(command);
 
     const selection=readMovementForm(getMovement);if(!selection)return;
-    const inputVal = document.getElementById('m_actualRemaining').value;
+    const inputVal = document.getElementById(selection.kind==='usage'?'m_usageQty':'m_actualRemaining').value;
     const reason = selection.reason;
     const staff = document.getElementById('m_staff').value;
 
     if (inputVal === '' || isNaN(parseFloat(inputVal))) {
-      alert('실제 잔량을 입력해주세요.');
+      alert(selection.kind==='usage'?'사용량을 입력해주세요.':'실제 잔량을 입력해주세요.');
       return;
     }
-    const newRemaining = parseFloat(inputVal);
+    const entered=Number(inputVal);
+    if(!Number.isFinite(entered)||entered<0||selection.kind==='usage'&&entered===0){alert('유효한 수량을 입력해주세요.');return;}
+    const newRemaining = selection.kind==='usage'?remaining-entered:entered;
     if (newRemaining < 0) {
       alert('실제 잔량은 0 이상이어야 합니다.\n잔량이 음수가 될 수 없습니다.');
       return;
@@ -1658,7 +1676,7 @@ function showAdjustModal(id, name, remaining) {
     closeModal();
     if(!command.isCurrent())return;
     renderTab(currentTab);
-    alert('조정 완료!');
+    showStatus('조정 완료!');
 
  },{roles:['admin','office','production']});
 });

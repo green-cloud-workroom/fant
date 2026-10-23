@@ -1,3 +1,4 @@
+import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
 import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
 import {saveManualMovement} from '../services/manualMovements.js';
@@ -415,8 +416,9 @@ function renderDateCells(type, date, inactive) {
   if (hasIn) {
     inCell = `<td class="supplement-cell supplement-cell--in supplement-cell--locked"
       data-type-id="${escapeHtml(typeId)}" data-date="${date}" data-cell="in"
-      title="이미 입고 기록이 있습니다. 추가·정정은 수동조정을 사용해주세요.">
+      title="입고 합계입니다. 추가 입고는 새 기록으로 저장됩니다.">
       ${inSum > 0 ? `+${inSum}` : inSum}
+      ${canEditIn?`<button type="button" class="supplement-add-in" data-id="${escapeHtml(typeId)}" data-date="${date}">추가 입고</button>`:''}
     </td>`;
   } else if (canEditIn) {
     inCell = `<td class="supplement-cell supplement-cell--in">
@@ -556,13 +558,10 @@ function bindSupplementCellEvents() {
     input.addEventListener('blur', (e) => handleAdjustCellBlur(e.target));
   });
 
-  // 입고 잠금 셀: 클릭 시 안내.
-  document.querySelectorAll('.supplement-cell--in.supplement-cell--locked').forEach(cell => {
-    cell.addEventListener('click', () => {
-      const date = cell.dataset.date;
-      const typeId = cell.dataset.typeId;
-      const sum = getCellSum(typeId, date, 'in');
-      alert(`이미 ${sum}봉 입고 기록이 있습니다. 추가·정정은 수동조정을 사용해주세요.`);
+  document.querySelectorAll('.supplement-add-in').forEach(button=>{
+    button.addEventListener('click',()=>{
+      const type=supplementTypes.find(t=>t.id===button.dataset.id);
+      openIncomingModal(button.dataset.id,type?.name||button.dataset.id,button.dataset.date);
     });
   });
 }
@@ -629,7 +628,7 @@ function openIncomingModal(typeId, typeName, entryDate=getTodayKST(), initialQty
       if(page&&!page.isCurrent())return;
       closeModal();
       await refreshSupplementTable();
-      alert('입고 완료');
+      showStatus('입고 완료');
     } catch (err) {
       console.error('[supplement] incoming modal save failed:', err);
       alert(`입고 등록 중 오류가 발생했습니다: ${err.message || err}`);
@@ -688,7 +687,7 @@ function openAdjustModal(typeId, typeName, entryDate=getTodayKST(), initialQty=n
       if(page&&!page.isCurrent())return;
       closeModal();
       await refreshSupplementTable();
-      alert('조정 완료');
+      showStatus('조정 완료');
     } catch (err) {
       console.error('[supplement] adjust modal save failed:', err);
       if (err.message === 'NEGATIVE_SUPPLEMENT_STOCK') {
@@ -704,7 +703,7 @@ function openAdjustModal(typeId, typeName, entryDate=getTodayKST(), initialQty=n
 // 입고 셀 blur — 그날 입고 로그가 없을 때만 입력 가능. 기존 트랜잭션 재사용.
 async function handleIncomingCellBlur(input) {
   const raw=input.value.trim();if(!raw)return;const qty=Number(raw);
-  if(!Number.isInteger(qty)||qty<=0){alert('입고 수량은 1 이상의 정수로 입력해주세요.');input.value='';return;}
+  if(!Number.isInteger(qty)||qty<=0){alert('입고 수량은 1 이상의 정수로 입력해주세요.');return;}
   input.value='';const type=supplementTypes.find(t=>t.id===input.dataset.typeId);
   openIncomingModal(input.dataset.typeId,type?.name||input.dataset.typeId,input.dataset.date,qty);
 }
@@ -724,7 +723,7 @@ async function saveIncomingCellWithCommand(supplementTypeId,date,qty,staffName,c
 // 수동조정 셀 blur — 부호 입력(+N / -N / N). 델타로 새 로그 발행.
 async function handleAdjustCellBlur(input) {
   const raw=input.value.trim();if(!raw)return;const qty=Number(raw);
-  if(!Number.isInteger(qty)||qty===0){alert('0이 아닌 정수를 입력해주세요.');input.value='';return;}
+  if(!Number.isInteger(qty)||qty===0){alert('0이 아닌 정수를 입력해주세요.');return;}
   input.value='';const type=supplementTypes.find(t=>t.id===input.dataset.typeId);
   openAdjustModal(input.dataset.typeId,type?.name||input.dataset.typeId,input.dataset.date,qty);
   const reason=document.getElementById('sup_adj_reason'),staff=document.getElementById('sup_adj_staff');

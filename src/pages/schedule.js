@@ -1,3 +1,4 @@
+import {showStatus} from '../utils/statusToast.js';
 import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
 import {saveManualMovement} from '../services/manualMovements.js';
 import { registerCloseModal } from '../utils/modalManager.js';
@@ -624,6 +625,7 @@ function showCompleteModal(s) {
         </select>
       </div>
     ` : ''}
+    ${isCountMeatOrder&&!(Number(s.orderedUnitGrams)>0)?'<p style="font-size:12px;color:#805c16">총중량을 아는 경우 실제 단위에서 g을 선택해 입고할 수 있습니다. 개당 중량 정보가 없어 발주 중량과의 비교는 생략됩니다.</p>':''}
     <div class="form-group">
       <label>입고 담당자 *</label>
       <select id="m_staff">
@@ -652,7 +654,7 @@ function showCompleteModal(s) {
     const memo = document.getElementById('m_memo').value;
 
     if (!actual || !staff) { alert('실제 수량과 담당자는 필수입니다.'); return; }
-    if (isCountMeatOrder && (!s.orderedUnitGrams || s.orderedUnitGrams <= 0)) {
+    if (isCountMeatOrder && actualUnit!=='g' && (!s.orderedUnitGrams || s.orderedUnitGrams <= 0)) {
       alert('이 발주의 1마리당 g 정보가 없습니다. 발주를 수정해 1마리당 g을 입력해주세요.');
       return;
     }
@@ -660,10 +662,12 @@ function showCompleteModal(s) {
     if (await blockIfClosed(today,command)) return;
 
     // 발주/실제 수량 차이 시 한 번 더 확인
+    const comparisonAvailable=!(isCountMeatOrder&&actualUnit==='g'&&!(Number(s.orderedUnitGrams)>0));
     const orderedCompareQty = isCountIncomingUnit(s.orderedUnit) && actualUnit === 'g'
       ? Number(s.orderedQty || 0) * Number(s.orderedUnitGrams || 0)
       : Number(s.orderedQty || 0);
-    if (actual !== orderedCompareQty) {
+    const hasDiff=comparisonAvailable?actual!==orderedCompareQty:null;
+    if (hasDiff) {
       const proceed = await showConfirmModal({
         title: '수량 차이 확인',
         message: `발주 수량과 실제 수량이 다릅니다.\n\n발주: ${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)}\n실제: ${formatScheduleQty(actual, actualUnit, s.orderedUnitGrams)}\n\n이대로 완료 처리하시겠습니까?`,
@@ -692,15 +696,15 @@ function showCompleteModal(s) {
     const review=selection.kind==='test'?{approved:true}:await checkQuantityBeforeSave({itemId:name+':'+(s.type==='egg'?'egg':s.itemId),date:today,qty:s.type==='meat'?qty/1000:qty,unit:s.type==='meat'?'kg':s.type==='bag'?'장':'개',stage:s.type==='meat'?'원료':s.type==='bag'?'봉투':'계란'},command.isCurrent);
     if(!review.approved)return;if(review.review)log.statsQuantityReview=review.review;
     await saveManualMovement({db,command,name,stockId,stockData,expectedBefore:before,log,selection,uid:currentUser?.uid||null,
-      activity:selection.kind==='test'?null:{action:'schedule',subAction:actual!==orderedCompareQty?'completeDiff':'complete',
-        message:actual!==orderedCompareQty?`${s.itemNameSnapshot} 입고 완료 ⚠️ 발주 ${formatScheduleQty(s.orderedQty,s.orderedUnit,s.orderedUnitGrams)} → 실제 ${formatScheduleQty(actual,actualUnit,s.orderedUnitGrams)} / 담당: ${staff}`:`${s.itemNameSnapshot} 입고 완료 차이 없음 / 담당: ${staff}`,
-        details:{scheduleId:s.id,type:s.type,itemId:s.itemId||null,itemName:s.itemNameSnapshot,orderedQty:s.orderedQty,actualQty:actual,unit:actualUnit,orderedUnit:s.orderedUnit,orderedUnitGrams:s.orderedUnitGrams||null,hasDiff:actual!==orderedCompareQty,memo:memo||null}},
+      activity:selection.kind==='test'?null:{action:'schedule',subAction:hasDiff?'completeDiff':'complete',
+        message:!comparisonAvailable?`${s.itemNameSnapshot} 입고 완료 · 발주 중량 비교 불가 (개당 중량 정보 없음) / 담당: ${staff}`:hasDiff?`${s.itemNameSnapshot} 입고 완료 ⚠️ 발주 ${formatScheduleQty(s.orderedQty,s.orderedUnit,s.orderedUnitGrams)} → 실제 ${formatScheduleQty(actual,actualUnit,s.orderedUnitGrams)} / 담당: ${staff}`:`${s.itemNameSnapshot} 입고 완료 차이 없음 / 담당: ${staff}`,
+        details:{scheduleId:s.id,type:s.type,itemId:s.itemId||null,itemName:s.itemNameSnapshot,orderedQty:s.orderedQty,actualQty:actual,unit:actualUnit,orderedUnit:s.orderedUnit,orderedUnitGrams:s.orderedUnitGrams||null,hasDiff,comparisonAvailable,memo:memo||null}},
       scheduleChange:{id:s.id,expected:{type:s.type,itemId:s.itemId||null,date:s.date,orderedQty:s.orderedQty,orderedUnit:s.orderedUnit,orderedUnitGrams:s.orderedUnitGrams||null},
         patch:{status:'completed',actualQty:actual,actualUnit,actualQtyG:s.type==='meat'?qty:null,incomingStaffName:staff,completeMemo:memo}}});
     if(!command.isCurrent())return;
     closeModal();
     await renderSchedule({force:true});
-    alert('완료 처리되었습니다!');
+    showStatus('완료 처리되었습니다!');
     } catch (err) {
       console.error('입고 완료 처리 오류:', err);
       alert(`완료 처리 중 오류가 발생했습니다.\n\n${err.code || ''} ${err.message}\n\n이 메시지를 관리자에게 전달해주세요.`);

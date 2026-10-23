@@ -1,3 +1,4 @@
+import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
 import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
 import {saveManualMovement} from '../services/manualMovements.js';
@@ -593,7 +594,7 @@ function showTenderInModal() {
       closeModal();
       if(!command.isCurrent())return;
       await refreshFrozenPanLayout();
-      alert('텐더동결 입고 완료!');
+      showStatus('텐더동결 입고 완료!');
 
     } catch (err) {
       console.error('showTenderInModal 저장 에러:', err);
@@ -681,7 +682,7 @@ function showBreadPanIncomingModal() {
     closeModal();
     if(!command.isCurrent())return;
     await refreshFrozenPanLayout();
-    alert('빵판 입고 완료!');
+    showStatus('빵판 입고 완료!');
 
  },{roles:['admin','office','production']});
 });
@@ -792,7 +793,7 @@ async function showBreadPanAdjustModal() {
     closeModal();
     if(!command.isCurrent())return;
     await refreshFrozenPanLayout();
-    alert('수동 조정 완료!');
+    showStatus('수동 조정 완료!');
 
  },{roles:['admin','office','production']});
 });
@@ -894,7 +895,7 @@ async function showFrozenPanAdjustModal() {
     closeModal();
     if(!command.isCurrent())return;
     await refreshFrozenPanLayout();
-    alert('수동 조정 완료!');
+    showStatus('수동 조정 완료!');
 
  },{roles:['admin','office','production']});
 });
@@ -1202,7 +1203,7 @@ async function handleWorkRowSave() {
     closeModal();
     if(!command.isCurrent())return;
     await refreshFrozenPanLayout();
-    alert('전처리 작업 저장 완료!');
+    showStatus('전처리 작업 저장 완료!');
 
   } catch (err) {
     console.error('handleWorkRowSave 에러:', err);

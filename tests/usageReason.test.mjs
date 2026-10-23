@@ -14,15 +14,15 @@ test('egg usage saves with blank reason, correct deduction and a backward-compat
   const e = await eggForm();
   try {
     assert.equal(e.document.querySelector('#movement_kind').value, 'usage');
-    assert.equal(e.document.querySelector('#movement_reason').required, false);
-    assert.match(e.document.querySelector('#movement_reason').closest('.form-group').textContent, /선택/);
+    assert.equal(e.document.querySelector('#m_note').required, false);
+    assert.match(e.document.querySelector('#m_note').closest('.form-group').textContent, /선택/);
     assert.match(e.document.querySelector('#movement_hint').textContent, /입력하지 않아도/);
-    e.fill('#m_remaining', '90'); e.fill('#m_note', '작업 메모'); staff(e);
+    e.fill('#m_usageQty', '10'); e.fill('#m_note', '작업 메모'); staff(e);
     await e.fire('#btnSaveEgg');
-    assert.deepEqual(e.alerts, ['출고 완료!']);
+    assert.deepEqual(e.alerts, []);assert.equal(e.document.querySelector('#actionStatus').textContent,'출고 완료!');
     assert.equal(e.state.rows.eggStock[0].currentQty, 90);
     const log = e.state.rows.eggLogs.at(-1);
-    assert.equal(log.qty, -10); assert.equal(log.manualMovement.reason, '사용');
+    assert.equal(log.qty, -10); assert.equal(log.manualMovement.reason, '작업 메모');
     assert.equal(log.note, '작업 메모'); assert.equal(movementKind(log), 'usage');
     assert.equal(e.state.commits.length, 1);
   } finally { await e.cleanup(); }
@@ -32,7 +32,7 @@ test('count corrections and tests still require an explicit reason and cannot wr
     const e = await eggForm();
     try {
       e.fill('#movement_kind', kind); await e.fire('#movement_kind', 'change');
-      assert.equal(e.document.querySelector('#movement_reason').required, true);
+      assert.equal(e.document.querySelector('#m_note').required, true);
       e.fill('#m_remaining', '90'); staff(e); await e.fire('#btnSaveEgg');
       assert.match(e.alerts.at(-1), /사유/); assert.equal(e.state.rows.eggStock[0].currentQty, 100);
       assert.equal(e.state.writes.length, 0);
@@ -46,7 +46,7 @@ test('bag manual usage does not retain the old form-level mandatory reason guard
     e.fill('#movement_kind', 'usage'); await e.fire('#movement_kind', 'change');
     e.fill('#m_adjustType', 'minus'); e.fill('#m_qty', '2'); staff(e);
     await e.fire('#btnSaveAdjust');
-    assert.deepEqual(e.alerts, ['조정 완료!']); assert.equal(e.state.rows.bagTypes[0].currentQty, 98);
+    assert.deepEqual(e.alerts, []);assert.equal(e.document.querySelector('#actionStatus').textContent,'조정 완료!'); assert.equal(e.state.rows.bagTypes[0].currentQty, 98);
     assert.equal(e.state.rows.bagLogs.at(-1).manualMovement.reason, '사용');
   } finally { await e.cleanup(); }
 });

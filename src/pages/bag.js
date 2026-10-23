@@ -1,3 +1,4 @@
+import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
 import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
 import {saveManualMovement} from '../services/manualMovements.js';
@@ -623,7 +624,7 @@ function showBagIncomingModal(bag) {
     await renderBag({force:true});
     const updatedBag=bagTypes.find(b=>b.id===bag.id);
     if(updatedBag)await showBagDetail(updatedBag);
-    alert('입고 등록 완료!');
+    showStatus('입고 등록 완료!');
   });
 }
 
@@ -726,7 +727,7 @@ function showBagAdjustModal(bag) {
     await renderBag({force:true});
     const updatedBag=bagTypes.find(b=>b.id===bag.id);
     if(updatedBag)await showBagDetail(updatedBag);
-    alert('조정 완료!');
+    showStatus('조정 완료!');
   });
 }
 
