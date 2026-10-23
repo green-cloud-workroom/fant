@@ -117,3 +117,28 @@ test('confirmed supplement tests are excluded once while valid consumption and o
   data.statsCorrections[0].classification = 'stockReconciliation';
   assert.throws(() => usageEvents(data, range), /분류/);
 });
+
+test('append-only review replacement preserves old decisions and rejects forks/cycles/wrong source',()=>{
+  const d=base(),hold=correction('hold','meatLogs',incoming,{metric:'supply'});
+  const replacement=correction('retainSupply','meatLogs',incoming,{supersedes:hold.id});
+  d.statsCorrections=[hold,replacement];const copy=structuredClone(d);assert.equal(resolveStatsCorrections(d).length,1);assert.equal(supplyEvents(d,range).pending.length,0);assert.deepEqual(d,copy);
+  d.statsCorrections.push({...replacement,id:'fork'});assert.throws(()=>resolveStatsCorrections(d),/대체/);
+  d.statsCorrections=[{...hold,supersedes:replacement.id},replacement];assert.throws(()=>resolveStatsCorrections(d),/순환/);
+});
+
+test('verified cancellation removes only the uniquely linked first bag deduction',()=>{
+  const d=base();const a={id:'old',type:'autoDeduct',date:'2026-09-01',bagTypeId:'b',qty:-300};const b={...a,id:'rerun'};d.bagLogs=[a,b];
+  d.statsCorrections=[correction('excludeUsage','bagLogs',a,{classification:'cancelledExecution'})];
+  const view=usageEvents(d,range);assert.equal(view.events.reduce((s,e)=>s+e.qty,0),300);assert.equal(view.classifications[0].classification,'cancelledExecution');assert.equal(d.bagLogs.length,2);
+});
+
+test('known processing error stays unknown, not zero or normal usage, and snapshots remain separate',()=>{
+  const d=base();const r={...incoming,id:'partial',type:'productionDeduct',date:'2026-07-29',delta:-1000,batchId:'productionCompletion:2026-07-29'};d.meatLogs=[r];d.statsCorrections=[correction('excludeUsage','meatLogs',r,{classification:'processingError',unresolvedQuantity:true})];
+  const view=usageEvents(d,{...range,startDate:'2026-07-01',endDate:'2026-07-31',today:'2026-10-23'});assert.equal(view.events.length,0);assert.equal(view.pending.length,1);assert.equal(view.classifications.length,1);
+});
+
+test('new execution-linked return is counted once; altered or missing ledger holds it',()=>{
+  const d=base();const r={...incoming,id:'newreturn',type:'repackedIn',delta:100,before:0,after:100,executionId:'run',ledgerId:'ledger',batchId:'productionCompletion:2026-09-05:run',movementSchemaVersion:2};d.meatLogs=[r];d.stockLedger=[{id:'ledger',executionId:'run',items:[{docId:r.meatStockId,sourceLogId:r.id,sourceCollection:'meatLogs',delta:100,before:0,after:100}]}];
+  let v=usageEvents(d,range);assert.equal(v.events[0].qty,-.1);assert.equal(v.pending.length,0);
+  d.stockLedger[0].items[0].delta=101;v=usageEvents(d,range);assert.equal(v.events.length,0);assert.equal(v.pending.length,1);
+});

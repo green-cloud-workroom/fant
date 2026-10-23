@@ -12,19 +12,30 @@ export function canonicalEvidence(value) {
   return value;
 }
 export const evidenceKey = value => JSON.stringify(canonicalEvidence(value));
-const kinds = new Set(['excludeSupply', 'includeSupply', 'includeUsage', 'excludeUsage', 'classifyUsage', 'hold']);
+const kinds = new Set(['excludeSupply', 'retainSupply', 'includeSupply', 'includeUsage', 'excludeUsage', 'classifyUsage', 'hold']);
 const allowed = new Set(['meatLogs', 'bagLogs', 'eggLogs', 'supplementLogs', 'stockLedger', 'productions', 'schedules']);
 export function resolveStatsCorrections(data) {
-  const decisions = [], dimensions = new Set(), seen = new Set();
+  const decisions = [], dimensions = new Set(), seen = new Set(), superseded = new Set();
+  const records = new Map((data.statsCorrections || []).map(c => [c.id,c]));
+  const metric = c => c.kind === 'hold' ? c.metric : c.kind.includes('Supply') ? 'supply' : 'usage';
+  for (const c of records.values()) if (c.supersedes) {
+    const old = records.get(c.supersedes);
+    if (!old || old.source !== c.source || metric(old) !== metric(c) || superseded.has(old.id)) throw Error('통계 정정 대체 근거가 충돌합니다.');
+    superseded.add(old.id);
+    const trail = new Set([c.id]); let p = old;
+    while (p) { if (trail.has(p.id)) throw Error('통계 정정 대체 연결이 순환합니다.'); trail.add(p.id); p = records.get(p.supersedes); }
+  }
   for (const c of data.statsCorrections || []) {
     if (seen.has(c.id)) throw Error('통계 정정 ID가 중복되었습니다.');
     seen.add(c.id);
     if (!c.id || c.schemaVersion !== STATS_CORRECTION_VERSION || c.changesStock !== false
       || !kinds.has(c.kind) || !c.reason?.trim() || !c.source || !Array.isArray(c.evidence) || !c.evidence.length
-      || c.status !== 'active' || c.supersedes || c.kind === 'hold' && !['supply', 'usage'].includes(c.metric)) throw Error('통계 정정 형식을 확인해주세요.');
+      || c.status !== 'active' || c.kind === 'hold' && !['supply', 'usage'].includes(c.metric)) throw Error('통계 정정 형식을 확인해주세요.');
     const dimension = c.source + ':' + (c.kind === 'hold' ? 'hold:' + c.metric : c.kind.includes('Supply') ? 'supply' : 'usage');
-    if (dimensions.has(dimension)) throw Error('같은 원본의 통계 정정이 충돌합니다.');
-    dimensions.add(dimension);
+    if (!superseded.has(c.id)) {
+      if (dimensions.has(dimension)) throw Error('같은 원본의 통계 정정이 충돌합니다.');
+      dimensions.add(dimension);
+    }
     for (const e of c.evidence) {
       const parts = e.path?.split('/') || [];
       if (parts.length !== 2 || !allowed.has(parts[0]) || !Array.isArray(data[parts[0]])) throw Error('통계 정정 근거 읽기가 완료되지 않았습니다.');
@@ -33,7 +44,7 @@ export function resolveStatsCorrections(data) {
       if (!actual || !Object.keys(e.expected || {}).length || evidenceKey(actual) !== evidenceKey(e.expected)) throw Error('통계 정정 원본·근거가 변경됐습니다. 정정을 다시 검증해주세요.');
     }
     if (!c.evidence.some(e => e.path === c.source)) throw Error('통계 정정 원본 근거가 없습니다.');
-    if (c.kind === 'excludeSupply') {
+    if (c.kind === 'excludeSupply' || c.kind === 'retainSupply') {
       const [collection, id] = c.source.split('/'), source = data[collection]?.find(row => row.id === id);
       const type = { meatLogs: 'frozenIncoming', bagLogs: 'incoming', eggLogs: 'in', supplementLogs: 'in' }[collection];
       const qty = collection === 'meatLogs' ? source?.delta : source?.qty;
@@ -41,14 +52,18 @@ export function resolveStatsCorrections(data) {
     }
     if (c.kind === 'excludeUsage' || c.kind === 'classifyUsage') {
       const [collection, id] = c.source.split('/'), source = data[collection]?.find(row => row.id === id);
-      if (typeof source?.qty !== 'number' || !Number.isFinite(source.qty)) throw Error('사용 통계 분류 수량을 확인해주세요.');
+      const amount = collection === 'meatLogs' ? source?.delta : source?.qty;
+      if (typeof amount !== 'number' || !Number.isFinite(amount)) throw Error('사용 통계 분류 수량을 확인해주세요.');
+      const cancelled = c.kind === 'excludeUsage' && collection === 'bagLogs' && source.type === 'autoDeduct' && amount < 0 && c.classification === 'cancelledExecution';
+      const processing = c.kind === 'excludeUsage' && collection === 'meatLogs' && ['productionDeduct','repackedIn'].includes(source.type)
+        && source.batchId === 'productionCompletion:2026-07-29' && c.classification === 'processingError' && c.unresolvedQuantity === true;
       if (c.kind === 'excludeUsage'
-        ? collection !== 'supplementLogs' || source?.type !== 'autoDeduct' || !(source.qty < 0) || c.classification !== 'test'
+        ? !cancelled && !processing && (collection !== 'supplementLogs' || source?.type !== 'autoDeduct' || !(source.qty < 0) || c.classification !== 'test')
         : collection !== 'bagLogs' || source?.type !== 'adjust' || !(source.qty < 0) || c.classification !== 'stockReconciliation') {
         throw Error('사용 통계 분류의 원본 종류·수량이 일치하지 않습니다.');
       }
     }
-    decisions.push(c);
+    if (!superseded.has(c.id)) decisions.push(c);
   }
   return decisions;
 }

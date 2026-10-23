@@ -28,12 +28,14 @@ import {
 import { getTodayKST as getToday, getYesterdayKST, getNextBusinessDayByType as getNextBusinessDay, loadHolidaysCache, ensureHolidaysCache, getHolidaysCache, getHolidayInfoCache, getHolidayDataNotice } from '../utils/date.js';
 import { findActionableClosingDate, getAllBlockingItems } from '../services/closingChecks.js';
 import { isDateClosed } from '../closing.js';
-import { setCurrentMenu, currentUserRole, currentMenu } from '../app.js';
+import { setCurrentMenu, currentUser, currentUserRole, currentMenu } from '../app.js';
 import { renderLayout } from '../layout.js';
 
-import { recordMeatLog } from '../services/meatLogs.js';
+import { recordMeatLog, recordMeatLog as writeProductionMeatLog } from '../services/meatLogs.js';
+import { atomicProductionLoad, atomicProductionRollback } from '../services/atomicProductionCommand.js';
+import { buildProductionLoad } from '../services/productionLoadPlan.js';
 import { showPromptModal, showConfirmModal } from '../utils/modal.js';
-import { acknowledgeLog, recordActivity } from '../services/activityLogs.js';
+import { acknowledgeLog, recordActivity, recordActivity as writeProductionActivity } from '../services/activityLogs.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { round2, formatIngredientQtyValue } from '../utils/number.js';
 import { loadPartAlerts, partLabel, formatDday } from '../services/equipmentParts.js';
@@ -3124,353 +3126,35 @@ function showTomorrowLoadBlockersModal(blockers) {
 
 async function executeProductionLoad(today, staffName, targetProductions = nextProductions) {
   const nextBizDay = getNextBusinessDay(today);
+  const epoch = sessionStore.epoch, uid = currentUser?.uid;
+  const assertCurrent = async () => { if (!uid || currentUser?.uid !== uid || sessionStore.epoch !== epoch) throw Error('로그인 상태가 변경됐습니다. 새로고침해주세요.'); };
   try {
-    const meatNeeds = {};
-    const bagNeeds = {};
-
-    for (const p of targetProductions) {
-      const recipe = recipes.find(r => r.id === p.recipeId);
-      if (!recipe) continue;
-      (p.ingredientsSnapshot || []).forEach(ing => {
-        if (ing.autoDeductInventory && ing.meatTypeId) {
-          meatNeeds[ing.meatTypeId] = (meatNeeds[ing.meatTypeId] || 0) + ing.requiredQtyG;
-        }
-      });
-      if (recipe.category === 'raw' && recipe.bagTypeId) {
-        const boxQty = p.rawBoxQty || 0;
-        const bagSnap = await getDoc(doc(db, 'bagTypes', recipe.bagTypeId));
-        if (bagSnap.exists()) {
-          bagNeeds[recipe.bagTypeId] = (bagNeeds[recipe.bagTypeId] || 0) + (boxQty * 20); // 1제품박스=20팩=봉투20장
-        }
-      }
-    }
-
-    // 봉투 재고 체크
-    for (const [bagTypeId, needed] of Object.entries(bagNeeds)) {
-      const bagSnap = await getDoc(doc(db, 'bagTypes', bagTypeId));
-      if (bagSnap.exists()) {
-        const current = bagSnap.data().currentQty || 0;
-        if (current < needed) {
-          alert(`봉투가 부족하여 내일 생산을 불러올 수 없습니다.\n${bagSnap.data().name || ''} 봉투: 현재 ${current}장 / 필요 ${needed}장`);
-          return;
-        }
-      }
-    }
-
-        // 원육 합계 부족 사전 체크 (재포장 + 전처리 + 냉동창고)
-    // 단위중량 올림 차감 고려
-    for (const [meatTypeId, neededG] of Object.entries(meatNeeds)) {
-      const repackedSum = meatStocks
-        .filter(s => s.meatTypeId === meatTypeId && s.stage === 'repacked' && s.remaining > 0)
-        .reduce((sum, s) => sum + s.remaining, 0);
-
-      const processedLots = meatStocks
-        .filter(s => s.meatTypeId === meatTypeId && s.stage === 'processed' && s.remaining > 0)
-        .sort((a, b) => (a.processedDate || '').localeCompare(b.processedDate || ''));
-      const processedSum = processedLots.reduce((sum, s) => sum + s.remaining, 0);
-
-      const frozenSum = meatStocks
-        .filter(s => s.meatTypeId === meatTypeId && s.stage === 'frozen' && s.remaining > 0)
-        .reduce((sum, s) => sum + s.remaining, 0);
-
-      const totalAvailable = repackedSum + processedSum + frozenSum;
-
-      if (totalAvailable < neededG) {
-        const meatName = meatStocks.find(s => s.meatTypeId === meatTypeId)?.meatNameSnapshot || meatTypeId;
-        alert(
-          `${meatName} 재고가 부족하여 내일 생산을 불러올 수 없습니다.\n\n` +
-          `필요량: ${(neededG/1000).toFixed(1)}kg\n` +
-          `현재 합계: ${(totalAvailable/1000).toFixed(1)}kg\n` +
-          `  - 재포장: ${(repackedSum/1000).toFixed(1)}kg\n` +
-          `  - 전처리: ${(processedSum/1000).toFixed(1)}kg\n` +
-          `  - 냉동창고: ${(frozenSum/1000).toFixed(1)}kg`
-        );
-        return;
-      }
-    }
-
-    const ledgerItems = [];
-    const productionBatchId = `productionCompletion:${today}`;
-
-    // 원육 FIFO 차감
-    for (const [meatTypeId, neededG] of Object.entries(meatNeeds)) {
-      let remaining = neededG;
-
-      const repackedStocks = meatStocks
-        .filter(s => s.meatTypeId === meatTypeId && s.stage === 'repacked' && s.remaining > 0)
-        .sort((a, b) => (a.repackedDate || '').localeCompare(b.repackedDate || ''));
-
-      for (const s of repackedStocks) {
-        if (remaining <= 0) break;
-        const deduct = Math.min(s.remaining, remaining);
-        const newRemaining = s.remaining - deduct;
-        await updateDoc(doc(db, 'meatStocks', s.id), { remaining: newRemaining, closed: newRemaining <= 0, updatedAt: new Date() });
-        ledgerItems.push({ collection: 'meatStocks', docId: s.id, field: 'remaining', delta: -deduct, before: s.remaining, after: newRemaining, label: `${s.meatNameSnapshot} 재포장`, stockUpdatedAtSnapshot: new Date() });
-
-        await recordMeatLog({
-          type: 'productionDeduct',
-          date: today,
-          meatTypeId,
-          meatNameSnapshot: s.meatNameSnapshot,
-          stage: 'repacked',
-          meatStockId: s.id,
-          delta: -deduct,
-          before: s.remaining,
-          after: newRemaining,
-          staff: staffName,
-          reason: '내일생산불러오기 차감',
-          batchId: productionBatchId,
-        });
-
-        remaining -= deduct;
-      }
-
-      if (remaining > 0) {
-        const processedStocks = meatStocks
-          .filter(s => s.meatTypeId === meatTypeId && s.stage === 'processed' && s.remaining > 0)
-          .sort((a, b) => (a.processedDate || '').localeCompare(b.processedDate || ''));
-
-        for (const s of processedStocks) {
-          if (remaining <= 0) break;
-          const unitW = s.unitWeightG || 1;
-          const deductG = Math.min(s.remaining, Math.ceil(remaining / unitW) * unitW);
-          const newRemaining = s.remaining - deductG;
-          await updateDoc(doc(db, 'meatStocks', s.id), { remaining: newRemaining, closed: newRemaining <= 0, updatedAt: new Date() });
-          ledgerItems.push({ collection: 'meatStocks', docId: s.id, field: 'remaining', delta: -deductG, before: s.remaining, after: newRemaining, label: `${s.meatNameSnapshot} 전처리`, stockUpdatedAtSnapshot: new Date() });
-
-          await recordMeatLog({
-            type: 'productionDeduct',
-            date: today,
-            meatTypeId,
-            meatNameSnapshot: s.meatNameSnapshot,
-            stage: 'processed',
-            meatStockId: s.id,
-            delta: -deductG,
-            before: s.remaining,
-            after: newRemaining,
-            staff: staffName,
-            reason: '내일생산불러오기 차감',
-            batchId: productionBatchId,
-          });
-
-          // 잉여분 → 재포장으로 자동 입고
-          const surplusG = deductG - remaining;
-          if (surplusG > 0) {
-            const existingRepacked = meatStocks.find(rs =>
-              rs.meatTypeId === meatTypeId && rs.stage === 'repacked' && rs.remaining > 0
-            );
-
-            if (existingRepacked) {
-              const newRepackedRemaining = existingRepacked.remaining + surplusG;
-              await updateDoc(doc(db, 'meatStocks', existingRepacked.id), {
-                remaining: newRepackedRemaining,
-                closed: false,
-                updatedAt: new Date(),
-              });
-              ledgerItems.push({
-                collection: 'meatStocks',
-                docId: existingRepacked.id,
-                field: 'remaining',
-                delta: surplusG,
-                before: existingRepacked.remaining,
-                after: newRepackedRemaining,
-                label: `${s.meatNameSnapshot} 재포장 자동입고`,
-                stockUpdatedAtSnapshot: new Date(),
-              });
-
-              await recordMeatLog({
-                type: 'repackedIn',
-                date: today,
-                meatTypeId,
-                meatNameSnapshot: s.meatNameSnapshot,
-                stage: 'repacked',
-                meatStockId: existingRepacked.id,
-                delta: surplusG,
-                before: existingRepacked.remaining,
-                after: newRepackedRemaining,
-                staff: staffName,
-                reason: '생산 자동 재포장 (기존 lot 합산)',
-                batchId: productionBatchId,
-              });
-
-              // [묶음 6E-2] 자동 재포장 발생 → 활동 로그 발행 (확인 필수)
-              // 기존 재포장 lot에 잔여분 합산. 운영자가 메인 화면 생산 로그에서 [확인] 클릭 필요.
-              await recordActivity({
-                action: 'autoRepack',
-                subAction: 'trigger',
-                date: today,
-                staff: '시스템',
-                message: `🔄 생산 자동 재포장 — ${s.meatNameSnapshot} ${(surplusG/1000).toFixed(2)}kg (전처리 ${s.unitWeightG}g 단위 차감 후 잔여, 기존 재포장 lot 합산)`,
-                details: {
-                  meatTypeId,
-                  meatName: s.meatNameSnapshot,
-                  surplusG,
-                  processedUnitWeightG: s.unitWeightG,
-                  processedStockId: s.id,
-                  repackedStockId: existingRepacked.id,
-                  mode: 'merged',
-                  batchId: productionBatchId,
-                },
-              });
-
-              existingRepacked.remaining = newRepackedRemaining;
-            } else {
-              const newRepackedRef = await addDoc(collection(db, 'meatStocks'), {
-                meatTypeId,
-                meatNameSnapshot: s.meatNameSnapshot,
-                stage: 'repacked',
-                incomingDate: today,
-                repackedDate: today,
-                unitWeightG: null,
-                unitCount: null,
-                initialQtyG: surplusG,
-                remaining: surplusG,
-                batchId: productionBatchId,
-                staffName,
-                note: '생산 자동 재포장',
-                closed: false,
-                createdAt: new Date(),
-                updatedAt: new Date(),
-              });
-              ledgerItems.push({
-                collection: 'meatStocks',
-                docId: newRepackedRef.id,
-                field: 'remaining',
-                delta: surplusG,
-                before: 0,
-                after: surplusG,
-                label: `${s.meatNameSnapshot} 재포장 자동신규`,
-                stockUpdatedAtSnapshot: new Date(),
-                isNewDoc: true,
-              });
-
-              await recordMeatLog({
-                type: 'repackedIn',
-                date: today,
-                meatTypeId,
-                meatNameSnapshot: s.meatNameSnapshot,
-                stage: 'repacked',
-                meatStockId: newRepackedRef.id,
-                delta: surplusG,
-                before: 0,
-                after: surplusG,
-                staff: staffName,
-                reason: '생산 자동 재포장 (신규 lot)',
-                batchId: productionBatchId,
-              });
-
-              // [묶음 6E-2] 자동 재포장 발생 → 활동 로그 발행 (확인 필수)
-              // 기존 lot 없어 신규 재포장 lot 생성. 운영자가 [확인] 클릭 필요.
-              await recordActivity({
-                action: 'autoRepack',
-                subAction: 'trigger',
-                date: today,
-                staff: '시스템',
-                message: `🔄 생산 자동 재포장 — ${s.meatNameSnapshot} ${(surplusG/1000).toFixed(2)}kg (전처리 ${s.unitWeightG}g 단위 차감 후 잔여, 신규 재포장 lot)`,
-                details: {
-                  meatTypeId,
-                  meatName: s.meatNameSnapshot,
-                  surplusG,
-                  processedUnitWeightG: s.unitWeightG,
-                  processedStockId: s.id,
-                  repackedStockId: newRepackedRef.id,
-                  mode: 'newLot',
-                  batchId: productionBatchId,
-                },
-              });
-
-              meatStocks.push({
-                id: newRepackedRef.id,
-                meatTypeId,
-                meatNameSnapshot: s.meatNameSnapshot,
-                stage: 'repacked',
-                remaining: surplusG,
-                unitWeightG: null,
-              });
-            }
-          }
-
-          remaining -= deductG;
-        }
-      }
-
-      if (remaining > 0) {
-        const frozenStocks = meatStocks
-          .filter(s => s.meatTypeId === meatTypeId && s.stage === 'frozen' && s.remaining > 0)
-          .sort((a, b) => (a.incomingDate || '').localeCompare(b.incomingDate || ''));
-
-        for (const s of frozenStocks) {
-          if (remaining <= 0) break;
-          const deduct = Math.min(s.remaining, remaining);
-          const newRemaining = s.remaining - deduct;
-          await updateDoc(doc(db, 'meatStocks', s.id), { remaining: newRemaining, closed: newRemaining <= 0, updatedAt: new Date() });
-          ledgerItems.push({ collection: 'meatStocks', docId: s.id, field: 'remaining', delta: -deduct, before: s.remaining, after: newRemaining, label: `${s.meatNameSnapshot} 냉동창고`, stockUpdatedAtSnapshot: new Date() });
-
-          await recordMeatLog({
-            type: 'productionDeduct',
-            date: today,
-            meatTypeId,
-            meatNameSnapshot: s.meatNameSnapshot,
-            stage: 'frozen',
-            meatStockId: s.id,
-            delta: -deduct,
-            before: s.remaining,
-            after: newRemaining,
-            staff: staffName,
-            reason: '내일생산불러오기 차감',
-            batchId: productionBatchId,
-          });
-
-          remaining -= deduct;
-        }
-      }
-    }
-
-    // 봉투 차감
-    for (const [bagTypeId, neededPcs] of Object.entries(bagNeeds)) {
-      const bagSnap = await getDoc(doc(db, 'bagTypes', bagTypeId));
-      if (bagSnap.exists()) {
-        const current = bagSnap.data().currentQty || 0;
-        const newQty = current - neededPcs;
-        await updateDoc(doc(db, 'bagTypes', bagTypeId), { currentQty: newQty, updatedAt: new Date() });
-        ledgerItems.push({ collection: 'bagTypes', docId: bagTypeId, field: 'currentQty', delta: -neededPcs, before: current, after: newQty, label: `${bagSnap.data().name} 봉투`, stockUpdatedAtSnapshot: new Date() });
-        await addDoc(collection(db, 'bagLogs'), { date: today, timestamp: new Date(), bagTypeId, bagNameSnapshot: bagSnap.data().name, type: 'autoDeduct', qty: -neededPcs, before: current, after: newQty, staffName, note: '내일생산불러오기 자동차감' });
-      }
-    }
-
-    // ledger 저장
-    const ledgerRef = await addDoc(collection(db, 'stockLedger'), {
-      actionType: 'productionCompletion',
-      actionId: today,
-      timestamp: new Date(),
-      runDate: today,
-      status: 'active',
-      items: ledgerItems,
-    });
-
-    // productionCompletion 저장
-    await setDoc(doc(db, 'productionCompletion', today), {
-      runDate: today,
-      targetProductionDate: nextBizDay,
-      status: 'completed',
-      idempotencyKey: `productionCompletion:${today}`,
-      staffName,
-      ledgerId: ledgerRef.id,
-      completedAt: new Date(),
-    });
-
-    for (const p of targetProductions) {
-      await updateDoc(doc(db, 'productions', p.id), { lockedByCompletion: true });
-    }
-
+    const outcome = await atomicProductionLoad({ db, date: today, productionIds: targetProductions.map(p => p.id),
+      recipeIds: targetProductions.map(p => p.recipeId), stockIds: meatStocks.map(s => s.id), assertCurrent,
+      build: async ({ writer, executionId, meatStocks, recipes, targetProductions }) => {
+        const recordMeatLog = entry => writeProductionMeatLog(entry, { writer });
+        const recordActivity = entry => writeProductionActivity(entry, { writer });
+        return buildProductionLoad({ db, today, nextBizDay, staffName, writer, executionId, meatStocks, recipes, targetProductions,
+          recordMeatLog, recordActivity, notify:message=>{ throw Error(message); } });
+      } });
+    if (outcome.aborted) return;
     await loadAllData();
     renderMainLayout();
-    alert('내일생산불러오기 완료!');
-
+    alert(outcome.alreadyCompleted ? '이미 완료된 생산입니다. 중복 차감하지 않았습니다.' : '내일생산불러오기 완료!');
   } catch (err) {
     console.error(err);
-    alert('오류가 발생했습니다: ' + err.message);
+    alert('생산 저장 상태를 확인해주세요. 새로고침 후 완료 여부를 확인하면 중복 차감을 피할 수 있습니다.\n' + err.message);
   }
+}
+
+async function rollbackCompletionAtomically(today, reason, staff) {
+  const epoch = sessionStore.epoch, uid = currentUser?.uid, ledgerId = completionDoc?.ledgerId;
+  if (!ledgerId) throw Error('생산 완료 원장을 확인해주세요.');
+  const assertCurrent = async () => { if (!uid || currentUser?.uid !== uid || sessionStore.epoch !== epoch) throw Error('로그인 상태가 변경됐습니다.'); };
+  return atomicProductionRollback({ db, date:today, ledgerId, productionIds:nextProductions.map(p=>p.id),
+    staff, uid, reason, assertCurrent, confirmChanged: item => showConfirmModal({ title:'재고 변동 감지',
+      message: item.label + ' 재고가 변경됐습니다. 이 작업의 차감분만 복원할까요? 모든 항목을 함께 처리합니다.',
+      confirmText:'복원', danger:true }) });
 }
 
 async function handleCancelCompletion() {
@@ -3491,74 +3175,10 @@ async function handleCancelCompletion() {
   const today = getToday();
   try { await confirmCurrent(); } catch (error) { alert(error.message); return; }
   const cancelStaffName = completionDoc?.staffName || 'unknown';
-  const productionBatchId = `productionCompletion:${completionDoc?.runDate || today}`;
+  const productionBatchId = completionDoc?.executionId || `productionCompletion:${completionDoc?.runDate || today}`;
 
   try {
-    if (completionDoc?.ledgerId) {
-      const ledgerSnap = await getDoc(doc(db, 'stockLedger', completionDoc.ledgerId));
-      if (ledgerSnap.exists()) {
-        const items = ledgerSnap.data().items || [];
-        for (const item of items) {
-          const docSnap = await getDoc(doc(db, item.collection, item.docId));
-          if (!docSnap.exists()) continue;
-          const currentVal = docSnap.data()[item.field];
-
-          if (currentVal !== item.after) {
-            const __c = await showConfirmModal({
-              title: '재고 변동 감지',
-              message: `내일생산불러오기 이후 ${item.label} 재고가 변경된 이력이 있습니다.\n내일생산불러오기 당시 차감분만 복원됩니다.\n\n강제 복원하시겠습니까?`,
-              confirmText: '강제 복원',
-              danger: true,
-            });
-            if (!__c) continue;
-          }
-
-          // 자동 재포장 신규 lot은 remaining=0 + closed=true 처리
-          if (item.isNewDoc) {
-            const newRemaining = currentVal - item.delta; // 보통 0
-            await updateDoc(doc(db, item.collection, item.docId), {
-              [item.field]: newRemaining,
-              closed: true,
-              updatedAt: new Date(),
-            });
-          } else {
-            await updateDoc(doc(db, item.collection, item.docId), {
-              [item.field]: currentVal - item.delta,
-              closed: false,
-              updatedAt: new Date(),
-            });
-          }
-
-          // meatStocks만 meatLogs 기록 (봉투/계란은 대상 아님)
-          if (item.collection === 'meatStocks') {
-            const docData = docSnap.data();
-            await recordMeatLog({
-              type: 'productionRollback',
-              date: today,
-              meatTypeId: docData.meatTypeId || null,
-              meatNameSnapshot: docData.meatNameSnapshot || '',
-              stage: docData.stage || 'frozen',
-              meatStockId: item.docId,
-              delta: -item.delta,
-              before: currentVal,
-              after: currentVal - item.delta,
-              staff: cancelStaffName,
-              reason: `내일생산불러오기 취소 - ${reason}`,
-              batchId: productionBatchId,
-            });
-          }
-        }
-        await updateDoc(doc(db, 'stockLedger', completionDoc.ledgerId), { status: 'rolledBack', rolledBackAt: new Date() });
-      }
-    }
-
-    if (completionDoc?.id) {
-      await updateDoc(doc(db, 'productionCompletion', completionDoc.id), { status: 'cancelled', cancelReason: reason, cancelledAt: new Date() });
-    }
-
-    for (const p of nextProductions) {
-      await updateDoc(doc(db, 'productions', p.id), { lockedByCompletion: false });
-    }
+    await rollbackCompletionAtomically(today, `내일생산불러오기 취소 - ${reason}`, cancelStaffName);
 
     await loadAllData();
     renderMainLayout();
@@ -3614,81 +3234,10 @@ async function handleRefreshCompletion() {
   const today = getToday();
   try { await confirmCurrent(); } catch (error) { alert(error.message); return; }
   const oldStaffName = completionDoc?.staffName || 'unknown';
-  const productionBatchId = `productionCompletion:${completionDoc?.runDate || today}`;
+  const productionBatchId = completionDoc?.executionId || `productionCompletion:${completionDoc?.runDate || today}`;
 
   try {
-    // === 1단계: 롤백 (handleCancelCompletion 로직 그대로) ===
-    if (completionDoc?.ledgerId) {
-      const ledgerSnap = await getDoc(doc(db, 'stockLedger', completionDoc.ledgerId));
-      if (ledgerSnap.exists()) {
-        const items = ledgerSnap.data().items || [];
-        for (const item of items) {
-          const docSnap = await getDoc(doc(db, item.collection, item.docId));
-          if (!docSnap.exists()) continue;
-          const currentVal = docSnap.data()[item.field];
-
-          if (currentVal !== item.after) {
-            const __cf = await showConfirmModal({
-              title: '재고 변동 감지',
-              message: `이전 마감 이후 ${item.label} 재고가 변경된 이력이 있습니다.\n마감 당시 차감분만 복원됩니다.\n\n강제 복원하시겠습니까?`,
-              confirmText: '강제 복원',
-              danger: true,
-            });
-            if (!__cf) continue;
-          }
-
-          // 자동 재포장 신규 lot은 remaining=0 + closed=true
-          if (item.isNewDoc) {
-            const newRemaining = currentVal - item.delta;
-            await updateDoc(doc(db, item.collection, item.docId), {
-              [item.field]: newRemaining,
-              closed: true,
-              updatedAt: new Date(),
-            });
-          } else {
-            await updateDoc(doc(db, item.collection, item.docId), {
-              [item.field]: currentVal - item.delta,
-              closed: false,
-              updatedAt: new Date(),
-            });
-          }
-
-          if (item.collection === 'meatStocks') {
-            const docData = docSnap.data();
-            await recordMeatLog({
-              type: 'productionRollback',
-              date: today,
-              meatTypeId: docData.meatTypeId || null,
-              meatNameSnapshot: docData.meatNameSnapshot || '',
-              stage: docData.stage || 'frozen',
-              meatStockId: item.docId,
-              delta: -item.delta,
-              before: currentVal,
-              after: currentVal - item.delta,
-              staff: oldStaffName,
-              reason: `새로고침 롤백 - ${reason}`,
-              batchId: productionBatchId,
-            });
-          }
-        }
-        await updateDoc(doc(db, 'stockLedger', completionDoc.ledgerId), {
-          status: 'rolledBack',
-          rolledBackAt: new Date(),
-        });
-      }
-    }
-
-    if (completionDoc?.id) {
-      await updateDoc(doc(db, 'productionCompletion', completionDoc.id), {
-        status: 'cancelled',
-        cancelReason: `새로고침: ${reason}`,
-        cancelledAt: new Date(),
-      });
-    }
-
-    for (const p of nextProductions) {
-      await updateDoc(doc(db, 'productions', p.id), { lockedByCompletion: false });
-    }
+    await rollbackCompletionAtomically(today, `새로고침 롤백 - ${reason}`, oldStaffName);
 
     // 데이터 다시 로드 — 재검사 정확하게
     await loadAllData();

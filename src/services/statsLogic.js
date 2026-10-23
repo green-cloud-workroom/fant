@@ -191,10 +191,23 @@ export function usageEvents(data, range) {
       date: log.date, qty: -qty * scale, unit, stage, product: log.relatedProductionId || '제품 연결 미기록',
       source: `${collection}/${log.id}`, note: '기록일 기준 · 실제 투입 측정량과 다름' });
   }
-  const additions = corrections.filter(c => c.kind === 'includeUsage').map(c => correctedEvent(c, data))
+  const explicit = new Set(corrections.map(c => c.source));
+  const linkedReturns = [], unverified = [];
+  for (const log of data.meatLogs || []) {
+    if (log.type !== 'repackedIn' || log.movementSchemaVersion !== 2 || explicit.has('meatLogs/' + log.id)) continue;
+    const ledger = (data.stockLedger || []).find(l => l.id === log.ledgerId);
+    const items = ledger?.items?.filter(i => i.sourceLogId === log.id && i.sourceCollection === 'meatLogs'
+      && i.docId === log.meatStockId && i.delta === log.delta && i.before === log.before && i.after === log.after) || [];
+    if (ledger?.executionId === log.executionId && items.length === 1 && log.delta > 0
+      && Math.abs(log.after - log.before - log.delta) < 1e-6) {
+      linkedReturns.push({ kind:'includeUsage', source:'meatLogs/' + log.id, id:'linked:' + log.ledgerId + ':' + log.id,
+        reason:'작업 원장에 직접 연결된 자동 재포장 반환' });
+    } else unverified.push({source:'meatLogs/' + log.id, reason:'자동 반환 원장·수량 연결 불일치', metric:'usage'});
+  }
+  const additions = [...corrections.filter(c => c.kind === 'includeUsage'), ...linkedReturns].map(c => correctedEvent(c, data))
     .filter(e => inRange(e.date, range) && e.date <= range.today);
   events.push(...additions);
-  const pending = corrections.filter(c => c.kind === 'hold' && c.metric === 'usage').filter(c => {
+  const pending = [...corrections.filter(c => c.kind === 'hold' && c.metric === 'usage' || c.unresolvedQuantity === true), ...unverified].filter(c => {
     const [collection, id] = c.source.split('/'); return inRange(data[collection]?.find(r => r.id === id)?.date, range);
   });
   const classifications = corrections.filter(c => ['excludeUsage', 'classifyUsage'].includes(c.kind)).filter(c => {

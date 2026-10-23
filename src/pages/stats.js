@@ -242,7 +242,7 @@ function buildView(tab, data, range, agg, filter = matches) {
       section('제품별 계산상 원료 사용량', ['원료', '제품', '단위', '계산상 사용량'], productGroups.map(g => [g.name, g.stage, g.unit, g.total])),
       section('사용량 근거 기록', ['기준 날짜', '품목', '기준', '수량', '단위', '원본 기록', '제품·생산 연결', '비고'], eventRows(events)),
       section('집계 확인 사항', ['구분', '원본 기록'], [
-        ...projection.classifications.map(c => [c.classification === 'test' ? '테스트 확인 · 사용 통계 제외 · ' + c.reason : '실사 보정 확인 · 실제 사용량 합산 제외 · ' + c.reason, c.source]),
+        ...projection.classifications.map(c => [({test:'테스트 확인',stockReconciliation:'실사 보정 확인',cancelledExecution:'취소된 실행',processingError:'시스템 처리 오류 · 실제 사용량 확인 불가'}[c.classification] || '분류 확인') + ' · 실제 사용량 합산 제외 · ' + c.reason, c.source]),
         ...projection.pending.map(c => ['확인 대기 · ' + c.reason, c.source]),
         ...projection.missing.map(source => ['수량·스냅샷 누락', source]),
         ...projection.unconfirmed.filter(filter).map(r => ['실적 미확인 · 계산상 사용량 제외', r.source]),
