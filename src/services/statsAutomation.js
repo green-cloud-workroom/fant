@@ -1,6 +1,7 @@
 // Additive, read-only decisions. The statistical projections remain authoritative.
 import { validDate, daysBetween, supplyEvents, usageEvents, productionEvents, summarize, periodKey } from './statsLogic.js';
 import {manualMovementIndex} from './manualMovementLogic.js';
+import { cancellationChecks, duplicateReceiptChecks, explicitlyRemovedReceipt } from './receiptIntegrity.js';
 
 export const AUTOMATION_VERSION = 'stats-shadow-v1';
 // Release requires a separate reviewed code change. No UI/config can enable delivery.
@@ -25,6 +26,8 @@ const eventKey = e => JSON.stringify([e.itemId, e.stage, e.unit,
 const issue = (kind, key, title, evidence, extra = {}) => ({ kind, key: JSON.stringify([kind, key]), title,
   evidence, severity: 'attention', target: kind === 'registration' ? 'schedule' : 'stats',
   recipientRoles: kind === 'registration' ? ['office'] : ['office', 'owner'], ...extra });
+const integrityIssue = row => issue(row.kind, row.identity, row.title, row.evidence, { severity: 'review' });
+const datedKinds = ['quantity', 'duplicateReceipt', 'cancellation'];
 
 function timestampMillis(value) {
   if (typeof value?.toMillis === 'function') return value.toMillis();
@@ -63,6 +66,13 @@ export function adjustmentContextText(item) {
 
 // Supplement existing system text without reopening, acknowledging or overwriting a conversation.
 export function confirmAdjustmentPatch(existing, item) {
+  if (['duplicateReceipt', 'cancellation'].includes(item.kind)) {
+    if (existing.cancelled || existing.statsResolvedAt || typeof existing.body !== 'string') return null;
+    const next = '[입고·취소 추가 확인]\n' + evidenceText(item), previous = existing.statsIntegrityContextText || '';
+    if (next === previous || previous && !existing.body.endsWith('\n\n' + previous)) return null;
+    const base = previous ? existing.body.slice(0, -previous.length - 2) : existing.body;
+    return { body: base + '\n\n' + next, statsIntegrityContextText: next };
+  }
   if (item.kind !== 'quantity' || existing.cancelled || existing.statsResolvedAt || typeof existing.body !== 'string') return null;
   const next = adjustmentContextText(item), previous = existing.statsAdjustmentContextText || '';
   if (next === previous) return null;
@@ -138,8 +148,19 @@ export function evaluateStatsAutomation(data, { today, complete = false, policy 
   const range = automationRange(today), held = [], candidates = [];
   if (!complete || AUTOMATION_SOURCES.some(name => !Array.isArray(data[name]))) return { version: AUTOMATION_VERSION, mode: 'shadow', range, candidates,
     held: [{ reason: '전체 원본 읽기 완료 확인 필요' }], weekly: null, deliveryEnabled: false };
+  const cancellation = cancellationChecks(data, range);
+  candidates.push(...cancellation.issues.map(integrityIssue));
+  // Broken cancellation evidence must not be silently removed to manufacture statistics.
+  // Keep existing issues held, but allow the independent integrity checks to be delivered.
+  if (cancellation.invalid.length) return { version: AUTOMATION_VERSION, mode: 'shadow', range,
+    candidates, held: [{ reason: '취소 근거 불일치: 통계 기반 판단 보류', sources: cancellation.invalid }],
+    weekly: null, integrityComplete: true, deliveryEnabled: false };
   const supply = supplyEvents(data, range), usage = usageEvents(data, range);
   const pendingSupply = new Set(supply.pending.map(c => c.event.itemId));
+  const receiptHistory = supplyEvents(data, { ...range, startDate: '2000-01-01' });
+  const duplicates = duplicateReceiptChecks(data, receiptHistory.events.filter(e => !pendingSupply.has(e.itemId)), range.startDate);
+  candidates.push(...duplicates.map(integrityIssue));
+  const duplicateSources = new Set(duplicates.map(row => row.evidence.source));
   held.push(...supply.pending.map(c => ({ source: c.source, itemId: c.event.itemId, reason: c.reason })),
     ...usage.pending.map(c => ({ source: c.source, reason: c.reason })));
   const schedules = data.schedules || [];
@@ -172,6 +193,7 @@ export function evaluateStatsAutomation(data, { today, complete = false, policy 
     }
     for (const event of events) {
       if (pendingSupply.has(event.itemId)) continue;
+      if (duplicateSources.has(event.source)) continue;
       const assessment = quantityAssessment(event, comparisons.get(eventKey(event)), policy);
       if (assessment.state === 'review') candidates.push(issue('quantity', [event.source, event.itemId, event.stage],
         event.name + ' 수량 확인', { ...assessment, source: event.source, itemId: event.itemId, qty: event.qty,
@@ -221,9 +243,15 @@ export function workingDaysBetween(start, end, holidays) {
 // Seen/ack is per recipient, never issue resolution. Missing/partial evaluations
 // cannot close an existing issue. Reappearance after source resolution is a new episode.
 export function reconcileIssues(previous, evaluation, { today, holidays = [], calendarComplete = false } = {}) {
-  if (!evaluation.weekly || evaluation.mode !== 'shadow') return previous;
-  const next = structuredClone(previous), active = new Set(evaluation.candidates.map(c => c.key));
-  for (const item of evaluation.candidates) {
+  if ((!evaluation.weekly && !evaluation.integrityComplete) || evaluation.mode !== 'shadow') return previous;
+  const next = structuredClone(previous), active = new Set();
+  for (const candidate of evaluation.candidates) {
+    // Reuse an already delivered quantity issue for the very same source; do not
+    // create another personal confirm just because a stronger integrity rule now applies.
+    const reused = candidate.kind === 'duplicateReceipt' && Object.values(previous).find(row =>
+      row.state === 'open' && ['quantity', 'duplicateReceipt'].includes(row.kind) && row.evidence.source === candidate.evidence.source);
+    const item = reused ? { ...candidate, key: reused.key } : candidate;
+    active.add(item.key);
     const old = next[item.key];
     const episode = old?.state === 'open' ? old.episode : (old?.episode || 0) + 1;
     const started = old?.state === 'open' ? old.firstSeen : today;
@@ -255,12 +283,15 @@ export function confirmPayload(item, recipient, today, requestId) {
   const system = { uid: 'system:production-stats', name: '생산 통계 알림' };
   const weekly = item.kind === 'weekly';
   const context = adjustmentContextText(item);
+  const integrity = ['duplicateReceipt', 'cancellation'].includes(item.kind) ? '[입고·취소 추가 확인]\n' + evidenceText(item) : '';
   return { kind: weekly ? '공유' : '요청', requesterUid: system.uid, requesterName: system.name,
     approverUid: recipient.uid, approverName: recipient.name,
     participantUids: [system.uid, recipient.uid], participantNames: { [system.uid]: system.name, [recipient.uid]: recipient.name },
     date: today, effectiveDate: today, deferredFrom: null, title: item.title,
-    body: [item.title, evidenceText(item), '확인은 읽음 표시입니다. 원본의 문제 해결 상태와 별도입니다.'].join('\n') + (context ? '\n\n' + context : ''),
+    body: [item.title, integrity ? '' : evidenceText(item), '확인은 읽음 표시입니다. 원본의 문제 해결 상태와 별도입니다.'].filter(Boolean).join('\n')
+      + (context ? '\n\n' + context : '') + (integrity ? '\n\n' + integrity : ''),
     ...(context ? { statsAdjustmentContextText: context } : {}),
+    ...(integrity ? { statsIntegrityContextText: integrity } : {}),
     linkUrl: 'https://green-cloud-workroom.github.io/fant/#' + (['schedule', 'meat', 'stats'].includes(item.target) ? item.target : 'stats'),
     statsSource: { version: AUTOMATION_VERSION, key: item.key, episode: item.episode || 1,
       escalation: item.escalation || 0, notificationLevel: item.notificationLevel || 0 },
@@ -272,6 +303,8 @@ function evidenceText(item) {
   const e = item.evidence, fmt = v => number(v) ? v.toLocaleString('ko-KR', { maximumFractionDigits: 3 }) : '확인 불가';
   if (item.kind === 'registration') return `최근 입고 기록: ${e.lastDate}\n평균 입고 간격: ${fmt(e.meanInterval)}일 (간격 표본 ${e.samples}개)\n확인 권고 시점: ${e.suggestedDate}\n입고예정관리에서 등록 여부와 일정을 확인해주세요.\n${e.note}`;
   if (item.kind === 'quantity') return `기록일: ${e.date}\n수량: ${fmt(e.qty)}${e.unit}\n이전 수량 중앙값: ${fmt(e.baseline)}${e.unit} (표본 ${e.samples}건)\n입력 수량과 단위를 확인해주세요. 오류로 확정한 알림은 아닙니다.\n원본: ${e.source}`;
+  if (item.kind === 'duplicateReceipt') return `먼저 기록된 입고: ${e.originalDate} · ${fmt(e.originalQty)}${e.unit}\n확인이 필요한 입고: ${e.date} · ${fmt(e.qty)}${e.unit}\n판단 근거: ${e.basis}\n${e.scheduleIds.length ? '입고예정: ' + e.scheduleIds.join(', ') + '\n' : ''}실제로 각각 입고됐는지 확인해주세요. 오류 확정이나 자동 재고 조정은 아닙니다.\n비교 원본: ${e.originalSource}\n확인 원본: ${e.source}`;
+  if (item.kind === 'cancellation') return `취소 기록일: ${e.date}\n원본 기록일: ${e.originalDate}\n원본 수량: ${fmt(e.qty)}${e.unit}\n취소 수량: ${fmt(e.cancelQty)}${e.unit}\n합산 잔량: ${fmt(e.remainingQty)}${e.unit}\n확인 사항: ${e.problem}\n사유: ${e.reason}\n원본 연결·품목·반대 수량과 처리 이력을 확인해주세요. 자동 재고 조정은 하지 않습니다.\n취소 대상: ${e.originalSource}\n취소 기록: ${e.source}`;
   if (item.kind === 'shortage') return `현재 재고: ${fmt(e.qty)}${e.unit}\n기록상 달력 일평균: ${fmt(e.calendarDailyMean)}${e.unit}\n추정 잔여: ${fmt(e.estimatedDaysLeft)}일\n현재 재고와 보충 필요 여부를 확인해주세요.\n${e.note}`;
   if (item.kind === 'weekly') return [`${e.startDate} ~ ${e.endDate}`, ...['production', 'supply', 'usage'].flatMap((key, i) =>
     [`[${['생산', '입고', '사용'][i]}]`, ...e[key].map(r => `${r.name} · ${r.stage}: ${fmt(r.total)}${r.unit}`)]),
@@ -283,7 +316,7 @@ function evidenceText(item) {
 export function planStatsDeliveries(issues, weekly, { today, activationDate }) {
   if (!validDate(activationDate) || activationDate > today) return [];
   const rows = Object.values(issues).filter(row => row.state === 'open' && row.evaluationState !== 'held'
-    && (row.kind !== 'quantity' || row.evidence.date >= activationDate));
+    && (!datedKinds.includes(row.kind) || row.evidence.date >= activationDate));
   if (new Date(today).getUTCDay() === 1 && weekly && weekly.endDate >= activationDate
     && !weekly.unknown?.supply && !weekly.unknown?.usage) rows.push({
     key: weekly.key, kind: 'weekly', title: '지난주 생산·원료 운영 요약', evidence: weekly,
@@ -292,9 +325,18 @@ export function planStatsDeliveries(issues, weekly, { today, activationDate }) {
 }
 
 export function provenResolutions(previous, data, today) {
-  const range = automationRange(today), supply = supplyEvents(data, range), usage = usageEvents(data, range);
+  const range = automationRange(today), cancellation = cancellationChecks(data, range);
+  const invalid = new Set(cancellation.invalid);
+  const cancellationResolved = Object.values(previous).filter(row => row.state === 'open' && row.kind === 'cancellation'
+    && !invalid.has(row.evidence.source) && data[row.evidence.source.split('/')[0]]?.some(r =>
+      r.id === row.evidence.source.split('/')[1] && r.manualMovement?.kind === 'cancel')).map(row => row.key);
+  if (invalid.size) return cancellationResolved;
+  const supply = supplyEvents(data, range), usage = usageEvents(data, range);
   return Object.values(previous).filter(row => {
     if (row.state !== 'open') return false;
+    if (row.kind === 'cancellation') return cancellationResolved.includes(row.key);
+    if (row.kind === 'duplicateReceipt') return [row.evidence.source, row.evidence.originalSource]
+      .some(path => explicitlyRemovedReceipt(data, supply, path));
     if (supply.pending.some(c => c.event.itemId === row.evidence.itemId)) return false;
     if (row.kind === 'registration') return (data.schedules || []).some(s => s.status === 'scheduled'
       && scheduleItem(s) === row.evidence.itemId && validDate(s.date) && s.date >= today

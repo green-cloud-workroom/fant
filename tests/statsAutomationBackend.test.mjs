@@ -10,6 +10,58 @@ import { validDate } from '../src/services/statsLogic.js';
 const requireBackend = createRequire(process.env.FANT_STATS_BACKEND_PACKAGE || new URL('../../fantapet-inventory/functions/package.json', import.meta.url));
 const ts = requireBackend('typescript');
 
+test('an already sent quantity warning is enriched by duplicate evidence without a second confirm on subsequent runs', async () => {
+  const e = await backend({ approvedRelease: true });
+  e.records.set('productionStatsAutomation/control', e.config);
+  e.addRecipient('owner', 'owner'); e.addRecipient('office', 'office');
+  for (const id of ['a', 'b']) e.records.set('bagLogs/' + id, { id, date: '2026-10-22', type: 'incoming', bagTypeId: 'b', qty: 96000 });
+  const old = { kind: 'quantity', key: 'existing-quantity-key', state: 'open', firstSeen: '2026-10-22', episode: 1,
+    notificationLevel: 2, escalation: 0, title: '기존 수량 확인', target: 'stats', recipientRoles: ['office', 'owner'],
+    acknowledgements: { office: 'read' }, evidence: { source: 'bagLogs/b', itemId: 'bagLogs:b', date: '2026-10-22',
+      qty: 96000, baseline: 96, ratio: 1000, samples: 6, unit: '장', stage: '봉투' } };
+  await e.api.deliverStatsIssue(old, e.config);
+  e.records.set('productionStatsAutomation/liveState', { issues: { [old.key]: old } });
+  for (const [path, row] of e.records) if (path.startsWith('confirmRequests/')) {
+    row.approverAcknowledgedAt = 'READ'; row.status = '확인'; row.replies = ['기존 대화'];
+  }
+  const result = await e.api.runStatsShadow(); assert.equal(result.actualDeliveries, 0);
+  const first = structuredClone([...e.records].filter(([p]) => p.startsWith('confirmRequests/')));
+  assert.equal(first.length, 2);
+  for (const [, row] of first) { assert.match(row.body, /중복|여러 건/); assert.equal(row.status, '확인'); assert.deepEqual(row.replies, ['기존 대화']); }
+  assert.equal((await e.api.runStatsShadow()).actualDeliveries, 0);
+  assert.deepEqual([...e.records].filter(([p]) => p.startsWith('confirmRequests/')), first);
+});
+
+test('new receipt-integrity alerts: daily/concurrent retries preserve existing read and conversation history', async () => {
+  for (const brokenCancel of [false, true]) {
+    const e = await backend({ approvedRelease: true });
+    e.records.set('productionStatsAutomation/control', e.config);
+    e.addRecipient('owner', 'owner'); e.addRecipient('office', 'office');
+    const original = { id: 'a', date: '2026-10-22', type: 'incoming', bagTypeId: 'b', qty: 96000 };
+    const second = { ...original, id: 'b' };
+    e.records.set('bagLogs/a', original); e.records.set('bagLogs/b', second);
+    e.records.set('bagTypes/b', { currentQty: 192000 });
+    e.records.set('equipmentParts/p', { replacementIntervalDays: 90 });
+    if (brokenCancel) e.records.set('bagLogs/cancel_v1_b', { ...second, id: 'cancel_v1_b', type: 'adjust',
+      qty: -95000, before: 192000, after: 97000, manualMovement: { version: 1, kind: 'cancel', cancelOf: 'b',
+        originalKind: 'receipt', enteredAmount: -95000, reason: '중복 취소', changesStock: true } });
+    const operational = new Map([...e.records].filter(([path]) => !path.startsWith('productionStats')));
+    assert.equal((await e.api.runStatsShadow()).actualDeliveries, 2);
+    const confirms = [...e.records].filter(([p]) => p.startsWith('confirmRequests/'));
+    for (const [, row] of confirms) {
+      row.approverAcknowledgedAt = 'READ'; row.status = '확인'; row.answer = '확인합니다';
+      row.replies = [{ uid: 'office', text: '기존 대화', at: 'before' }];
+    }
+    const before = structuredClone(confirms);
+    const retries = await Promise.all([e.api.runStatsShadow(), e.api.runStatsShadow(), e.api.runStatsShadow()]);
+    assert.ok(retries.every(r => r.actualDeliveries === 0));
+    assert.deepEqual([...e.records].filter(([p]) => p.startsWith('confirmRequests/')), before);
+    for (const [path, row] of operational) assert.deepEqual(e.records.get(path), row);
+    assert.ok(e.writes.every(p => p.startsWith('productionStatsAutomation') || p.startsWith('confirmRequests/')));
+    assert.ok(!e.writes.some(p => p.startsWith('activityLogs/') || p.startsWith('productionStatsDeliveries/')));
+  }
+});
+
 async function backend({ approvedRelease = false } = {}) {
   const records = new Map(), users = new Map(), writes = [], reads = [];
   const clone = v => v == null ? v : structuredClone(v);

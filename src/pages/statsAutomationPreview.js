@@ -14,12 +14,14 @@ export function previewMarkup(result) {
     c.recipientRoles.map(r => r === 'owner' ? '대표' : '사무팀').join('·'),
     c.kind === 'registration' ? `최근 ${c.evidence.lastDate} / 평균 ${fmt(c.evidence.meanInterval)}일 / 표본 ${c.evidence.samples}`
       : c.kind === 'quantity' ? `${c.evidence.date} / ${fmt(c.evidence.qty)}${c.evidence.unit} / 중앙값 ${fmt(c.evidence.baseline)} / 표본 ${c.evidence.samples}`
+        : c.kind === 'duplicateReceipt' ? `${c.evidence.originalDate} ↔ ${c.evidence.date} / ${fmt(c.evidence.originalQty)} ↔ ${fmt(c.evidence.qty)}${c.evidence.unit} / ${c.evidence.basis}`
+        : c.kind === 'cancellation' ? `${c.evidence.originalSource} / 원본 ${fmt(c.evidence.qty)}${c.evidence.unit} / 취소 ${fmt(c.evidence.cancelQty)}${c.evidence.unit} / ${c.evidence.problem}`
         : `추정 ${fmt(c.evidence.estimatedDaysLeft)}일 / ${fmt(c.evidence.qty)}${c.evidence.unit}`, c.evidence.source || c.evidence.itemId,
     adjustmentContextText(c) || '해당 이력 없음']);
   const weekly = result.weekly;
   return card('발송 없는 알림 검증', '<p>이 검증 화면에서는 컨펌을 발송하지 않습니다. 자동 발송 여부는 서버 운영 설정을 따릅니다. 기존 알림은 그대로 유지합니다.</p>'
     + '<p>통계의 탭·조회기간과 별도로 최근 90일을 검증합니다. 조회 ' + esc(result.range.startDate) + ' ~ ' + esc(result.range.endDate)
-    + ' · 후보 ' + candidates.length + '건 · 기준: 입고 간격 5개 이상, 수량 비교 6건 이상·중앙값 대비 10배 차이. 모두 검증용 추천입니다.</p>'
+    + ' · 후보 ' + candidates.length + '건 · 기준: 입고 간격 5개 이상, 수량 비교 6건 이상·중앙값 대비 10배 차이. 같은 입고예정 중복·3일 이내 동일 수량 반복·취소 원본과 반대 수량도 확인합니다. 오류 확정이 아닌 확인 권고입니다.</p>'
     + '<p>' + esc(result.snapshotNote || '') + '</p>'
     + '<p>입고 집계 제외 ' + (result.coverage?.excludedReceipts ?? '미확인')
     + '건 · 사용량 근거 누락 ' + (result.coverage?.missingUsage ?? '미확인') + '건</p>')

@@ -8,7 +8,7 @@ const pkg=JSON.parse(await readFile(resolve(source,'package.json'),'utf8'));
 await writeFile(resolve(dir,'functions/package.json'),JSON.stringify({name:'production-stats-confirm-only',private:true,type:'module',main:'lib/index.js',engines:{node:'22'},dependencies:{'firebase-admin':pkg.dependencies['firebase-admin'],'firebase-functions':pkg.dependencies['firebase-functions']}},null,2));
 await copyFile(resolve(source,'tsconfig.json'),resolve(dir,'functions/tsconfig.json'));
 await copyFile(resolve('integrations/productionStats/server.ts'),resolve(dir,'functions/src/server.ts'));
-for(const file of ['statsAutomation','statsLogic','incomingCorrections','statsCorrections','manualMovementLogic']) {
+for(const file of ['statsAutomation','statsLogic','incomingCorrections','statsCorrections','manualMovementLogic','receiptIntegrity']) {
   await writeFile(resolve(dir,'functions/src/'+file+'.ts'),'// @ts-nocheck\n'+await readFile('src/services/'+file+'.js','utf8'));
 }
 await writeFile(resolve(dir,'functions/src/index.ts'),"import { initializeApp } from 'firebase-admin/app';\ninitializeApp();\nexport { productionStatsShadowDaily, onProductionStatsAdjustmentCreated } from './server.js';\n");
