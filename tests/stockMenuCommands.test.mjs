@@ -15,8 +15,8 @@ async function setup(route){
 }
 test('bag incoming keeps stock, bag history and activity in one transaction',async()=>{
   const e=await setup('bag');const bag=e.state.rows.bagTypes[0];
-  assert.equal(await e.page.saveBagStockChange(bag,{currentQty:120},{bagTypeId:'bag',before:100,after:120,qty:20,type:'incoming',date:'2026-09-14'},{action:'bag',subAction:'incoming',date:'2026-09-14',staff:'fixture'},'2026-09-14'),true);
-  assert.equal(e.state.rows.bagTypes[0].currentQty,120);assert.equal(e.state.commits.length,1);assert.equal(e.state.commits[0].length,3);
+  assert.equal(await e.page.saveBagStockChange(bag,{currentQty:120},{bagTypeId:'bag',before:100,after:120,qty:20,type:'incoming',date:'2026-09-14',staffName:'fixture'},{action:'bag',subAction:'incoming',date:'2026-09-14',staff:'fixture'},'2026-09-14',{kind:'receipt',operationId:'bag-entry',reason:''}),true);
+  assert.equal(e.state.rows.bagTypes[0].currentQty,120);assert.equal(e.state.commits.length,1);assert.equal(e.state.commits[0].length,4);
 });
 test('bag conflict keeps the attempted input and sends no write',async()=>{
   const e=await setup('bag'),bag={...e.state.rows.bagTypes[0]};e.state.rows.bagTypes[0].currentQty=99;

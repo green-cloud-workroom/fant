@@ -1,3 +1,7 @@
+import {movementLabel} from '../services/manualMovementLogic.js';
+import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
+import {saveManualMovement} from '../services/manualMovements.js';
+import {currentUser} from '../app.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
@@ -225,12 +229,12 @@ function renderBreadPanTab(breadLotSummary, breadPanLogs) {
 }
 
 function renderBreadPanLogRow(log) {
-  const typeLabel = {
+  const typeLabel = movementLabel(log,{
     incoming: '입고',
     preprocess: '전처리',
     adjust: '수동조정',
     rollback: '롤백',
-  }[log.type] || log.type;
+  }[log.type] || log.type);
 
   const typeColor = {
     incoming: 'tag-raw',       // 파란색
@@ -344,13 +348,13 @@ function renderFrozenPanTab(rows, lotSummary, frozenPanLogs) {
 }
 
 function renderFrozenPanLogRow(log) {
-  const typeLabel = {
+  const typeLabel = movementLabel(log,{
     tenderIn: '텐더동결 입고',
     preprocess: '전처리 입고',
     orderDeduct: '발주 차감',
     orderRollback: '발주 복원',
     adjust: '수동조정',
-  }[log.type] || log.type;
+  }[log.type] || log.type);
 
   const typeColor = {
     tenderIn: 'tag-raw',           // 파란색
@@ -609,6 +613,7 @@ function showBreadPanIncomingModal() {
   }
 
   showModal(`
+    ${movementFields({incoming:true,reasonField:true})}
     <h3 class="modal-title">빵판 입고</h3>
     <div class="form-row">
       <div class="form-group">
@@ -646,10 +651,12 @@ function showBreadPanIncomingModal() {
     </div>
   `);
 
+  const getMovement=bindMovementForm({db,name:'breadPanLogs',filter:()=>({lotId:document.getElementById('m_lot')?.value||''}),filterInputs:[document.getElementById('m_lot')],onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);document.getElementById('m_adjustType').value=delta>0?'plus':'minus';},reasonInput:document.getElementById('m_reason')});
   document.getElementById('btnSaveBreadPanIncoming').addEventListener('click', async () => {
  return runPageCommand(frozenPanResource,async command=>{
   const {addDoc}=commandWrites(command);
 
+    const selection=readMovementForm(getMovement);if(!selection)return;
     const productName = document.getElementById('m_recipe').value.trim();
     const qty = round2(parseFloat(document.getElementById('m_qty').value) || 0);
     const date = document.getElementById('m_date').value;
@@ -665,40 +672,10 @@ function showBreadPanIncomingModal() {
 
     const now = new Date();
 
-    // 1. breadPanLots 신규 lot
-    const lotRef = await addDoc(collection(db, 'breadPanLots'), {
-      productName,
-      date,
-      staffName,
-      initialQty: qty,
-      remaining: qty,
-      closed: false,
-      note: note || null,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    // 2. breadPanLogs 기록
-    await addDoc(collection(db, 'breadPanLogs'), {
-      type: 'incoming',
-      date,
-      productName,
-      qty,
-      before: 0,
-      after: qty,
-      lotId: lotRef.id,
-      lotDate: date,  // ★ 신규 — 입고는 자기 자신이 lot 시작일
-      expectedFrozenQty: null,
-      actualFrozenQty: null,
-      diff: null,
-      staffName,
-      uid: null,
-      note: note || null,
-      reason: null,
-      batchId: null,
-      ledgerId: null,
-      timestamp: now,
-    });
+    const lotRef=doc(collection(db,'breadPanLots'));
+    await saveManualMovement({db,command,name:'breadPanLogs',stockId:lotRef.id,selection,uid:currentUser?.uid||null,
+      stockData:{productName,date,staffName,initialQty:qty,remaining:0,closed:false,note:note||null,createdAt:now},
+      log:{type:'incoming',date,productName,qty,lotId:lotRef.id,lotDate:date,staffName,note:note||null}});
 
     if(!command.isCurrent())return;
     closeModal();
@@ -730,6 +707,7 @@ async function showBreadPanAdjustModal() {
     .join('');
 
   showModal(`
+    ${movementFields({incoming:false,reasonField:false})}
     <h3 class="modal-title">빵판 수동 조정</h3>
     <div class="form-group">
       <label>대상 lot *</label>
@@ -768,10 +746,12 @@ async function showBreadPanAdjustModal() {
     </div>
   `);
 
+  const getMovement=bindMovementForm({db,name:'breadPanLogs',filter:()=>({lotId:document.getElementById('m_lot')?.value||''}),filterInputs:[document.getElementById('m_lot')],onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);document.getElementById('m_adjustType').value=delta>0?'plus':'minus';},reasonInput:document.getElementById('m_reason')});
   document.getElementById('btnSaveBreadPanAdjust').addEventListener('click', async () => {
  return runPageCommand(frozenPanResource,async command=>{
   const {getDoc,addDoc,updateDoc}=commandWrites(command);
 
+    const selection=readMovementForm(getMovement);if(!selection)return;
     const lotId = document.getElementById('m_lot').value;
     const adjustType = document.getElementById('m_adjustType').value;
     const qtyInput = round2(parseFloat(document.getElementById('m_qty').value) || 0);
@@ -798,7 +778,7 @@ async function showBreadPanAdjustModal() {
     const after = round2(before + delta);
 
     // [음수 차단] 정책 변경 — 모든 수동조정에서 음수 잔량 불허
-    if (after < 0) {
+    if (after < 0 && selection.kind!=='test') {
       alert(`조정 후 잔량이 ${after}개가 됩니다.\n수동조정으로 음수 재고를 만들 수 없습니다.\n현재 ${before}개에서 최대 ${before}개까지만 감소 가능합니다.`);
       return;
     }
@@ -806,34 +786,8 @@ async function showBreadPanAdjustModal() {
     const now = new Date();
     const today = getToday();
 
-    // 1. lot 갱신
-    await updateDoc(doc(db, 'breadPanLots', lotId), {
-      remaining: after,
-      closed: after <= 0.005,
-      updatedAt: now,
-    });
-
-    // 2. breadPanLogs 기록
-    await addDoc(collection(db, 'breadPanLogs'), {
-      type: 'adjust',
-      date: today,
-      productName: lot.productName,
-      qty: delta,
-      before,
-      after,
-      lotId,
-      lotDate: lot.date,  // ★ 신규 — 조정 대상 lot의 입고일
-      expectedFrozenQty: null,
-      actualFrozenQty: null,
-      diff: null,
-      staffName,
-      uid: null,
-      note: null,
-      reason,
-      batchId: null,
-      ledgerId: null,
-      timestamp: now,
-    });
+    await saveManualMovement({db,command,name:'breadPanLogs',stockId:lotId,selection,expectedBefore:before,uid:currentUser?.uid||null,
+      log:{type:'adjust',date:today,productName:lot.productName,qty:delta,before,after,lotId,lotDate:lot.date||null,staffName,reason}});
 
     if(!command.isCurrent())return;
     closeModal();
@@ -863,6 +817,7 @@ async function showFrozenPanAdjustModal() {
     .join('');
 
   showModal(`
+    ${movementFields({incoming:false,reasonField:false})}
     <h3 class="modal-title">동결판 수동 조정</h3>
     <div class="form-group">
       <label>대상 lot *</label>
@@ -901,10 +856,12 @@ async function showFrozenPanAdjustModal() {
     </div>
   `);
 
+  const getMovement=bindMovementForm({db,name:'frozenPanLogs',filter:()=>({lotId:document.getElementById('m_lot')?.value||''}),filterInputs:[document.getElementById('m_lot')],onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);document.getElementById('m_adjustType').value=delta>0?'plus':'minus';},reasonInput:document.getElementById('m_reason')});
   document.getElementById('btnSaveFrozenPanAdjust').addEventListener('click', async () => {
  return runPageCommand(frozenPanResource,async command=>{
   const {getDoc,writeBatch}=commandWrites(command);
 
+    const selection=readMovementForm(getMovement);if(!selection)return;
     const lotId = document.getElementById('m_lot').value;
     const adjustType = document.getElementById('m_adjustType').value;
     const qtyInput = parseInt(document.getElementById('m_qty').value, 10);
@@ -925,39 +882,16 @@ async function showFrozenPanAdjustModal() {
 
     const before = Number(lot.remaining || 0);
     const after = before + delta;
-    if (after < 0) {
+    if (after < 0 && selection.kind!=='test') {
       alert(`조정 후 잔량이 ${after}개가 됩니다.\n수동조정으로 음수 재고를 만들 수 없습니다.\n현재 ${before}개에서 최대 ${before}개까지만 감소 가능합니다.`);
       return;
     }
 
     const now = new Date();
     const today = getToday();
-    const batch = writeBatch(db);
+    await saveManualMovement({db,command,name:'frozenPanLogs',stockId:lotId,selection,expectedBefore:before,uid:currentUser?.uid||null,
+      log:{type:'adjust',date:today,productName:lot.productName,qty:delta,before,after,lotId,lotDate:lot.date||null,staffName,reason}});
 
-    batch.update(doc(db, 'frozenPanLots', lotId), {
-      remaining: after,
-      closed: after <= 0,
-      updatedAt: now,
-    });
-
-    batch.set(doc(collection(db, 'frozenPanLogs')), {
-      type: 'adjust',
-      date: today,
-      productName: lot.productName,
-      qty: delta,
-      before,
-      after,
-      lotId,
-      staffName,
-      uid: null,
-      note: null,
-      reason,
-      batchId: null,
-      ledgerId: null,
-      timestamp: now,
-    });
-
-    await batch.commit();
     if(!command.isCurrent())return;
     closeModal();
     if(!command.isCurrent())return;

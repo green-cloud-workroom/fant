@@ -1,3 +1,5 @@
+import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
+import {saveManualMovement} from '../services/manualMovements.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { checkQuantityBeforeSave } from '../services/statsAutomationRuntime.js';
 import { db } from '../firebase.js';
@@ -6,7 +8,7 @@ import {
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
-import { currentUserRole } from '../app.js';
+import { currentUser,currentUserRole } from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
 
 import {pageResource} from '../state/pageResources.js';
@@ -607,6 +609,7 @@ function showCompleteModal(s) {
   const isCountMeatOrder = s.type === 'meat' && isCountIncomingUnit(s.orderedUnit);
   showModal(`
     <h3 class="modal-title">입고 완료 처리 — ${s.itemNameSnapshot}</h3>
+    ${movementFields({incoming:true})}
     <p style="font-size:12px;color:#888;margin-bottom:16px;">발주수량: ${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)}</p>
     <div class="form-group">
       <label>실제 수량 *</label>
@@ -638,10 +641,11 @@ function showCompleteModal(s) {
     </div>
   `);
 
+  const getMovement=bindMovementForm({db,name:s.type==='meat'?'meatLogs':s.type==='bag'?'bagLogs':'eggLogs',filter:{}});
   document.getElementById('btnSaveComplete').addEventListener('click', () => runScheduleCommand(async command=>{
-    const staged=commandBatch(command,db),{addDoc,updateDoc,recordActivity,recordMeatLog}=staged;
     const {getDoc}=command;
     try {
+    const selection=readMovementForm(getMovement);if(!selection)return;
     const actual = parseFloat(document.getElementById('m_actual').value);
     const actualUnit = document.getElementById('m_actual_unit')?.value || s.orderedUnit;
     const staff = document.getElementById('m_staff').value;
@@ -668,193 +672,31 @@ function showCompleteModal(s) {
       if (!proceed) return;
     }
 
-    // 재고 자동 입고 + ledger items 누적
-    const ledgerItems = [];
-
-    if (s.type === 'meat' && s.itemId) {
-      const meatSnap = await getDoc(doc(db, 'meatTypes', s.itemId));
-      if (meatSnap.exists()) {
-        const qtyG = isCountIncomingUnit(s.orderedUnit)
-          ? (actualUnit === 'g' ? actual : actual * Number(s.orderedUnitGrams || 0))
-          : (s.orderedUnit === 'kg' ? actual * 1000 : actual);
-        const quantityReview = await checkQuantityBeforeSave({ itemId: 'meatLogs:' + s.itemId,
-          date: today, qty: qtyG / 1000, unit: 'kg', stage: '원료' }, command.isCurrent);
-        if (!quantityReview.approved) return;
-        const stockUpdatedAt = new Date();
-        const newStockRef = await addDoc(collection(db, 'meatStocks'), {
-          meatTypeId: s.itemId,
-          meatNameSnapshot: s.itemNameSnapshot,
-          stage: 'frozen',
-          incomingDate: today,
-          initialQtyG: qtyG,
-          remaining: qtyG,
-          staffName: staff,
-          note: `입고예정 완료: ${s.orderMemo || ''}`,
-          closed: false,
-          createdAt: new Date(),
-          updatedAt: stockUpdatedAt,
-        });
-
-        await recordMeatLog({
-          type: 'frozenIncoming',
-          ...(quantityReview.review ? { statsQuantityReview: quantityReview.review } : {}),
-          date: today,
-          meatTypeId: s.itemId,
-          meatNameSnapshot: s.itemNameSnapshot,
-          stage: 'frozen',
-          meatStockId: newStockRef.id,
-          delta: qtyG,
-          before: 0,
-          after: qtyG,
-          staff,
-          reason: `입고예정 완료${s.orderMemo ? ` - ${s.orderMemo}` : ''}`,
-        });
-
-        ledgerItems.push({
-          collection: 'meatStocks',
-          docId: newStockRef.id,
-          field: 'remaining',
-          delta: qtyG,
-          before: 0,
-          after: qtyG,
-          label: `${s.itemNameSnapshot} 냉동창고`,
-          stockUpdatedAtSnapshot: stockUpdatedAt,
-          isNewDoc: true,
-        });
-      }
-    } else if (s.type === 'bag' && s.itemId) {
-      const bagSnap = await getDoc(doc(db, 'bagTypes', s.itemId));
-      if (bagSnap.exists()) {
-        const bagData = bagSnap.data();
-        const qtyPcs = s.orderedUnit === '박스' ? actual * (bagData.piecesPerBox || 1) : actual;
-        const quantityReview = await checkQuantityBeforeSave({ itemId: 'bagLogs:' + s.itemId,
-          date: today, qty: qtyPcs, unit: '장', stage: '봉투' }, command.isCurrent);
-        if (!quantityReview.approved) return;
-        const before = bagData.currentQty || 0;
-        const after = before + qtyPcs;
-        const stockUpdatedAt = new Date();
-
-        await updateDoc(doc(db, 'bagTypes', s.itemId), {
-          currentQty: after,
-          updatedAt: stockUpdatedAt,
-        });
-
-        const bagLogRef = await addDoc(collection(db, 'bagLogs'), {
-          date: today, timestamp: new Date(),
-          bagTypeId: s.itemId,
-          bagNameSnapshot: s.itemNameSnapshot,
-          type: 'incoming', qty: qtyPcs,
-          ...(quantityReview.review ? { statsQuantityReview: quantityReview.review } : {}),
-          before, after,
-          staffName: staff,
-          note: `입고예정 완료`,
-        });
-
-        ledgerItems.push({
-          collection: 'bagTypes',
-          docId: s.itemId,
-          field: 'currentQty',
-          delta: qtyPcs,
-          before,
-          after,
-          label: `${s.itemNameSnapshot} 봉투`,
-          stockUpdatedAtSnapshot: stockUpdatedAt,
-          bagLogId: bagLogRef.id,
-        });
-      }
-    } else if (s.type === 'egg') {
-      const eggSnap = await getDoc(doc(db, 'eggStock', 'global'));
-      const current = eggSnap.exists() ? eggSnap.data().currentQty : 0;
-      const minQty = eggSnap.exists() ? eggSnap.data().minimumQty : 0;
-      const qtyEgg = s.orderedUnit === '판' ? actual * 30 : actual;
-      const quantityReview = await checkQuantityBeforeSave({ itemId: 'eggLogs:egg', date: today,
-        qty: qtyEgg, unit: '개', stage: '계란' }, command.isCurrent);
-      if (!quantityReview.approved) return;
-      const after = current + qtyEgg;
-      const stockUpdatedAt = new Date();
-
-      await updateDoc(doc(db, 'eggStock', 'global'), {
-        currentQty: after,
-        minimumQty: minQty,
-        updatedAt: stockUpdatedAt,
-      });
-
-      const eggLogRef = await addDoc(collection(db, 'eggLogs'), {
-        date: today, timestamp: new Date(),
-        type: 'in', qty: qtyEgg,
-        ...(quantityReview.review ? { statsQuantityReview: quantityReview.review } : {}),
-        before: current, after,
-        staffName: staff, note: '입고예정 완료',
-      });
-
-      ledgerItems.push({
-        collection: 'eggStock',
-        docId: 'global',
-        field: 'currentQty',
-        delta: qtyEgg,
-        before: current,
-        after,
-        label: '계란',
-        stockUpdatedAtSnapshot: stockUpdatedAt,
-        eggLogId: eggLogRef.id,
-      });
+    const name=s.type==='meat'?'meatLogs':s.type==='bag'?'bagLogs':'eggLogs';
+    let stockId,stockData=null,before=0,qty,log;
+    if(s.type==='meat'){
+      stockId=doc(collection(db,'meatStocks')).id;
+      qty=isCountIncomingUnit(s.orderedUnit)?(actualUnit==='g'?actual:actual*Number(s.orderedUnitGrams||0)):(s.orderedUnit==='kg'?actual*1000:actual);
+      stockData={meatTypeId:s.itemId,meatNameSnapshot:s.itemNameSnapshot,stage:'frozen',incomingDate:today,initialQtyG:qty,remaining:0,staffName:staff,note:'입고예정 완료',createdAt:new Date()};
+      log={type:'frozenIncoming',date:today,meatTypeId:s.itemId,meatNameSnapshot:s.itemNameSnapshot,stage:'frozen',meatStockId:stockId,delta:qty,staff,reason:'입고예정 완료'};
+    }else if(s.type==='bag'){
+      stockId=s.itemId;const snap=await getDoc(doc(db,'bagTypes',stockId));if(!snap.exists())throw Error('봉투를 찾을 수 없습니다.');
+      before=Number(snap.data().currentQty||0);qty=s.orderedUnit==='박스'?actual*(snap.data().piecesPerBox||1):actual;
+      log={type:'incoming',date:today,bagTypeId:stockId,bagNameSnapshot:s.itemNameSnapshot,qty,staffName:staff,note:'입고예정 완료'};
+    }else{
+      stockId='global';const snap=await getDoc(doc(db,'eggStock',stockId));before=snap.exists()?Number(snap.data().currentQty||0):0;
+      stockData={currentQty:0,minimumQty:0};qty=s.orderedUnit==='판'?actual*30:actual;
+      log={type:'in',date:today,qty,staffName:staff,note:'입고예정 완료'};
     }
-
-    // ledger 저장
-    let ledgerId = null;
-    if (ledgerItems.length > 0) {
-      const ledgerRef = await addDoc(collection(db, 'stockLedger'), {
-        actionType: 'scheduleComplete',
-        actionId: s.id,
-        timestamp: new Date(),
-        date: today,
-        status: 'active',
-        items: ledgerItems,
-      });
-      ledgerId = ledgerRef.id;
-    }
-
-    await updateDoc(doc(db, 'schedules', s.id), {
-      status: 'completed',
-      actualQty: actual,
-      actualUnit,
-      actualQtyG: s.type === 'meat' ? (isCountIncomingUnit(s.orderedUnit)
-        ? (actualUnit === 'g' ? actual : actual * Number(s.orderedUnitGrams || 0))
-        : (s.orderedUnit === 'kg' ? actual * 1000 : actual)) : null,
-      incomingStaffName: staff,
-      completeMemo: memo,
-      completedAt: new Date(),
-      ledgerId,
-      updatedAt: new Date(),
-    });
-
-    // [묶음 6C-2] 입고 완료 — 차이 있으면 'completeDiff' (확인 필수), 없으면 'complete' (일반)
-    // subAction 분기로 메인 로그 패널이 차이 있는 건만 ⚠️ 빨간 줄 + [확인] 버튼 표시
-    const hasDiff = actual !== orderedCompareQty;
-    await recordActivity({
-      action: 'schedule',
-      subAction: hasDiff ? 'completeDiff' : 'complete',
-      date: today,
-      staff,
-      message: hasDiff
-        ? `${s.itemNameSnapshot} 입고 완료 ⚠️ 발주 ${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)} → 실제 ${formatScheduleQty(actual, actualUnit, s.orderedUnitGrams)} / 담당: ${staff}`
-        : `${s.itemNameSnapshot} 입고 완료 차이 없음 / 담당: ${staff}`,
-      details: {
-        scheduleId: s.id,
-        type: s.type,
-        itemId: s.itemId || null,
-        itemName: s.itemNameSnapshot,
-        orderedQty: s.orderedQty,
-        actualQty: actual,
-        unit: actualUnit,
-        orderedUnit: s.orderedUnit,
-        orderedUnitGrams: s.orderedUnitGrams || null,
-        hasDiff,
-        memo: memo || null,
-      },
-    });
-
-    await staged.commit();
+    if(!Number.isFinite(qty)||qty<=0||s.type!=='meat'&&!Number.isInteger(qty))throw Error('입고 수량·단위를 확인해주세요.');
+    const review=selection.kind==='test'?{approved:true}:await checkQuantityBeforeSave({itemId:name+':'+(s.type==='egg'?'egg':s.itemId),date:today,qty:s.type==='meat'?qty/1000:qty,unit:s.type==='meat'?'kg':s.type==='bag'?'장':'개',stage:s.type==='meat'?'원료':s.type==='bag'?'봉투':'계란'},command.isCurrent);
+    if(!review.approved)return;if(review.review)log.statsQuantityReview=review.review;
+    await saveManualMovement({db,command,name,stockId,stockData,expectedBefore:before,log,selection,uid:currentUser?.uid||null,
+      activity:selection.kind==='test'?null:{action:'schedule',subAction:actual!==orderedCompareQty?'completeDiff':'complete',
+        message:actual!==orderedCompareQty?`${s.itemNameSnapshot} 입고 완료 ⚠️ 발주 ${formatScheduleQty(s.orderedQty,s.orderedUnit,s.orderedUnitGrams)} → 실제 ${formatScheduleQty(actual,actualUnit,s.orderedUnitGrams)} / 담당: ${staff}`:`${s.itemNameSnapshot} 입고 완료 차이 없음 / 담당: ${staff}`,
+        details:{scheduleId:s.id,type:s.type,itemId:s.itemId||null,itemName:s.itemNameSnapshot,orderedQty:s.orderedQty,actualQty:actual,unit:actualUnit,orderedUnit:s.orderedUnit,orderedUnitGrams:s.orderedUnitGrams||null,hasDiff:actual!==orderedCompareQty,memo:memo||null}},
+      scheduleChange:{id:s.id,expected:{type:s.type,itemId:s.itemId||null,date:s.date,orderedQty:s.orderedQty,orderedUnit:s.orderedUnit,orderedUnitGrams:s.orderedUnitGrams||null},
+        patch:{status:'completed',actualQty:actual,actualUnit,actualQtyG:s.type==='meat'?qty:null,incomingStaffName:staff,completeMemo:memo}}});
     if(!command.isCurrent())return;
     closeModal();
     await renderSchedule({force:true});

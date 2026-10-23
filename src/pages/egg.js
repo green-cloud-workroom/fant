@@ -1,3 +1,7 @@
+import {movementLabel} from '../services/manualMovementLogic.js';
+import {currentUser} from '../app.js';
+import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
+import {saveManualMovement} from '../services/manualMovements.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { checkQuantityBeforeSave } from '../services/statsAutomationRuntime.js';
 import { db } from '../firebase.js';
@@ -14,9 +18,11 @@ import {pageRefresh} from '../utils/pageRefresh.js';
 import {getPageContext} from '../utils/pageLifecycle.js';
 const eggResource=pageResource('egg');
 
-async function saveEggChange(previous,patch,log=null,activity=null,date=null) {
+async function saveEggChange(previous,patch,log=null,activity=null,date=null,selection=null) {
   return withReadCommand(eggResource,async command=>{
     if(date && await blockIfClosed(date,command))return false;
+    if(log){await saveManualMovement({db,command,name:'eggLogs',stockId:'global',log,selection,expectedBefore:Number(previous.currentQty||0),uid:currentUser?.uid||null});}
+    else {
     const stockRef=doc(db,'eggStock','global'),logRef=log?doc(collection(db,'eggLogs')):null;
     await command.transaction(db,async transaction=>{
       const snap=await transaction.get(stockRef),fresh=snap.exists()?snap.data():{currentQty:0,minimumQty:0};
@@ -25,6 +31,7 @@ async function saveEggChange(previous,patch,log=null,activity=null,date=null) {
       if(log)transaction.set(logRef,log);
       if(activity)await recordActivity(activity,{batch:transaction});
     },{targets:[stockRef,...(logRef?[logRef]:[])]});
+    }
     return true;
   },{roles:['admin','office','production']});
 }
@@ -124,7 +131,7 @@ function renderEggLayout(eggStock, logs) {
                     <td>
                       <span class="tag ${l.type === 'in' ? 'tag-raw' : l.type === 'out' ? 'tag-cat' : ''}"
                             style="${l.type === 'adjust' ? 'background:#fff0e8;color:#8a4a2d' : ''}">
-                        ${l.type === 'in' ? '입고' : l.type === 'out' ? '출고' : '수동조정'}
+                        ${movementLabel(l,l.type === 'in' ? '입고' : l.type === 'out' ? '출고' : '수동조정')}
                       </span>
                     </td>
                     <td style="color:${l.qty > 0 ? '#2d7a3a' : '#e53e3e'};font-weight:600">
@@ -303,6 +310,7 @@ function showEggModal(type, eggStock) {
 
   showModal(`
     <h3 class="modal-title">계란 ${isIn ? '입고' : '출고'}</h3>
+    ${movementFields({incoming:isIn,allowed:isIn?['receipt','test']:['usage','reconciliation','test'],defaultKind:isIn?'receipt':'usage'})}
     <p style="font-size:12px;color:#888;margin-bottom:16px;">현재 재고: ${currentQty}개</p>
     ${outQtyFormGroup}
     <div class="form-group">
@@ -349,8 +357,10 @@ function showEggModal(type, eggStock) {
     });
   }
 
+  const getMovement=bindMovementForm({db,name:'eggLogs',filter:{},onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);const direction=document.getElementById('m_adjustType');if(direction)direction.value=delta>0?'plus':'minus';},reasonInput:document.getElementById('m_reason')});
   document.getElementById('btnSaveEgg').addEventListener('click', () => runEggSave(async () => {
     const page=getPageContext();
+    const selection=readMovementForm(getMovement);if(!selection)return;
     let qty;
     if (isIn) {
       qty = parseInt(document.getElementById('m_qty').value);
@@ -372,7 +382,7 @@ function showEggModal(type, eggStock) {
     if(page&&!page.isCurrent())return;
 
     const delta = isIn ? qty : -qty;
-    const quantityReview = await checkQuantityBeforeSave({ itemId: 'eggLogs:egg', name: '계란', date,
+    const quantityReview = selection.kind==='test'?{approved:true}:await checkQuantityBeforeSave({ itemId: 'eggLogs:egg', name: '계란', date,
       qty, unit: '개', stage: isIn ? '계란' : '계란 출고', direction: isIn ? 'supply' : 'usage' }, () => !page || page.isCurrent());
     if (!quantityReview.approved || (page && !page.isCurrent())) return;
     const before = eggStock.currentQty;
@@ -412,7 +422,7 @@ function showEggModal(type, eggStock) {
       },
     };
 
-    if(!await saveEggChange(eggStock,patch,log,activity,date))return;
+    if(!await saveEggChange(eggStock,patch,log,activity,date,selection))return;
     if(page&&!page.isCurrent())return;
     closeModal();
     await renderEgg({force:true});
@@ -424,6 +434,7 @@ function showEggModal(type, eggStock) {
 function showEggAdjustModal(eggStock) {
   showModal(`
     <h3 class="modal-title">수동 재고 조정</h3>
+    ${movementFields({reasonField:false})}
     <p style="font-size:12px;color:#888;margin-bottom:16px;">현재 재고: ${eggStock.currentQty}개</p>
     <div class="form-row">
       <div class="form-group">
@@ -455,8 +466,10 @@ function showEggAdjustModal(eggStock) {
     </div>
   `);
 
+  const getMovement=bindMovementForm({db,name:'eggLogs',filter:{},onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);const direction=document.getElementById('m_adjustType');if(direction)direction.value=delta>0?'plus':'minus';},reasonInput:document.getElementById('m_reason')});
   document.getElementById('btnSaveAdjust').addEventListener('click', () => runEggSave(async () => {
     const page=getPageContext();
+    const selection=readMovementForm(getMovement);if(!selection)return;
     const type = document.getElementById('m_adjustType').value;
     const qty = parseInt(document.getElementById('m_qty').value);
     const reason = document.getElementById('m_reason').value.trim();
@@ -471,7 +484,7 @@ function showEggAdjustModal(eggStock) {
     const after = before + delta;
 
     // [음수 차단]
-    if (after < 0) {
+    if (after < 0 && selection.kind!=='test') {
       alert(`조정 후 잔량이 ${after}개가 됩니다.\n수동조정으로 음수 재고를 만들 수 없습니다.\n현재 ${before}개에서 최대 ${before}개까지만 감소 가능합니다.`);
       return;
     }
@@ -507,7 +520,7 @@ function showEggAdjustModal(eggStock) {
       },
     };
 
-    if(!await saveEggChange(eggStock,patch,log,activity,today))return;
+    if(!await saveEggChange(eggStock,patch,log,activity,today,selection))return;
     if(page&&!page.isCurrent())return;
     closeModal();
     await renderEgg({force:true});

@@ -1,5 +1,6 @@
 // Additive, read-only decisions. The statistical projections remain authoritative.
 import { validDate, daysBetween, supplyEvents, usageEvents, productionEvents, summarize, periodKey } from './statsLogic.js';
+import {manualMovementIndex} from './manualMovementLogic.js';
 
 export const AUTOMATION_VERSION = 'stats-shadow-v1';
 // Release requires a separate reviewed code change. No UI/config can enable delivery.
@@ -303,6 +304,7 @@ export function provenResolutions(previous, data, today) {
       const [collection, id] = row.evidence.source.split('/');
       if ((data[collection] || []).some(s => s.id === id && ['deleted', 'cancelled', 'canceled'].includes(s.status))) return true;
       if (supply.adjustments.some(c => c.kind === 'excludeSupply' && c.source === row.evidence.source)) return true;
+      if(manualMovementIndex(data).has(row.evidence.source))return true;
       const events = row.evidence.stage === '계산상 사용량' || row.evidence.stage?.includes('차감')
         || row.evidence.stage === '계란 출고' ? comparableUsage(data, usage) : supply.events;
       const event = events.find(e => e.source === row.evidence.source && e.itemId === row.evidence.itemId && e.stage === row.evidence.stage);

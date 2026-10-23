@@ -1,3 +1,6 @@
+import {movementLabel} from '../services/manualMovementLogic.js';
+import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
+import {saveManualMovement} from '../services/manualMovements.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { checkQuantityBeforeSave } from '../services/statsAutomationRuntime.js';
 import { db } from '../firebase.js';
@@ -6,7 +9,7 @@ import {
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
-import { currentUserRole } from '../app.js';
+import { currentUser, currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { showConfirmModal } from '../utils/modal.js';
 import Sortable from '../utils/sortable.js';
@@ -21,15 +24,10 @@ async function runBagCommand(callback,roles=['admin','office']) {
   try{return await withReadCommand(bagResource,command=>{command.isCurrent=()=>!page||page.isCurrent();return callback(command);},{roles});}
   catch(error){console.error('[봉투 저장]',error);alert(error.message);}
 }
-async function saveBagStockChange(bag,patch,log,activity,date) {
+async function saveBagStockChange(bag,patch,log,activity,date,selection) {
   return runBagCommand(async command=>{
     if(await blockIfClosed(date,command))return false;
-    const target=doc(db,'bagTypes',bag.id),logRef=doc(collection(db,'bagLogs'));
-    await command.transaction(db,async transaction=>{
-      const snap=await transaction.get(target);
-      if(!snap.exists()||Number(snap.data().currentQty||0)!==Number(bag.currentQty||0))throw new Error('다른 작업으로 봉투 재고가 변경되었습니다. 최신 자료를 다시 확인해주세요.');
-      transaction.update(target,patch);transaction.set(logRef,log);await recordActivity(activity,{batch:transaction});
-    },{targets:[target,logRef]});
+    await saveManualMovement({db,command,name:'bagLogs',stockId:bag.id,log,selection,expectedBefore:Number(bag.currentQty||0),uid:currentUser?.uid||null});
     return true;
   },['admin','office','production']);
 }
@@ -338,7 +336,7 @@ async function showBagDetail(bag) {
                     <td>
                       <span class="tag ${l.type === 'incoming' ? 'tag-raw' : l.type === 'autoDeduct' ? '' : 'tag-cat'}"
                             style="${l.type === 'autoDeduct' ? 'background:#f0f0f0;color:#666' : ''}">
-                        ${l.type === 'incoming' ? '입고' : l.type === 'autoDeduct' ? '자동차감' : '수동조정'}
+                        ${movementLabel(l,l.type === 'incoming' ? '입고' : l.type === 'autoDeduct' ? '자동차감' : '수동조정')}
                       </span>
                     </td>
                     <td style="color:${l.qty > 0 ? '#2d7a3a' : '#e53e3e'}">${l.qty > 0 ? '+' : ''}${l.qty}</td>
@@ -526,6 +524,7 @@ function showEditBagModal(bag) {
 function showBagIncomingModal(bag) {
   showModal(`
     <h3 class="modal-title">봉투 입고 등록 — ${bag.name}</h3>
+    ${movementFields({incoming:true})}
     <div class="form-row">
       <div class="form-group">
         <label>수량(장) *</label>
@@ -562,8 +561,10 @@ function showBagIncomingModal(bag) {
     document.getElementById('m_boxCalc').textContent = `${Math.floor(qty / bag.piecesPerBox)}박스`;
   });
 
+  const getMovement=bindMovementForm({db,name:'bagLogs',filter:{bagTypeId:bag.id},onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);document.getElementById('m_adjustType').value=delta>0?'plus':'minus';},reasonInput:document.getElementById('m_reason')});
   document.getElementById('btnSaveBagIncoming').addEventListener('click', async () => {
     const page=getPageContext();
+    const selection=readMovementForm(getMovement); if(!selection)return;
     const qty = parseInt(document.getElementById('m_qty').value);
     const date = document.getElementById('m_date').value;
     const staff = document.getElementById('m_staff').value;
@@ -575,7 +576,7 @@ function showBagIncomingModal(bag) {
     if(page&&!page.isCurrent())return;
 
     const before = bag.currentQty || 0;
-    const quantityReview = await checkQuantityBeforeSave({ itemId: 'bagLogs:' + bag.id, name: bag.name,
+    const quantityReview = selection.kind==='test'?{approved:true}:await checkQuantityBeforeSave({ itemId: 'bagLogs:' + bag.id, name: bag.name,
       date, qty, unit: '장', stage: '봉투' }, () => !page || page.isCurrent());
     if (!quantityReview.approved || (page && !page.isCurrent())) return;
     const after = before + qty;
@@ -616,7 +617,7 @@ function showBagIncomingModal(bag) {
       },
     };
 
-    if(!await saveBagStockChange(bag,patch,log,activity,date))return;
+    if(!await saveBagStockChange(bag,patch,log,activity,date,selection))return;
     if(page&&!page.isCurrent())return;
     closeModal();
     await renderBag({force:true});
@@ -630,6 +631,7 @@ function showBagAdjustModal(bag) {
   showModal(`
     <h3 class="modal-title">수동 재고 조정 — ${bag.name}</h3>
     <p style="font-size:12px;color:#888;margin-bottom:16px;">현재 재고: ${bag.currentQty || 0}장</p>
+    ${movementFields({incoming:false,reasonField:false})}
     <div class="form-row">
       <div class="form-group">
         <label>조정 유형</label>
@@ -660,8 +662,10 @@ function showBagAdjustModal(bag) {
     </div>
   `);
 
+  const getMovement=bindMovementForm({db,name:'bagLogs',filter:{bagTypeId:bag.id},onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);document.getElementById('m_adjustType').value=delta>0?'plus':'minus';},reasonInput:document.getElementById('m_reason')});
   document.getElementById('btnSaveAdjust').addEventListener('click', async () => {
     const page=getPageContext();
+    const selection=readMovementForm(getMovement); if(!selection)return;
     const type = document.getElementById('m_adjustType').value;
     const qty = parseInt(document.getElementById('m_qty').value);
     const reason = document.getElementById('m_reason').value.trim();
@@ -676,7 +680,7 @@ function showBagAdjustModal(bag) {
     const after = before + delta;
 
     // [음수 차단] 수동조정 결과가 음수면 차단. 마이너스 재고는 비현실적 + 후속 차감 검사 망가뜨림.
-    if (after < 0) {
+    if (after < 0 && selection.kind!=='test') {
       alert(`조정 후 잔량이 ${after}장이 됩니다.\n수동조정으로 음수 재고를 만들 수 없습니다.\n현재 ${before}장에서 최대 ${before}장까지만 감소 가능합니다.`);
       return;
     }
@@ -716,7 +720,7 @@ function showBagAdjustModal(bag) {
       },
     };
 
-    if(!await saveBagStockChange(bag,patch,log,activity,today))return;
+    if(!await saveBagStockChange(bag,patch,log,activity,today,selection))return;
     if(page&&!page.isCurrent())return;
     closeModal();
     await renderBag({force:true});

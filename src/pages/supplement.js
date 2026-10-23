@@ -1,3 +1,6 @@
+import {movementLabel} from '../services/manualMovementLogic.js';
+import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
+import {saveManualMovement} from '../services/manualMovements.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { checkQuantityBeforeSave } from '../services/statsAutomationRuntime.js';
 import { db } from '../firebase.js';
@@ -251,7 +254,7 @@ function renderRecentChange(typeId) {
   return `
     <div class="supplement-recent-change">
       <span class="supplement-recent-date">${escapeHtml(log.date || '-')}</span>
-      ${renderLogTypeTag(log.type)}
+      ${renderLogTypeTag(log.type,log)}
       <span class="supplement-recent-qty">${formatSignedQty(log.qty)}${after}</span>
     </div>
   `;
@@ -488,7 +491,7 @@ function renderSupplementLogTable(logs) {
             <td>${escapeHtml(log.date || '-')}</td>
             <td>${formatLogTime(log.timestamp)}</td>
             <td>${escapeHtml(getSupplementName(log.supplementTypeId))}</td>
-            <td>${renderLogTypeTag(log.type)}</td>
+            <td>${renderLogTypeTag(log.type,log)}</td>
             <td style="color:${Number(log.qty || 0) < 0 ? '#e53e3e' : '#2d7a3a'}">${formatSignedQty(log.qty)}</td>
             <td>${Number.isFinite(Number(log.after)) ? Number(log.after) : '-'}</td>
             <td>${escapeHtml(log.staffName || '-')}</td>
@@ -500,7 +503,8 @@ function renderSupplementLogTable(logs) {
   `;
 }
 
-function renderLogTypeTag(type) {
+function renderLogTypeTag(type,log) {
+  if(log?.manualMovement)return `<span class="tag tag-common">${escapeHtml(movementLabel(log,type))}</span>`;
   if (type === 'in') return '<span class="tag supplement-log-tag supplement-log-tag--in">입고</span>';
   if (type === 'autoDeduct') return '<span class="tag supplement-log-tag supplement-log-tag--auto">자동차감</span>';
   if (type === 'adjust') return '<span class="tag supplement-log-tag supplement-log-tag--adjust">수동조정</span>';
@@ -581,9 +585,10 @@ async function refreshSupplementTable() {
   }
 }
 
-function openIncomingModal(typeId, typeName) {
+function openIncomingModal(typeId, typeName, entryDate=getTodayKST(), initialQty=null) {
   showModal(`
     <h3 class="modal-title">영양제 입고 — ${escapeHtml(typeName)}</h3>
+    ${movementFields({incoming:true,reasonField:true})}
     <div class="form-group">
       <label>수량(봉) *</label>
       <input type="number" id="sup_in_qty" min="1" step="1" placeholder="봉 수" />
@@ -601,7 +606,10 @@ function openIncomingModal(typeId, typeName) {
     </div>
   `);
 
+  const getMovement=bindMovementForm({db,name:'supplementLogs',filter:{supplementTypeId:typeId},onCancel:delta=>{document.getElementById('sup_adj_qty').value=delta;},reasonInput:document.getElementById('sup_adj_reason')});
+  if(initialQty!==null)document.getElementById('sup_in_qty').value=initialQty;
   document.getElementById('btnSaveSupIn')?.addEventListener('click', async () => {
+    const selection=readMovementForm(getMovement);if(!selection)return;
     const qty = Number(document.getElementById('sup_in_qty')?.value || '');
     const staffName = document.getElementById('sup_in_staff')?.value || '';
     if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) {
@@ -617,7 +625,7 @@ function openIncomingModal(typeId, typeName) {
     button.disabled = true;
     try {
       const page=getPageContext();
-      await saveIncomingCell(typeId, getTodayKST(), qty, staffName);
+      await saveIncomingCell(typeId, entryDate, qty, staffName,selection);
       if(page&&!page.isCurrent())return;
       closeModal();
       await refreshSupplementTable();
@@ -630,9 +638,10 @@ function openIncomingModal(typeId, typeName) {
   });
 }
 
-function openAdjustModal(typeId, typeName) {
+function openAdjustModal(typeId, typeName, entryDate=getTodayKST(), initialQty=null) {
   showModal(`
     <h3 class="modal-title">영양제 수동조정 — ${escapeHtml(typeName)}</h3>
+    ${movementFields({incoming:false,reasonField:false})}
     <div class="form-group">
       <label>증감(봉) *</label>
       <input type="number" id="sup_adj_qty" step="1" placeholder="증가: +5  감소: -3" />
@@ -654,7 +663,10 @@ function openAdjustModal(typeId, typeName) {
     </div>
   `);
 
+  const getMovement=bindMovementForm({db,name:'supplementLogs',filter:{supplementTypeId:typeId},onCancel:delta=>{document.getElementById('sup_adj_qty').value=delta;},reasonInput:document.getElementById('sup_adj_reason')});
+  if(initialQty!==null)document.getElementById('sup_adj_qty').value=initialQty;
   document.getElementById('btnSaveSupAdj')?.addEventListener('click', async () => {
+    const selection=readMovementForm(getMovement);if(!selection)return;
     const signedQty = Number(document.getElementById('sup_adj_qty')?.value || '');
     const reason = document.getElementById('sup_adj_reason')?.value.trim() || '';
     const staffName = document.getElementById('sup_adj_staff')?.value || '';
@@ -675,7 +687,7 @@ function openAdjustModal(typeId, typeName) {
     button.disabled = true;
     try {
       const page=getPageContext();
-      await saveAdjustCell(typeId, getTodayKST(), signedQty, reason, staffName);
+      await saveAdjustCell(typeId, entryDate, signedQty, reason, staffName,selection);
       if(page&&!page.isCurrent())return;
       closeModal();
       await refreshSupplementTable();
@@ -694,197 +706,41 @@ function openAdjustModal(typeId, typeName) {
 
 // 입고 셀 blur — 그날 입고 로그가 없을 때만 입력 가능. 기존 트랜잭션 재사용.
 async function handleIncomingCellBlur(input) {
-  const typeId = input.dataset.typeId;
-  const date = input.dataset.date;
-  const raw = input.value.trim();
-  if (!raw) return; // 빈 입력은 무시
-
-  const qty = Number(raw);
-  if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) {
-    alert('입고 수량은 1 이상의 정수로 입력해주세요.');
-    input.value = '';
-    return;
-  }
-
-  // 동시 입력 방어: blur 시점에 이미 로그가 생겼으면 차단.
-  if (hasCellLog(typeId, date, 'in')) {
-    alert('이미 입고 기록이 있습니다. 새로고침 후 확인해주세요.');
-    input.value = '';
-    return;
-  }
-
-  // 담당자 = 상단 입고 담당자 select 값.
-  const staffName = selectedInStaff;
-  if (!staffName) {
-    alert('입고 담당자를 선택해주세요.');
-    input.value = '';
-    return;
-  }
-
-  input.disabled = true;
-  try {
-    const page=getPageContext();
-      await saveIncomingCell(typeId, date, qty, staffName);
-      if(page&&!page.isCurrent())return;
-    input.value='';
-    await refreshSupplementTable();
-  } catch (err) {
-    console.error('[supplement] incoming cell save failed:', err);
-    alert(`입고 등록 중 오류가 발생했습니다: ${err.message || err}`);
-    input.disabled = false;
-  }
+  const raw=input.value.trim();if(!raw)return;const qty=Number(raw);
+  if(!Number.isInteger(qty)||qty<=0){alert('입고 수량은 1 이상의 정수로 입력해주세요.');input.value='';return;}
+  input.value='';const type=supplementTypes.find(t=>t.id===input.dataset.typeId);
+  openIncomingModal(input.dataset.typeId,type?.name||input.dataset.typeId,input.dataset.date,qty);
 }
 
 // 입고 저장 — 기존 saveSupplementIncoming 트랜잭션 로직 재사용.
-async function saveIncomingCell(supplementTypeId, date, qty, staffName) {
-  return withReadCommand(supplementResource,command=>saveIncomingCellWithCommand(supplementTypeId, date, qty, staffName,command),{roles:['admin','office','production']});
+async function saveIncomingCell(supplementTypeId,date,qty,staffName,selection) {
+  return withReadCommand(supplementResource,command=>saveIncomingCellWithCommand(supplementTypeId,date,qty,staffName,command,selection),{roles:['admin','office','production']});
 }
-async function saveIncomingCellWithCommand(supplementTypeId, date, qty, staffName,command) {
-  const page = getPageContext();
-  const quantityReview = await checkQuantityBeforeSave({ itemId: 'supplementLogs:' + supplementTypeId,
-    date, qty, unit: '봉', stage: '영양제' }, () => !page || page.isCurrent());
-  if (!quantityReview.approved || (page && !page.isCurrent())) throw Error('입고 저장을 취소했습니다.');
-  const stockRef = doc(db, 'supplementStock', supplementTypeId);
-  const logRef = doc(collection(db, 'supplementLogs'));
-
-  await command.transaction(db, async (transaction) => {
-    const stockSnap = await transaction.get(stockRef);
-    const before = Number(stockSnap.exists() ? stockSnap.data().currentQty || 0 : 0);
-    const after = before + qty;
-
-    transaction.set(stockRef, {
-      id: supplementTypeId,
-      supplementTypeId,
-      currentQty: after,
-      updatedAt: serverTimestamp(),
-    }, { merge: true });
-
-    transaction.set(logRef, {
-      date,
-      timestamp: serverTimestamp(),
-      supplementTypeId,
-      type: 'in',
-      ...(quantityReview.review ? { statsQuantityReview: quantityReview.review } : {}),
-      qty,
-      before,
-      after,
-      staffName,
-    });
-  },{targets:[stockRef,logRef]});
+async function saveIncomingCellWithCommand(supplementTypeId,date,qty,staffName,command,selection) {
+  if(!selection)throw Error('처리 구분을 선택해주세요.');
+  const review=selection.kind==='test'?{approved:true}:await checkQuantityBeforeSave({itemId:'supplementLogs:'+supplementTypeId,date,qty,unit:'봉',stage:'영양제'},()=>!getPageContext()||getPageContext().isCurrent());
+  if(!review.approved)throw Error('입고 저장을 취소했습니다.');
+  return saveManualMovement({db,command,name:'supplementLogs',stockId:supplementTypeId,selection,uid:currentUser?.uid||null,
+    stockData:{id:supplementTypeId,supplementTypeId,currentQty:0},log:{type:'in',date,qty,supplementTypeId,staffName,...(review.review?{statsQuantityReview:review.review}:{})}});
 }
 
 // 수동조정 셀 blur — 부호 입력(+N / -N / N). 델타로 새 로그 발행.
 async function handleAdjustCellBlur(input) {
-  const typeId = input.dataset.typeId;
-  const date = input.dataset.date;
-  const raw = input.value.trim();
-  if (!raw) return;
-
-  // '+5', '-3', '5' 모두 허용. 정수만.
-  const signedQty = Number(raw);
-  if (!Number.isFinite(signedQty) || signedQty === 0 || !Number.isInteger(signedQty)) {
-    alert('수동조정 수량은 0이 아닌 정수로 입력해주세요. (예: +5, -3)');
-    input.value = '';
-    return;
-  }
-
-  const reason = selectedAdjustReason.trim();
-  if (!reason) {
-    alert('수동조정 사유를 입력해주세요.');
-    input.value = '';
-    return;
-  }
-
-  // 담당자 = 상단 수동조정 담당자 select 값.
-  const staffName = selectedAdjustStaff;
-  if (!staffName) {
-    alert('수동조정 담당자를 선택해주세요.');
-    input.value = '';
-    return;
-  }
-
-  input.disabled = true;
-  try {
-    const page=getPageContext();
-      await saveAdjustCell(typeId, date, signedQty, reason, staffName);
-      if(page&&!page.isCurrent())return;
-    input.value='';
-    await refreshSupplementTable();
-  } catch (err) {
-    console.error('[supplement] adjust cell save failed:', err);
-    if (err.message === 'NEGATIVE_SUPPLEMENT_STOCK') {
-      alert('재고가 마이너스가 됩니다. 조정 수량을 확인해주세요.');
-    } else {
-      alert(`수동 조정 중 오류가 발생했습니다: ${err.message || err}`);
-    }
-    input.disabled = false;
-  }
+  const raw=input.value.trim();if(!raw)return;const qty=Number(raw);
+  if(!Number.isInteger(qty)||qty===0){alert('0이 아닌 정수를 입력해주세요.');input.value='';return;}
+  input.value='';const type=supplementTypes.find(t=>t.id===input.dataset.typeId);
+  openAdjustModal(input.dataset.typeId,type?.name||input.dataset.typeId,input.dataset.date,qty);
+  const reason=document.getElementById('sup_adj_reason'),staff=document.getElementById('sup_adj_staff');
+  if(reason)reason.value=selectedAdjustReason||'';if(staff)staff.value=selectedAdjustStaff||'';
 }
 
 // 수동조정 저장 — 기존 saveSupplementAdjust 트랜잭션 로직 + activityLogs 풀필드 재사용.
-async function saveAdjustCell(supplementTypeId, date, signedQty, reason, staffName) {
-  return withReadCommand(supplementResource,command=>saveAdjustCellWithCommand(supplementTypeId, date, signedQty, reason, staffName,command),{roles:['admin','office','production']});
+async function saveAdjustCell(supplementTypeId,date,signedQty,reason,staffName,selection) {
+  return withReadCommand(supplementResource,command=>saveAdjustCellWithCommand(supplementTypeId,date,signedQty,reason,staffName,command,selection),{roles:['admin','office','production']});
 }
-async function saveAdjustCellWithCommand(supplementTypeId, date, signedQty, reason, staffName,command) {
-  const stockRef = doc(db, 'supplementStock', supplementTypeId);
-  const logRef = doc(collection(db, 'supplementLogs'));
-  const activityRef = doc(collection(db, 'activityLogs'));
-  const supplement = supplementTypes.find(type => type.id === supplementTypeId);
-  const supplementName = supplement?.name || supplementTypeId;
-  const sign = signedQty > 0 ? '+' : '';
-
-  await command.transaction(db, async (transaction) => {
-    const stockSnap = await transaction.get(stockRef);
-    const before = Number(stockSnap.exists() ? stockSnap.data().currentQty || 0 : 0);
-    const after = before + signedQty;
-
-    if (after < 0) {
-      throw new Error('NEGATIVE_SUPPLEMENT_STOCK');
-    }
-
-    transaction.set(stockRef, {
-      id: supplementTypeId,
-      supplementTypeId,
-      currentQty: after,
-      updatedAt: serverTimestamp(),
-    }, { merge: true });
-
-    transaction.set(logRef, {
-      date,
-      timestamp: serverTimestamp(),
-      supplementTypeId,
-      type: 'adjust',
-      qty: signedQty,
-      before,
-      after,
-      staffName,
-      reason,
-    });
-
-    transaction.set(activityRef, {
-      action: 'supplementStock',
-      subAction: 'manualAdjust',
-      date,
-      staff: staffName,
-      uid: currentUser?.uid || null,
-      timestamp: serverTimestamp(),
-      message: `영양제 수동조정 — ${supplementName} ${sign}${signedQty}봉 / 사유: ${reason} / 담당: ${staffName}`,
-      details: {
-        supplementTypeId,
-        supplementName,
-        signedQty,
-        before,
-        after,
-        reason,
-        note: null,
-      },
-      read: false,
-      acknowledged: false,
-      acknowledgedAt: null,
-      acknowledgedBy: null,
-      acknowledgedByUid: null,
-    });
-  },{targets:[stockRef,logRef]});
+async function saveAdjustCellWithCommand(supplementTypeId,date,signedQty,reason,staffName,command,selection) {
+  return saveManualMovement({db,command,name:'supplementLogs',stockId:supplementTypeId,selection,uid:currentUser?.uid||null,
+    stockData:{id:supplementTypeId,supplementTypeId,currentQty:0},log:{type:'adjust',date,qty:signedQty,supplementTypeId,reason,staffName}});
 }
 
 async function showAllSupplementLogsModal() {

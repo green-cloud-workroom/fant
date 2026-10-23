@@ -12,11 +12,11 @@ async function setup(){
   const resource=(await e.load('src/state/pageResources.js')).pageResource('egg');
   await resource.load(async scope=>(await scope.getDoc(e.api.doc({},'eggStock','global'))).data());
   const page=await e.load('src/pages/egg.js');
-  const save=()=>page.saveEggChange({currentQty:100,minimumQty:20},{currentQty:110,minimumQty:20},{date:'2026-09-14',type:'in',qty:10,before:100,after:110,staffName:'fixture'},{action:'egg',subAction:'in',date:'2026-09-14',staff:'fixture',message:'test',details:{before:100,after:110}},'2026-09-14');
+  const save=()=>page.saveEggChange({currentQty:100,minimumQty:20},{currentQty:110,minimumQty:20},{date:'2026-09-14',type:'in',qty:10,before:100,after:110,staffName:'fixture'},{action:'egg',subAction:'in',date:'2026-09-14',staff:'fixture',message:'test',details:{before:100,after:110}},'2026-09-14',{kind:'receipt',operationId:'egg-entry',reason:''});
   return {...e,resource,page,save};
 }
 test('egg stock, stock log and activity are committed together with the existing activity fields',async()=>{
-  const e=await setup();assert.equal(await e.save(),true);assert.equal(e.state.rows.eggStock[0].currentQty,110);assert.equal(e.state.commits.length,1);assert.equal(e.state.commits[0].length,3);const activity=e.state.commits[0][2].data;assert.equal(activity.details.app,'production');assert.equal(activity.acknowledged,false);assert.equal(activity.uid,'fixture');
+  const e=await setup();assert.equal(await e.save(),true);assert.equal(e.state.rows.eggStock[0].currentQty,110);assert.equal(e.state.commits.length,1);assert.equal(e.state.commits[0].length,4);const activity=e.state.commits[0][3].data;assert.equal(activity.details.app,'production');assert.equal(activity.acknowledged,false);assert.equal(activity.uid,'fixture');
 });
 test('a changed egg stock or a closed date produces no stock/log writes',async()=>{
   const e=await setup();e.state.rows.eggStock[0].currentQty=90;await assert.rejects(e.save,/원본이 변경/);assert.equal(e.state.commits.length,0);

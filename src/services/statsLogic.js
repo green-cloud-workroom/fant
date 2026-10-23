@@ -2,6 +2,7 @@
 // never from today's recipe, conversion, or stock balance.
 import { applyIncomingCorrections } from './incomingCorrections.js';
 import { resolveStatsCorrections, correctedEvent } from './statsCorrections.js';
+import {movementKind,manualMovementIndex} from './manualMovementLogic.js';
 const DAY = 86400000;
 export const quantity = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
 export function validDate(value) {
@@ -100,6 +101,7 @@ export function productionEvents(data, range) {
   return { events, unconfirmed, confirmed };
 }
 function logEvents(data, corrections) {
+  const cancelled=manualMovementIndex(data);
   const excluded = new Set(corrections.filter(c => c.kind === 'excludeSupply').map(c => c.source));
   const meatLogs = applyIncomingCorrections(data.meatLogs || []);
   const supplements = new Map((data.supplementTypes || []).map(s => [s.id, s.name]));
@@ -110,14 +112,15 @@ function logEvents(data, corrections) {
     ['supplementLogs', 'in', 'supplementTypeId', null, '봉', 1, '영양제'],
   ];
   return specs.flatMap(([collection, type, idField, nameField, unit, scale, stage]) => unique(collection === 'meatLogs' ? meatLogs : data[collection] || [])
-    .filter(log => log.type === type && !excluded.has(collection + '/' + log.id) && !['deleted', 'cancelled', 'canceled'].includes(log.status))
+    .filter(log => (movementKind(log)==='receipt'||!movementKind(log)&&log.type===type)
+      && !cancelled.has(collection+'/'+log.id) && !excluded.has(collection + '/' + log.id) && !['deleted', 'cancelled', 'canceled'].includes(log.status))
     .map(log => ({ itemId: `${collection}:${idField ? log[idField] || 'unlinked:' + log.id : 'egg'}`,
       name: log[nameField] || (collection === 'supplementLogs' ? supplements.get(log.supplementTypeId) || log.supplementTypeId : null) || (stage === '계란' ? '계란' : `품목 미연결 (${log.id})`),
       date: log.date, qty: quantity(collection === 'meatLogs' ? log.delta : log.qty), unit, scale, stage, source: `${collection}/${log.id}`,
       note: log.incomingCorrection ? '입고량 정정: ' + log.incomingCorrection.originalQtyG / 1000 + 'kg → ' + log.incomingCorrection.correctedQtyG / 1000
         + 'kg · 재고 변동 없음 · 근거 meatLogs/' + log.incomingCorrection.id + ' · ' + log.incomingCorrection.reason : '' }))
     .map(e => ({ ...e, qty: e.qty === null ? null : e.qty * e.scale })))
-    .concat(corrections.filter(c => c.kind === 'includeSupply').map(c => correctedEvent(c, data)));
+    .concat(corrections.filter(c => c.kind === 'includeSupply'&&!cancelled.has(c.source)).map(c => correctedEvent(c, data)));
 }
 export function supplyEvents(data, range) {
   const corrections = resolveStatsCorrections(data), candidates = logEvents(data, corrections);
@@ -136,8 +139,16 @@ export function supplyEvents(data, range) {
     row.elapsed = daysBetween(row.lastDate, range.endDate < range.today ? range.endDate : range.today);
   }
   const registrations = [], excludedSchedules = [];
+  const cancelled=manualMovementIndex(data);
+  const cancelledSchedules=new Set();
+  for(const [path,row] of cancelled){
+    if(row.manualMovement.scheduleId)cancelledSchedules.add(row.manualMovement.scheduleId);
+    const [name,id]=path.split('/'),source=(data[name]||[]).find(r=>r.id===id);
+    for(const ledger of data.stockLedger||[])if(ledger.actionType==='scheduleComplete'&&ledger.items?.some(i=>i.bagLogId===id||i.eggLogId===id||name==='meatLogs'&&i.docId===source?.meatStockId))cancelledSchedules.add(ledger.actionId);
+  }
   for (const s of unique(data.schedules || [])) {
     if (s.status !== 'completed') continue;
+    if(cancelledSchedules.has(s.id)) {excludedSchedules.push(s.id);continue;}
     const completedDate = kstDate(s.completedAt);
     if (!completedDate) { if (inRange(s.date, range)) excludedSchedules.push(s.id); continue; }
     if (!inRange(completedDate, range) || completedDate > range.today) continue;
@@ -161,6 +172,7 @@ export function supplyEvents(data, range) {
     registrationSummary: [...registrationGroups.values()].map(g => ({ ...g, prior: sample(g.rows.map(r => r.prior)), processing: sample(g.rows.map(r => r.processing)) })) };
 }
 export function usageEvents(data, range) {
+  manualMovementIndex(data);
   const corrections = resolveStatsCorrections(data);
   const excluded = new Set(corrections.filter(c => c.kind === 'excludeUsage').map(c => c.source));
   const { confirmed, unconfirmed } = productionEvents({ productions: data.productions }, range);
@@ -183,7 +195,9 @@ export function usageEvents(data, range) {
     ['supplementLogs', ['autoDeduct'], 'supplementTypeId', null, '봉', 1, '영양제 순차감'],
   ]) for (const log of unique(data[collection] || [])) {
     if (excluded.has(collection + '/' + log.id)) continue;
-    if (!types.includes(log.type) || !inRange(log.date, range) || log.date > range.today || ['deleted', 'cancelled', 'canceled'].includes(log.status)) continue;
+    const kind=movementKind(log);
+    const use=kind==='usage'||kind==='cancel'&&log.manualMovement.originalKind==='usage';
+    if ((kind?!use:!types.includes(log.type)) || !inRange(log.date, range) || log.date > range.today || ['deleted', 'cancelled', 'canceled'].includes(log.status)) continue;
     const qty = quantity(collection === 'meatLogs' ? log.delta : log.qty);
     if (qty === null) { missing.push(`${collection}/${log.id}`); continue; }
     events.push({ itemId: `${collection}:${idField ? log[idField] || 'unlinked:' + log.id : 'egg'}`,
@@ -207,11 +221,14 @@ export function usageEvents(data, range) {
   const additions = [...corrections.filter(c => c.kind === 'includeUsage'), ...linkedReturns].map(c => correctedEvent(c, data))
     .filter(e => inRange(e.date, range) && e.date <= range.today);
   events.push(...additions);
-  const pending = [...corrections.filter(c => c.kind === 'hold' && c.metric === 'usage' || c.unresolvedQuantity === true), ...unverified].filter(c => {
+  const manualClasses= ['meatLogs','bagLogs','eggLogs','supplementLogs'].flatMap(name=>(data[name]||[]).filter(r=>movementKind(r)&&inRange(r.date,range)).map(r=>({source:name+'/'+r.id,
+    classification:({reconciliation:'stockReconciliation',test:'test',cancel:'cancelledExecution'})[r.manualMovement.kind]||r.manualMovement.kind,
+    reason:r.manualMovement.reason||r.manualMovement.kind,metric:'usage',unresolvedQuantity:r.manualMovement.kind==='cancel'&&r.manualMovement.originalKind==='legacyAdjustment'})));
+  const pending = [...corrections.filter(c => c.kind === 'hold' && c.metric === 'usage' || c.unresolvedQuantity === true), ...unverified,...manualClasses.filter(c=>c.unresolvedQuantity)].filter(c => {
     const [collection, id] = c.source.split('/'); return inRange(data[collection]?.find(r => r.id === id)?.date, range);
   });
   const classifications = corrections.filter(c => ['excludeUsage', 'classifyUsage'].includes(c.kind)).filter(c => {
     const [collection, id] = c.source.split('/'); return inRange(data[collection]?.find(r => r.id === id)?.date, range);
-  });
+  }).concat(manualClasses.filter(c=>['stockReconciliation','test','cancelledExecution'].includes(c.classification)));
   return { events, missing, unconfirmed, pending, adjustments: additions, classifications };
 }

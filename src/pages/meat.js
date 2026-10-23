@@ -1,3 +1,6 @@
+import {movementLabel} from '../services/manualMovementLogic.js';
+import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
+import {saveManualMovement} from '../services/manualMovements.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { checkQuantityBeforeSave } from '../services/statsAutomationRuntime.js';
 import { db } from '../firebase.js';
@@ -5,7 +8,7 @@ import {
   collection, getDocsFromServer as getDocs, doc, addDoc, updateDoc, query, orderBy, limit, startAfter, getDocFromServer as getDoc, where, writeBatch, setDoc
 } from 'firebase/firestore';
 import { blockIfClosed } from '../utils/closingGuard.js';
-import { currentUserRole } from '../app.js';
+import { currentUser, currentUserRole } from '../app.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { recordMeatLog } from '../services/meatLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
@@ -602,7 +605,7 @@ function renderMeatLogCard(log, typeName) {
       '</div>' +
       '<div style="display:flex;justify-content:space-between;gap:6px;margin-top:2px;color:#777;font-size:11px;">' +
         '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(log.staff || '-') + ' / ' + escapeHtml(log.reason || '-') + '</span>' +
-        '<span style="white-space:nowrap;">' + escapeHtml(getMeatLogTypeLabel(log.type)) + '</span>' +
+        '<span style="white-space:nowrap;">' + escapeHtml(movementLabel(log,getMeatLogTypeLabel(log.type))) + '</span>' +
       '</div>' +
     '</div>'
   );
@@ -1146,6 +1149,7 @@ function showAddFrozenModal(options = {}) {
 
   showModal(`
     <h3 class="modal-title">${title}</h3>
+    ${movementFields({incoming:true})}
     <div class="form-group">
       <label>${itemLabel} 종류 *</label>
       <select id="m_meatType">
@@ -1187,10 +1191,12 @@ function showAddFrozenModal(options = {}) {
     </div>
   `);
 
+  const getMovement=bindMovementForm({db,name:'meatLogs',filter:{}});
   document.getElementById('btnSaveFrozen').addEventListener('click', async () => {
  return runPageCommand(meatResource,async command=>{
   const {addDoc,recordActivity,recordMeatLog}=commandWrites(command);
 
+    const selection=readMovementForm(getMovement);if(!selection)return;
     const meatTypeId = document.getElementById('m_meatType').value;
     const meatTypeEl = document.getElementById('m_meatType');
     const meatName = meatTypeEl.options[meatTypeEl.selectedIndex]?.text;
@@ -1216,55 +1222,14 @@ function showAddFrozenModal(options = {}) {
 
     const qtyG = unit === 'kg' ? weight * 1000 : weight;
 
-    const quantityReview = await checkQuantityBeforeSave({ itemId: 'meatLogs:' + meatTypeId,
+    const quantityReview = selection.kind==='test'?{approved:true}:await checkQuantityBeforeSave({ itemId: 'meatLogs:' + meatTypeId,
       name: meatName, date, qty: qtyG / 1000, unit: 'kg', stage: '원료' }, command.isCurrent);
     if (!quantityReview.approved) return;
 
-    const stockRef = await addDoc(collection(db, 'meatStocks'), {
-      meatTypeId,
-      meatNameSnapshot: meatName,
-      stage: 'frozen',
-      incomingDate: date,
-      initialQtyG: qtyG,
-      remaining: qtyG,
-      staffName: staff,
-      note,
-      closed: false,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    await recordMeatLog({
-      type: 'frozenIncoming',
-      ...(quantityReview.review ? { statsQuantityReview: quantityReview.review } : {}),
-      date,
-      meatTypeId,
-      meatNameSnapshot: meatName,
-      stage: 'frozen',
-      meatStockId: stockRef.id,
-      delta: qtyG,
-      before: 0,
-      after: qtyG,
-      staff,
-      reason: note || null,
-    });
-
-    // [묶음 5A] 사무 로그 발행 — 원육 입고 (운영자가 메인 화면에서 변동 추적 가능하게)
-    await recordActivity({
-      action: 'meat',
-      subAction: 'incoming',
-      date,
-      staff,
-      message: `${itemLabel} 입고 (냉동창고) - ${meatName} +${(qtyG/1000).toFixed(1)}kg / 담당: ${staff}`,
-      details: {
-        meatStockId: stockRef.id,
-        meatTypeId,
-        meatName,
-        stage: 'frozen',
-        qtyG,
-        note: note || null,
-      },
-    });
+    const stockRef=doc(collection(db,'meatStocks'));
+    await saveManualMovement({db,command,name:'meatLogs',stockId:stockRef.id,selection,uid:currentUser?.uid||null,
+      stockData:{meatTypeId,meatNameSnapshot:meatName,stage:'frozen',incomingDate:date,initialQtyG:qtyG,remaining:0,staffName:staff,note,closed:false,createdAt:new Date()},
+      log:{type:'frozenIncoming',date,meatTypeId,meatNameSnapshot:meatName,stage:'frozen',meatStockId:stockRef.id,delta:qtyG,staff,reason:note||null,...(quantityReview.review?{statsQuantityReview:quantityReview.review}:{})}});
 
     if(!command.isCurrent())return;
     closeModal();
@@ -1625,6 +1590,7 @@ function showAddRepackedModal() {
 function showAdjustModal(id, name, remaining) {
   showModal(`
     <h3 class="modal-title">수동 재고 조정 — ${name}</h3>
+    ${movementFields({reasonField:false})}
     <p style="font-size:12px;color:#888;margin-bottom:16px;">기존 잔량: <strong>${(remaining/1000).toFixed(1)}kg</strong> (${remaining}g)</p>
     <div class="form-group">
       <label>실제 잔량 (g) *</label>
@@ -1648,10 +1614,12 @@ function showAdjustModal(id, name, remaining) {
     </div>
   `);
 
+  const getMovement=bindMovementForm({db,name:'meatLogs',filter:{meatStockId:id},onCancel:delta=>{document.getElementById('m_actualRemaining').value=remaining+delta;},reasonInput:document.getElementById('m_adjustReason')});
   document.getElementById('btnSaveAdjust').addEventListener('click', async () => {
  return runPageCommand(meatResource,async command=>{
   const {getDoc,updateDoc,recordActivity,recordMeatLog}=commandWrites(command);
 
+    const selection=readMovementForm(getMovement);if(!selection)return;
     const inputVal = document.getElementById('m_actualRemaining').value;
     const reason = document.getElementById('m_adjustReason').value.trim();
     const staff = document.getElementById('m_staff').value;
@@ -1683,44 +1651,8 @@ function showAdjustModal(id, name, remaining) {
     const stockData = stockSnap.exists() ? stockSnap.data() : {};
     const meatTypeId = stockData.meatTypeId || null;
 
-    await updateDoc(doc(db, 'meatStocks', id), {
-      remaining: newRemaining,
-      closed: newRemaining === 0,
-      updatedAt: new Date(),
-    });
-
-    const logStage = currentTab === 'produce' ? 'frozen' : currentTab;
-    const stageKor = currentTab === 'frozen' ? '냉동창고' : currentTab === 'processed' ? '전처리' : currentTab === 'produce' ? '채소/과일' : '재포장';
-    await recordActivity({
-      action: 'meat',
-      subAction: 'adjust',
-      date: adjustDate,
-      staff,
-      message: `원육 수동조정 (${stageKor}) — ${name} ${(remaining/1000).toFixed(1)}kg → ${(newRemaining/1000).toFixed(1)}kg / 사유: ${reason} / 담당: ${staff}`,
-      details: {
-        meatStockId: id,
-        meatName: name,
-        stage: stageKor,
-        delta,
-        before: remaining,
-        after: newRemaining,
-        reason,
-      },
-    });
-
-    await recordMeatLog({
-      type: 'adjust',
-      date: adjustDate,
-      meatTypeId,
-      meatNameSnapshot: name,
-      stage: logStage,
-      meatStockId: id,
-      delta,
-      before: remaining,
-      after: newRemaining,
-      staff,
-      reason,
-    });
+    await saveManualMovement({db,command,name:'meatLogs',stockId:id,selection,expectedBefore:remaining,uid:currentUser?.uid||null,
+      log:{type:'adjust',date:adjustDate,meatTypeId,meatNameSnapshot:name,stage:stockData.stage||'frozen',meatStockId:id,delta,staff,reason}});
 
     if(!command.isCurrent())return;
     closeModal();
