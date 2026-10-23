@@ -1,3 +1,4 @@
+import {showStatus} from '../utils/statusToast.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
@@ -595,7 +596,7 @@ async function deleteFrozenSepStock(stock) {
  },{roles:['admin','office']});
 }
 
-function showIncomingModal(stocks) {
+function showIncomingModal(stocks, draft=null) {
   showModal(`
     <h3 class="modal-title">원물 입고</h3>
     <div class="form-group">
@@ -611,11 +612,11 @@ function showIncomingModal(stocks) {
       <input type="number" id="m_qty" placeholder="예: 0.2" min="0" step="0.01" />
     </div>
     <div class="form-group">
-      <label>날짜</label>
+      <label>날짜 *</label>
       <input type="date" id="m_date" value="${getToday()}" />
     </div>
     <div class="form-group">
-      <label>담당자</label>
+      <label>담당자 *</label>
       <select id="m_staff">
         <option value="">선택</option>
         ${getStaffOptions(['senior', 'office'])}
@@ -625,11 +626,13 @@ function showIncomingModal(stocks) {
       <label>비고</label>
       <input type="text" id="m_note" placeholder="비고" />
     </div>
+    ${continueEntryFields()}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn-primary" id="btnSaveIncoming">입고</button>
     </div>
   `);
+  restoreEntryContext(draft);
 
   // [묶음 5C] 제품 선택 시 안내 텍스트 자동 업데이트
   // freezeDryRecipes에서 displayName으로 찾아서 requiresSeparation 보고 결정
@@ -659,7 +662,7 @@ function showIncomingModal(stocks) {
   updateSepGuide();
 
   document.getElementById('btnSaveIncoming').addEventListener('click', async () => {
- return runPageCommand(frozenSepResource,async command=>{
+ return runSepEntry(async command=>{
   const {addDoc,recordActivity}=commandWrites(command);
 
     const name = document.getElementById('m_name').value.trim();
@@ -714,17 +717,19 @@ function showIncomingModal(stocks) {
     });
 
     if(!command.isCurrent())return;
+    const next = readEntryContext();
     closeModal();
     const [newStocks, newLogs] = await Promise.all([loadFrozenSepStocks(), loadFrozenSepLogs()]);
     if(!command.isCurrent())return;
     renderFrozenSepLayout(newStocks, newLogs);
-    alert('입고 완료!');
+    showStatus('입고 완료!');
+    return {continueWith:next};
 
- },{roles:['admin','office','production']});
+ },showIncomingModal);
 });
 }
 
-function showSeparateModal(stocks) {
+function showSeparateModal(stocks, draft=null) {
   const notSepStocks = stocks.filter(s => s.stockType === 'notSeparated');
   const products = [...new Set(notSepStocks.map(s => s.productName))];
 
@@ -747,24 +752,26 @@ function showSeparateModal(stocks) {
       <input type="number" id="m_qty" placeholder="예: 0.2" min="0" step="0.01" />
     </div>
     <div class="form-group">
-      <label>날짜</label>
+      <label>날짜 *</label>
       <input type="date" id="m_date" value="${getToday()}" />
     </div>
     <div class="form-group">
-      <label>담당자</label>
+      <label>담당자 *</label>
       <select id="m_staff">
         <option value="">선택</option>
         ${getStaffOptions(['senior', 'office'])}
       </select>
     </div>
+    ${continueEntryFields()}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn-primary" id="btnSaveSeparate">작업 완료</button>
     </div>
   `);
+  restoreEntryContext(draft);
 
   document.getElementById('btnSaveSeparate').addEventListener('click', async () => {
- return runPageCommand(frozenSepResource,async command=>{
+ return runSepEntry(async command=>{
   const {addDoc,updateDoc,recordActivity}=commandWrites(command);
 
     const productName = document.getElementById('m_product').value;
@@ -832,17 +839,19 @@ function showSeparateModal(stocks) {
     });
 
     if(!command.isCurrent())return;
+    const next = readEntryContext();
     closeModal();
     const [newStocks, newLogs] = await Promise.all([loadFrozenSepStocks(), loadFrozenSepLogs()]);
     if(!command.isCurrent())return;
     renderFrozenSepLayout(newStocks, newLogs);
-    alert('분리 작업 완료!');
+    showStatus('분리 작업 완료!');
+    return {continueWith:next};
 
- },{roles:['admin','office','production']});
+ },showSeparateModal);
 });
 }
 
-function showOutModal(stocks) {
+function showOutModal(stocks, draft=null) {
   const outStocks = stocks.filter(s => s.stockType === 'separated' || s.stockType === 'noSplit');
   const products = [...new Set(outStocks.map(s => s.productName))];
 
@@ -864,21 +873,23 @@ function showOutModal(stocks) {
       <input type="number" id="m_qty" placeholder="예: 0.2" min="0" step="0.01" />
     </div>
     <div class="form-group">
-      <label>날짜</label>
+      <label>날짜 *</label>
       <input type="date" id="m_date" value="${getToday()}" />
     </div>
     <div class="form-group">
-      <label>담당자</label>
+      <label>담당자 *</label>
       <select id="m_staff">
         <option value="">선택</option>
         ${getStaffOptions(['senior', 'office'])}
       </select>
     </div>
+    ${continueEntryFields()}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn-primary" id="btnSaveOut">출고</button>
     </div>
   `);
+  restoreEntryContext(draft);
 
   // [묶음 5C] 출고 재고 종류 자동 결정 + 안내 표시
   // 분리 필요 제품 → 분리O 재고에서 출고 / 분리 불필요 제품 → 소분X 재고에서 출고
@@ -919,7 +930,7 @@ function showOutModal(stocks) {
   updateOutType();
 
   document.getElementById('btnSaveOut').addEventListener('click', async () => {
- return runPageCommand(frozenSepResource,async command=>{
+ return runSepEntry(async command=>{
   const {addDoc,updateDoc,recordActivity}=commandWrites(command);
 
     const productName = document.getElementById('m_product').value;
@@ -987,18 +998,21 @@ function showOutModal(stocks) {
     });
 
     if(!command.isCurrent())return;
+    const next = readEntryContext();
     closeModal();
     const [newStocks, newLogs] = await Promise.all([loadFrozenSepStocks(), loadFrozenSepLogs()]);
     if(!command.isCurrent())return;
     renderFrozenSepLayout(newStocks, newLogs);
-    alert('출고 완료!');
+    showStatus('출고 완료!');
+    return {continueWith:next};
 
- },{roles:['admin','office','production']});
+ },showOutModal);
 });
 }
 
 function showAdjustModal(stocks) {
-  const products = [...new Set(stocks.map(s => s.productName))];
+  const products = sortProductNames([...new Set([...stocks.map(s => s.productName), ...freezeDryRecipes.map(r => r.displayName), ...(frozenSepResource.model?.logs || []).map(l => l.productName)].filter(Boolean))]);
+  const logRef = doc(collection(db, 'frozenSeparationLogs')); // stable per form
 
   showModal(`
     <h3 class="modal-title">수동 조정</h3>
@@ -1017,8 +1031,10 @@ function showAdjustModal(stocks) {
         <option value="noSplit">소분X</option>
       </select>
     </div>
+    <div class="form-group"><label for="m_entryMode">입력 방식</label><select id="m_entryMode"><option value="actual">실제로 센 잔량 입력</option><option value="delta">증가·감소량 입력</option></select></div>
+    <div id="m_adjustPreview" role="status" style="padding:10px;background:#f7f7f7;margin-bottom:12px;">제품과 재고 종류를 선택해주세요.</div>
     <div class="form-row">
-      <div class="form-group">
+      <div class="form-group" id="m_directionGroup">
         <label>조정 유형</label>
         <select id="m_adjustType">
           <option value="plus">+ 증가</option>
@@ -1026,7 +1042,7 @@ function showAdjustModal(stocks) {
         </select>
       </div>
       <div class="form-group">
-        <label>수량(개) *</label>
+        <label id="m_qtyLabel">증가·감소량(개) *</label>
         <input type="number" id="m_qty" placeholder="예: 0.2" min="0" step="0.01" />
       </div>
     </div>
@@ -1047,10 +1063,23 @@ function showAdjustModal(stocks) {
     </div>
   `);
 
+  const selectedStocks = () => stocks.filter(s => s.productName === document.getElementById('m_product').value && s.stockType === document.getElementById('m_stockType').value);
+  const updatePreview = () => {
+    const actual = document.getElementById('m_entryMode').value === 'actual';
+    document.getElementById('m_directionGroup').style.display = actual ? 'none' : '';
+    document.getElementById('m_qtyLabel').textContent = actual ? '실제로 센 잔량(개) *' : '증가·감소량(개) *';
+    const input = document.getElementById('m_qty'), before = normalizeQty(selectedStocks().reduce((sum,s) => sum + Number(s.remaining || 0), 0));
+    if (!document.getElementById('m_product').value) { document.getElementById('m_adjustPreview').textContent = '제품과 재고 종류를 선택해주세요.'; return; }
+    const entered = Number(input.value), after = actual ? entered : normalizeQty(before + (document.getElementById('m_adjustType').value === 'minus' ? -entered : entered));
+    document.getElementById('m_adjustPreview').textContent = `현재 잔량 ${formatQty(before)}개` + (input.value !== '' && Number.isFinite(entered) ? ` → 조정 후 ${formatQty(after)}개${after < 0 ? ' (재고 부족)' : ''}` : '');
+  };
+  for (const id of ['m_product','m_stockType','m_entryMode']) document.getElementById(id).addEventListener('change', () => { document.getElementById('m_qty').value = ''; updatePreview(); });
+  document.getElementById('m_adjustType').addEventListener('change', updatePreview);
+  document.getElementById('m_qty').addEventListener('input', updatePreview);
+  updatePreview();
+
   document.getElementById('btnSaveAdjust').addEventListener('click', async () => {
  return runPageCommand(frozenSepResource,async command=>{
-  const {addDoc,updateDoc,recordActivity}=commandWrites(command);
-
     const productName = document.getElementById('m_product').value;
     const stockType = document.getElementById('m_stockType').value;
     const adjustType = document.getElementById('m_adjustType').value;
@@ -1058,76 +1087,85 @@ function showAdjustModal(stocks) {
     const reason = document.getElementById('m_reason').value.trim();
     const staff = document.getElementById('m_staff').value;
 
-    if (!productName || !Number.isFinite(qty) || qty <= 0 || !reason || !staff) { alert('모든 필수 항목을 입력해주세요.'); return; }
+    const actualMode = document.getElementById('m_entryMode').value === 'actual';
+    if (!productName || document.getElementById('m_qty').value === '' || !Number.isFinite(qty) || (actualMode ? qty < 0 : qty <= 0) || !reason || !staff) { alert('모든 필수 항목을 입력해주세요.'); return; }
     const today = getToday();
     if (await blockIfClosed(today, command)) return;
 
-    const delta = adjustType === 'plus' ? qty : -qty;
-    const targetStocks = stocks
-      .filter(s => s.productName === productName && s.stockType === stockType)
-      .sort((a, b) => a.date.localeCompare(b.date));
-
-    // [음수 차단] 기존 lot이 있으면 그 lot의 잔량 + delta가 음수면 차단.
-    // 신규 생성 분기는 마이너스로 신규 생성 자체를 차단해야 함.
-    if (targetStocks.length > 0) {
-      const s = targetStocks[0];
-      const currentRemaining = Number(s.remaining || 0);
-      const after = normalizeQty(currentRemaining + delta);
-      if (after < -QTY_EPSILON) {
-        alert(`조정 후 잔량이 ${formatQty(after)}개가 됩니다.\n수동조정으로 음수 재고를 만들 수 없습니다.\n현재 ${formatQty(currentRemaining)}개에서 최대 ${formatQty(currentRemaining)}개까지만 감소 가능합니다.`);
-        return;
+    const targetStocks = selectedStocks().sort((a,b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+    const before = normalizeQty(targetStocks.reduce((sum,s) => sum + Number(s.remaining || 0), 0));
+    const delta = actualMode ? normalizeQty(qty - before) : adjustType === 'plus' ? qty : -qty;
+    if (Math.abs(delta) <= QTY_EPSILON) { showStatus('현재 재고와 같아 조정할 내용이 없습니다.'); return; }
+    if (before + delta < -QTY_EPSILON) { alert(`현재 재고 ${formatQty(before)}개보다 많이 감소할 수 없습니다.`); return; }
+    const newStockRef = doc(collection(db, 'frozenSeparation'));
+    const refs = targetStocks.map(s => doc(db, 'frozenSeparation', s.id));
+    // All affected lots, the new log and the audit entry commit together.
+    await command.transaction(db, async tx => {
+      const [saved,closing,...fresh] = await Promise.all([tx.get(logRef),tx.get(doc(db,'closings',today)),...refs.map(ref=>tx.get(ref))]);
+      if (saved.exists()) return;
+      if (closing.exists() && closing.data().status === 'closed') throw new Error('마감된 날짜에는 입력할 수 없습니다.');
+      for (let i=0;i<fresh.length;i++) {
+        const value = fresh[i].exists() ? fresh[i].data() : null, original = targetStocks[i];
+        if (!value || value.closed || value.productName !== productName || value.stockType !== stockType || Number(value.remaining) !== Number(original.remaining)) throw new Error('재고가 변경됐습니다. 최신 자료를 확인해주세요.');
       }
-      await updateDoc(doc(db, 'frozenSeparation', s.id), {
-        remaining: after,
-        closed: after <= QTY_EPSILON,
-        updatedAt: new Date(),
-      });
-    } else {
-      // 기존 lot 없는데 마이너스 조정 → 음수로 신규 생성 시도 → 차단
       if (delta < 0) {
-        alert(`해당 제품/구분의 재고가 없습니다.\n수동조정으로 음수 재고를 만들 수 없습니다.`);
-        return;
+        let left = -delta;
+        for (let i=0;i<targetStocks.length && left > QTY_EPSILON;i++) {
+          const amount = Math.min(Number(targetStocks[i].remaining),left), after = normalizeQty(Number(targetStocks[i].remaining)-amount);
+          tx.update(refs[i],{remaining:after,closed:after<=QTY_EPSILON,updatedAt:new Date()});
+          left = normalizeQty(left-amount);
+        }
+      } else if (targetStocks.length) {
+        tx.update(refs[0],{remaining:normalizeQty(Number(targetStocks[0].remaining)+delta),closed:false,updatedAt:new Date()});
+      } else {
+        tx.set(newStockRef,{date:today,productName,stockType,initialQty:delta,remaining:delta,staffName:staff,note:reason,closed:false,createdAt:new Date(),updatedAt:new Date()});
       }
-      await addDoc(collection(db, 'frozenSeparation'), {
-        date: getToday(), productName, stockType,
-        initialQty: delta, remaining: delta,
-        staffName: staff, note: reason, closed: false,
-        createdAt: new Date(), updatedAt: new Date(),
-      });
-    }
-
-    await addDoc(collection(db, 'frozenSeparationLogs'), {
-      date: getToday(), timestamp: new Date(),
-      type: 'adjust', productName,
-      fromStockType: stockType,
-      qty: delta, staffName: staff, reason,
-    });
-
-    const stockTypeLabel = getStockTypeLabel(stockType);
-    const sign = delta >= 0 ? '+' : '';
-    await recordActivity({
-      action: 'frozenSep',
-      subAction: 'adjust',
-      date: today,
-      staff,
-      message: `동결 분리작업 수동조정 — ${productName} (${stockTypeLabel}) ${sign}${formatQty(delta)}개 / 사유: ${reason} / 담당: ${staff}`,
-      details: {
-        productName,
-        stockType,
-        delta,
-        reason,
-      },
-    });
+      tx.set(logRef,{date:today,timestamp:new Date(),type:'adjust',productName,fromStockType:stockType,qty:delta,staffName:staff,reason});
+      const stockTypeLabel = getStockTypeLabel(stockType);
+      const sign = delta >= 0 ? '+' : '';
+      await recordActivity({
+        action: 'frozenSep',
+        subAction: 'adjust',
+        date: today,
+        staff,
+        message: `동결 분리작업 수동조정 — ${productName} (${stockTypeLabel}) ${sign}${formatQty(delta)}개 / 사유: ${reason} / 담당: ${staff}`,
+        details: {
+          productName,
+          stockType,
+          delta,
+          reason,
+        },
+      }, {batch:tx});
+    }, {targets:[...refs,newStockRef,logRef]});
 
     if(!command.isCurrent())return;
     closeModal();
     const [newStocks, newLogs] = await Promise.all([loadFrozenSepStocks(), loadFrozenSepLogs()]);
     if(!command.isCurrent())return;
     renderFrozenSepLayout(newStocks, newLogs);
-    alert('조정 완료!');
+    showStatus('조정 완료!');
 
  },{roles:['admin','office','production']});
 });
+}
+
+// Continuation is opt-in, scoped to this successful operation, and never resubmits.
+function continueEntryFields() {
+  return '<label style="display:block;margin:12px 0;"><input type="checkbox" id="m_continue" /> 저장 후 다음 품목 계속 입력 (날짜·담당자 유지)</label>';
+}
+function restoreEntryContext(draft) {
+  if (!draft) return;
+  document.getElementById('m_date').value = draft.date;
+  document.getElementById('m_staff').value = draft.staff;
+  document.getElementById('m_continue').checked = true;
+}
+function readEntryContext() {
+  return document.getElementById('m_continue')?.checked ? {date:document.getElementById('m_date').value,staff:document.getElementById('m_staff').value} : null;
+}
+async function runSepEntry(callback, open) {
+  const page = getPageContext();
+  const result = await runPageCommand(frozenSepResource, callback, {roles:['admin','office','production']});
+  if (result?.continueWith && !frozenSepResource.blocked && (!page || page.isCurrent()) && frozenSepResource.model) open(frozenSepResource.model.stocks,result.continueWith);
 }
 
 // 유틸

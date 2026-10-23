@@ -13,7 +13,7 @@ import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
 import { round2, breadToSilicon, breadToFrozenPan } from '../utils/number.js';
-import { showPromptModal, showConfirmModal } from '../utils/modal.js';
+import { showConfirmModal } from '../utils/modal.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { renderFreezeOpInTab,disposeFreezeOpTab } from './freezeOp.js';
 
@@ -33,15 +33,15 @@ async function loadFrozenPanRows(scope={getDocs,getDoc}) {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-async function loadFrozenPanLots(scope={getDocs,getDoc}) {
+async function loadFrozenPanLots(scope={getDocs,getDoc}, includeEmpty=false) {
   const snap = await scope.getDocs(collection(db, 'frozenPanLots'));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }))
-    .filter(l => !l.closed && Number(l.remaining || 0) > 0);
+    .filter(l => includeEmpty ? ((!l.closed || Number(l.remaining) === 0) && Number(l.remaining) >= 0) : !l.closed && Number(l.remaining || 0) > 0);
 }
 
-async function loadBreadPanLots(scope={getDocs,getDoc}) {
+async function loadBreadPanLots(scope={getDocs,getDoc}, includeEmpty=false) {
   const snap = await scope.getDocs(collection(db, 'breadPanLots'));
-  return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(l => !l.closed);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(l => includeEmpty ? ((!l.closed || Number(l.remaining) === 0) && Number(l.remaining) >= 0) : !l.closed);
 }
 
 async function loadBreadPanLogs(scope={getDocs,getDoc}) {
@@ -443,27 +443,21 @@ function bindFrozenPanTabEvents(rows, lots) {
 });
   });
 
-  // 발주 취소 버튼
+  // 담당자·사유·복원 안내를 한 화면에서 확인한다.
   document.querySelectorAll('.btn-order-cancel').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const __c = await showConfirmModal({ title:'발주 확인 취소', message:'발주 확인을 취소하시겠습니까?\n차감된 동결판 재고가 복원됩니다.', confirmText:'확인', danger:true }); if (!__c) return;
-      const rowId = btn.dataset.id;
-      const row = rows.find(r => r.id === rowId);
-      if (!row) return;
-      if (await blockIfClosed(row.date)) return;
-
-      // [묶음 5B] 발주 취소 담당자 입력 받기 (사유는 cancelOrder 내부에서 받음)
-      const staff = await showStaffPickerModal({
-        title: '발주 취소 — 담당자 선택',
-        message: '발주 취소를 진행할 담당자를 선택해주세요.',
-        groups: ['senior', 'office'],
+      const row = rows.find(r => r.id === btn.dataset.id);
+      if (!row || await blockIfClosed(row.date)) return;
+      const entry = await showStaffPickerModal({
+        title: '발주 확인 취소',
+        message: '확인 취소 시 이 발주에서 차감한 동결판 재고가 복원됩니다.',
+        groups: ['senior', 'office'], requireReason: true,
       });
-      if (!staff) return;
-
-      await cancelOrder(row, lots, staff);
+      if (entry) await cancelOrder(row, lots, entry.staff, entry.reason);
     });
   });
 }
+
 
 function showTenderInModal() {
   // 동결텐더 = 분리 작업 불필요한 동결건조 레시피 (requiresSeparation === false)
@@ -689,8 +683,8 @@ function showBreadPanIncomingModal() {
 }
 
 async function showBreadPanAdjustModal() {
-  // 활성 lot 로드
-  const allBreadLots = await loadBreadPanLots();
+  // 실사 보정/사용 취소는 잔량 0인 원본도 선택할 수 있어야 한다.
+  const allBreadLots = await loadBreadPanLots({getDocs,getDoc}, true);
 
   if (allBreadLots.length === 0) {
     alert('조정할 빵판 lot이 없습니다.\n빵판 입고를 먼저 진행해주세요.');
@@ -800,7 +794,7 @@ async function showBreadPanAdjustModal() {
 }
 
 async function showFrozenPanAdjustModal() {
-  const allFrozenLots = await loadFrozenPanLots();
+  const allFrozenLots = await loadFrozenPanLots({getDocs,getDoc}, true);
 
   if (allFrozenLots.length === 0) {
     alert('조정할 동결판 lot이 없습니다.\n동결판 입고를 먼저 진행해주세요.');
@@ -1032,7 +1026,7 @@ async function handleWorkRowSave() {
   const items = Array.from(document.querySelectorAll('.work-item')).map(row => ({
     productName: row.querySelector('.wi-name').value.trim(),
     breadPanQty: round2(parseFloat(row.querySelector('.wi-bread').value) || 0),
-    actualFrozenQty: parseInt(row.querySelector('.wi-actual').value) || 0,
+    actualFrozenQty: row.querySelector('.wi-actual').value === '' ? null : Number(row.querySelector('.wi-actual').value),
   })).filter(i => i.productName);
 
   // 1. 기본 검증
@@ -1045,8 +1039,10 @@ async function handleWorkRowSave() {
       alert(`${item.productName}: 출고 빵판 수가 입력되지 않았습니다.`);
       return;
     }
-    if (item.actualFrozenQty <= 0) {
-      alert(`${item.productName}: 실제 산출 동결판 수가 입력되지 않았습니다.`);
+    if (!Number.isInteger(item.actualFrozenQty) || item.actualFrozenQty <= 0) {
+      alert(item.actualFrozenQty === null
+        ? `${item.productName}: 실제 산출 동결판 수를 입력해주세요.`
+        : `${item.productName}: 실제 산출 동결판 수는 1 이상의 정수로 입력해주세요.`);
       return;
     }
   }
@@ -1239,7 +1235,7 @@ function renderWorkItemRow(breadPanRecipes, productSummary) {
         </div>
         <div>
           <label style="font-size:11px;color:#555;display:block;margin-bottom:2px;">실제 산출 동결판 *</label>
-          <input type="number" class="wi-actual cell-input" step="1" min="0" placeholder="실측" />
+          <input type="number" class="wi-actual cell-input" step="1" min="1" placeholder="실측" />
         </div>
         <div>
           <label style="font-size:11px;color:#555;display:block;margin-bottom:2px;">차이</label>
@@ -1270,6 +1266,10 @@ function bindWorkItemEvents(productSummary) {
     nameEl.onchange = () => {
       const productName = nameEl.value;
       const summary = productSummary[productName];
+      actualEl.value = '';
+      expectedEl.value = '';
+      diffEl.textContent = '-';
+      diffEl.style.color = '#888';
 
       if (!summary || summary.total <= 0) {
         stockInfoEl.textContent = productName ? '⚠️ 빵판 lot 없음' : '제품을 선택하세요';
@@ -1448,14 +1448,15 @@ async function confirmOrder(row, lots, staff) {
 
   if(!command.isCurrent())return;
   await refreshFrozenPanLayout();
-  alert('발주 확인 완료!');
+  showStatus('발주 확인 완료!');
 
  },{roles:['admin','office','production']});
 }
 
-async function cancelOrder(row, lots, staff) {
+async function cancelOrder(row, lots, staff, reason) {
  return runPageCommand(frozenPanResource,async command=>{
-  const {getDoc,updateDoc,recordActivity}=commandWrites(command);
+  const {getDoc,writeBatch}=commandWrites(command);
+  const batch = writeBatch(db);
 
   // [권한 매트릭스] production은 발주 취소 불가
   if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
@@ -1463,46 +1464,44 @@ async function cancelOrder(row, lots, staff) {
     return;
   }
 
-  const reason = await showPromptModal({
-    title: '발주 취소',
-    message: '취소 후에는 차감된 동결판 재고가 복원됩니다.',
-    label: '취소 사유',
-    placeholder: '예: 재고 부족, 일정 변경',
-    required: true,
-    multiline: true,
-  });
-  if (reason === null) return;
+  reason = reason?.trim();
+  if (!staff || !reason) { alert('담당자와 취소 사유를 입력해주세요.'); return; }
+  if (await blockIfClosed(row.date, command)) return;
+  const latestRow = await getDoc(doc(db, 'frozenPanStock', row.id));
+  if (!latestRow.exists() || latestRow.data().status !== 'confirmed') {
+    alert('이미 취소됐거나 변경된 발주입니다. 최신 자료를 확인해주세요.'); return;
+  }
 
   // ledger 기반 정확 복원
   if (row.ledgerId) {
     const ledgerSnap = await getDoc(doc(db, 'stockLedger', row.ledgerId));
     if (ledgerSnap.exists() && ledgerSnap.data().status === 'active') {
       const ledgerItems = ledgerSnap.data().items || [];
+      const restorations = [];
       for (const item of ledgerItems) {
-        const docSnap = await getDoc(doc(db, item.collection, item.docId));
-        if (!docSnap.exists()) continue;
-        const currentVal = docSnap.data()[item.field] || 0;
-
-        if (currentVal !== item.after) {
-          const ok = await showConfirmModal({
-        title: '로그아웃 확인',
-        message: '오늘 아직 마감되지 않았습니다.\n로그아웃해도 자동으로 마감되지 않습니다.\n\n로그아웃 하시겠습니까?',
-        confirmText: '로그아웃',
-      });
-      if (!ok) return;
-        }
-
-        const restoredVal = currentVal - item.delta;
-        await updateDoc(doc(db, item.collection, item.docId), {
-          [item.field]: restoredVal,
-          closed: restoredVal <= 0,
-          updatedAt: new Date(),
-        });
+        const ref = doc(db, item.collection, item.docId);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) throw new Error('복원할 재고 원본이 없습니다. 사무팀 확인이 필요합니다.');
+        const current = Number(snap.data()[item.field]);
+        if (!Number.isFinite(current) || !Number.isFinite(item.delta) || current-item.delta < 0) throw new Error('복원 수량을 확인할 수 없습니다.');
+        restorations.push({ref,item,current,after:current-item.delta});
       }
-      await updateDoc(doc(db, 'stockLedger', row.ledgerId), {
+      const changed = restorations.filter(r => r.current !== r.item.after);
+      if (changed.length && !await showConfirmModal({
+        title: '재고 변경 후 발주 취소',
+        message: '발주 확인 이후 재고가 변경되었습니다. 현재 재고에 이 발주의 차감 수량만 되돌립니다.\n\n'
+          + changed.map(r => `${r.item.label || '동결판'}: 현재 ${r.current} → 복원 후 ${r.after}`).join('\n'),
+        confirmText: '재고 복원 후 취소', danger: true,
+      })) return;
+      for (const r of restorations) batch.update(r.ref, {
+        [r.item.field]: r.after, closed:r.after <= 0, updatedAt:new Date(),
+      });
+      batch.update(doc(db, 'stockLedger', row.ledgerId), {
         status: 'rolledBack',
         rolledBackAt: new Date(),
       });
+    } else {
+      throw new Error('이미 복원됐거나 유효하지 않은 발주 원장입니다. 최신 자료를 확인해주세요.');
     }
   } else {
     // fallback: ledger 없는 기존 데이터 — 옛 분배 로직 (lot capacity 무시) 그대로 사용
@@ -1516,7 +1515,7 @@ async function cancelOrder(row, lots, staff) {
       for (const lot of productLots) {
         if (toRestore <= 0) break;
         const restore = Math.min(item.orderPanQty, toRestore);
-        await updateDoc(doc(db, 'frozenPanLots', lot.id), {
+        batch.update(doc(db, 'frozenPanLots', lot.id), {
           remaining: lot.remaining + restore,
           closed: false,
           updatedAt: new Date(),
@@ -1527,7 +1526,7 @@ async function cancelOrder(row, lots, staff) {
   }
 
   // [묶음 5B] cancelStaff 필드 추가 — 누가 발주 취소했는지 frozenPanStock에 영구 저장
-  await updateDoc(doc(db, 'frozenPanStock', row.id), {
+  batch.update(doc(db, 'frozenPanStock', row.id), {
     status: 'pending',
     cancelReason: reason,
     cancelStaff: staff,
@@ -1550,20 +1549,22 @@ async function cancelOrder(row, lots, staff) {
       items,
       reason,
     },
-  });
+  }, {batch});
+
+  await batch.commit();
 
   if(!command.isCurrent())return;
   await refreshFrozenPanLayout();
-  alert('발주 취소 완료!');
+  showStatus('발주 취소 완료!');
 
  },{roles:['admin','office']});
 }
 
 // 유틸
 
-// [묶음 5B] 담당자만 선택받는 미니 모달 (발주 확인/취소용)
+// 발주 확인 담당자 / 발주 취소 담당자와 사유를 받는 모달
 // 프로젝트 표준 패턴: id="modalOverlay" + class="modal-box"
-async function showStaffPickerModal({ title, message, groups }) {
+async function showStaffPickerModal({ title, message, groups, requireReason=false }) {
   // staffCache 보장 (드롭다운이 비어있는 문제 방지)
   await loadStaffCache();
 
@@ -1586,9 +1587,10 @@ async function showStaffPickerModal({ title, message, groups }) {
             ${getStaffOptions(groups)}
           </select>
         </div>
+        ${requireReason ? '<div class="form-group"><label for="sp_reason">취소 사유 *</label><textarea id="sp_reason" maxlength="200" placeholder="취소 사유를 입력해주세요"></textarea></div>' : ''}
         <div style="display:flex;gap:8px;justify-content:flex-end;">
-          <button class="btn-secondary" id="sp_cancel">취소</button>
-          <button class="btn-primary" id="sp_ok">확인</button>
+          <button class="btn-secondary" id="sp_cancel">닫기</button>
+          <button class="btn-primary" id="sp_ok">${requireReason ? '재고 복원 후 취소' : '확인'}</button>
         </div>
       </div>
     `;
@@ -1603,7 +1605,9 @@ async function showStaffPickerModal({ title, message, groups }) {
     document.getElementById('sp_ok').addEventListener('click', () => {
       const staff = document.getElementById('sp_staff').value;
       if (!staff) { alert('담당자를 선택해주세요.'); return; }
-      close(staff);
+      const reason = document.getElementById('sp_reason')?.value.trim();
+      if (requireReason && !reason) { alert('취소 사유를 입력해주세요.'); return; }
+      close(requireReason ? {staff,reason} : staff);
     });
   });
 }
