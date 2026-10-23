@@ -83,6 +83,9 @@ export async function saveManualMovement({db,command,name,stockId,log,selection,
     const metadata={version:1,kind,reason,enteredAmount:kind==='cancel'?delta:entered,operationId:selection.operationId,
       cancelOf:kind==='cancel'?selection.cancelOf:null,originalKind,changesStock:kind!=='test',scheduleId:scheduleChange?.id||sourceScheduleId};
     const value={...log,reason:kind==='cancel'?`${reason} · 취소 원본: ${name}/${selection.cancelOf}`:reason,
+      // Preserve the existing raw-receipt follow-up contract. Test records must
+      // never enter the real-time adjustment enrichment handler.
+      type:kind==='test'?'manualTest':kind==='receipt'&&name==='meatLogs'?'frozenIncoming':log.type,
       [name==='meatLogs'?'delta':'qty']:delta,before,after,manualMovement:metadata,uid,
       timestamp:serverTimestamp(),ledgerId:ledgerRef.id};
     if(name==='meatLogs'&&kind==='test'&&!stock.exists())value.meatStockId=null;
