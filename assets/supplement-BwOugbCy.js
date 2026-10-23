@@ -1,0 +1,1 @@
+function e(e,t){return`${e}_${t}`}function t(e,t){return`${e} ${t}용 영양제`}function n(e,t){return(e||0)*100+t}export{t as n,n as r,e as t};
