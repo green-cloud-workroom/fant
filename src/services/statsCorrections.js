@@ -50,6 +50,18 @@ export function resolveStatsCorrections(data) {
       const qty = collection === 'meatLogs' ? source?.delta : source?.qty;
       if (!type || source?.type !== type || typeof qty !== 'number' || !Number.isFinite(qty) || qty <= 0) throw Error('취소 입고의 원본 종류·수량이 일치하지 않습니다.');
     }
+    if(c.receiptDate!==undefined||c.scheduleSource!==undefined||c.ledgerSource!==undefined){
+      const date=c.receiptDate;
+      if(c.kind!=='retainSupply'||typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date)
+        ||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date||typeof c.decisionBasis!=='string'||!c.decisionBasis.trim()
+        ||!/^schedules\/[^/]+$/.test(c.scheduleSource||'')||!/^stockLedger\/[^/]+$/.test(c.ledgerSource||''))throw Error('확정 입고일 정정 근거를 확인해주세요.');
+      const [name,id]=c.source.split('/'),row=data[name]?.find(r=>r.id===id);
+      const schedule=data.schedules?.find(r=>'schedules/'+r.id===c.scheduleSource),ledger=data.stockLedger?.find(r=>'stockLedger/'+r.id===c.ledgerSource);
+      const itemId=name==='meatLogs'?row?.meatTypeId:row?.bagTypeId,type=name==='meatLogs'?'meat':name==='bagLogs'?'bag':null;
+      if(!type||!schedule||schedule.type!==type||schedule.itemId!==itemId||!ledger||ledger.actionType!=='scheduleComplete'||ledger.actionId!==schedule.id
+        ||!ledger.items?.some(i=>i.delta===(name==='meatLogs'?row.delta:row.qty)&&(name==='meatLogs'?i.collection==='meatStocks'&&i.docId===row.meatStockId:i.bagLogId===row.id))
+        ||![c.scheduleSource,c.ledgerSource].every(path=>c.evidence.some(e=>e.path===path)))throw Error('확정 입고일의 예정·원장·입고 원본 연결이 일치하지 않습니다.');
+    }
     if (c.kind === 'excludeUsage' || c.kind === 'classifyUsage') {
       const [collection, id] = c.source.split('/'), source = data[collection]?.find(row => row.id === id);
       const amount = collection === 'meatLogs' ? source?.delta : source?.qty;
@@ -64,6 +76,11 @@ export function resolveStatsCorrections(data) {
       }
     }
     if (!superseded.has(c.id)) decisions.push(c);
+  }
+  const schedules=new Set();
+  for(const c of decisions.filter(c=>c.receiptDate)){
+    if(schedules.has(c.scheduleSource))throw Error('같은 입고예정의 확정 입고일 정정이 중복되었습니다.');
+    schedules.add(c.scheduleSource);
   }
   return decisions;
 }

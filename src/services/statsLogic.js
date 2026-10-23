@@ -102,6 +102,7 @@ export function productionEvents(data, range) {
 }
 function logEvents(data, corrections) {
   const cancelled=manualMovementIndex(data);
+  const confirmedDates=new Map(corrections.filter(c=>c.kind==='retainSupply'&&c.receiptDate).map(c=>[c.source,c]));
   const excluded = new Set(corrections.filter(c => c.kind === 'excludeSupply').map(c => c.source));
   const meatLogs = applyIncomingCorrections(data.meatLogs || []);
   const supplements = new Map((data.supplementTypes || []).map(s => [s.id, s.name]));
@@ -120,6 +121,10 @@ function logEvents(data, corrections) {
       note: log.incomingCorrection ? '입고량 정정: ' + log.incomingCorrection.originalQtyG / 1000 + 'kg → ' + log.incomingCorrection.correctedQtyG / 1000
         + 'kg · 재고 변동 없음 · 근거 meatLogs/' + log.incomingCorrection.id + ' · ' + log.incomingCorrection.reason : '' }))
     .map(e => ({ ...e, qty: e.qty === null ? null : e.qty * e.scale })))
+    .map(e=>{
+      const c=confirmedDates.get(e.source);return c?{...e,date:c.receiptDate,
+        note:[e.note,`확정 실제 입고일 ${c.receiptDate} · 원본 기록일 ${e.date} · ${c.reason} · 재고 변동 없음`].filter(Boolean).join(' / ')}:e;
+    })
     .concat(corrections.filter(c => c.kind === 'includeSupply'&&!cancelled.has(c.source)).map(c => correctedEvent(c, data)));
 }
 export function supplyEvents(data, range) {
@@ -139,6 +144,7 @@ export function supplyEvents(data, range) {
     row.elapsed = daysBetween(row.lastDate, range.endDate < range.today ? range.endDate : range.today);
   }
   const registrations = [], excludedSchedules = [];
+  const confirmedSchedules=new Map(corrections.filter(c=>c.kind==='retainSupply'&&c.receiptDate).map(c=>[c.scheduleSource,c]));
   const cancelled=manualMovementIndex(data);
   const cancelledSchedules=new Set();
   for(const [path,row] of cancelled){
@@ -147,9 +153,10 @@ export function supplyEvents(data, range) {
     for(const ledger of data.stockLedger||[])if(ledger.actionType==='scheduleComplete'&&ledger.items?.some(i=>i.bagLogId===id||i.eggLogId===id||name==='meatLogs'&&i.docId===source?.meatStockId))cancelledSchedules.add(ledger.actionId);
   }
   for (const s of unique(data.schedules || [])) {
-    if (s.status !== 'completed') continue;
+    const confirmed=confirmedSchedules.get('schedules/'+s.id);
+    if (s.status !== 'completed'&&!confirmed) continue;
     if(cancelledSchedules.has(s.id)) {excludedSchedules.push(s.id);continue;}
-    const completedDate = kstDate(s.completedAt);
+    const completedDate = confirmed?.receiptDate||kstDate(s.completedAt);
     if (!completedDate) { if (inRange(s.date, range)) excludedSchedules.push(s.id); continue; }
     if (!inRange(completedDate, range) || completedDate > range.today) continue;
     const createdDate = kstDate(s.createdAt);
@@ -158,7 +165,8 @@ export function supplyEvents(data, range) {
       name: s.itemNameSnapshot || s.itemId || s.id, itemId: `${s.type}:${s.itemId || (s.type === 'egg' ? 'egg' : s.id)}`,
       stage: s.type === 'meat' ? '원료' : s.type === 'bag' ? '봉투' : s.type === 'egg' ? '계란' : s.type,
       prior: prior !== null && prior >= 0 ? prior : null, processing: processing !== null && processing >= 0 ? processing : null,
-      source: `schedules/${s.id}`, note: !createdDate ? '등록일 누락' : prior < 0 || processing < 0 ? '날짜 순서 확인 필요' : '최종 예정일 기준' });
+      source: `schedules/${s.id}`, note: !createdDate ? '등록일 누락' : prior < 0 || processing < 0 ? '날짜 순서 확인 필요'
+        : confirmed?`최종 예정일 기준 · 실제 입고일은 사용자 확인 ${confirmed.receiptDate} · 원본 상태 ${s.status} 보존`:'최종 예정일 기준' });
   }
   const registrationGroups = new Map();
   for (const row of registrations) {
@@ -166,7 +174,7 @@ export function supplyEvents(data, range) {
     registrationGroups.get(row.itemId).rows.push(row);
   }
   const adjustments = corrections.filter(c => c.kind !== 'hold' && c.kind.includes('Supply')).filter(c => {
-    const [collection, id] = c.source.split('/'); return inRange(data[collection]?.find(r => r.id === id)?.date, range);
+    const [collection, id] = c.source.split('/'); return inRange(c.receiptDate||data[collection]?.find(r => r.id === id)?.date, range);
   });
   return { events, summaries, registrations, excludedSchedules, excludedReceipts, adjustments, pending,
     registrationSummary: [...registrationGroups.values()].map(g => ({ ...g, prior: sample(g.rows.map(r => r.prior)), processing: sample(g.rows.map(r => r.processing)) })) };
