@@ -54,6 +54,25 @@ async function setup({ instant = true } = {}) {
   return { ...e, document, page, fire, ready, cleanup, downloads, chartInstances };
 }
 
+test('supply and usage read cancelled schedule evidence for a confirmed physical receipt',async()=>{
+ const e=await setup();try{
+  Object.assign(e.state.rows.meatLogs[0],{meatStockId:'stock',stage:'frozen'});
+  e.state.rows.schedules[0].status='cancelled';
+  const ledger={id:'confirmed-ledger',actionType:'scheduleComplete',actionId:'schedule',items:[{collection:'meatStocks',docId:'stock',delta:10000}]};
+  e.state.rows.stockLedger=[ledger];
+  e.state.rows.statsCorrections=[{id:'physical-receipt',schemaVersion:1,status:'active',changesStock:false,kind:'retainSupply',source:'meatLogs/in',
+   reason:'정상 실물 입고 확인',decisionBasis:'사용자 확인',receiptDate:'2026-09-02',scheduleSource:'schedules/schedule',ledgerSource:'stockLedger/confirmed-ledger',evidence:[
+    {path:'meatLogs/in',expected:{id:'in',delta:10000,stage:'frozen',meatTypeId:'m',meatStockId:'stock'}},
+    {path:'schedules/schedule',expected:{id:'schedule',status:'cancelled',type:'meat',itemId:'m'}},
+    {path:'stockLedger/confirmed-ledger',expected:ledger}]}];
+  await e.page.renderStats();e.fire('[data-tab="supply"]');await e.ready('supply');
+  assert.equal(e.page.viewForTest().events[0].qty,10);
+  assert.match(e.nodes.mainContent.textContent,/실제 입고일은 사용자 확인/);
+  e.fire('[data-tab="usage"]');await e.ready('usage');assert.equal(e.nodes.mainContent.dataset.statsReadyTab,'usage');
+  assert.equal(e.state.writes.length,0);
+ }finally{await e.cleanup();}
+});
+
 for (const instant of [true, false]) test('three tabs render confirmed facts, preserve warm reads, and perform zero writes (' + (instant ? 'instant' : 'retained') + ')', async () => {
   const e = await setup({ instant });
   try {

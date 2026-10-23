@@ -134,13 +134,11 @@ async function loadStatsTab(tab, scope = { getDocs }, range = currentRange()) {
   tasks.push(readMaster(scope, 'statsCorrections'), readMaster(scope, 'stockLedger'));
   tasks.push(readMaster(scope, 'supplementTypes'));
   names.push('supplementTypes');
-  if (tab === 'supply') {
-    // Completion date is the cohort. Scheduled dates can be changed or later
-    // than actual processing, so a scheduled-date query would lose early receipts.
-    names.push('schedules');
-    tasks.push(scope.getDocs(query(collection(db, 'schedules'), where('status', '==', 'completed')))
-      .then(snapshot => snapshot.docs.map(d => ({ ...d.data(), id: d.id }))));
-  }
+  // Both projections validate append-only receipt decisions. Their evidence
+  // may reference an administratively cancelled schedule; read it unchanged.
+  // supplyEvents still filters ordinary schedules to completed status.
+  names.push('schedules');
+  tasks.push(readMaster(scope, 'schedules'));
   return Object.fromEntries((await Promise.all(tasks)).map((rows, i) => [names[i], rows]));
 }
 async function refreshStats({ force = false } = {}) {
