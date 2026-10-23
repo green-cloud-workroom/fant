@@ -156,7 +156,7 @@ export function supplyEvents(data, range) {
     const confirmed=confirmedSchedules.get('schedules/'+s.id);
     if (s.status !== 'completed'&&!confirmed) continue;
     if(cancelledSchedules.has(s.id)) {excludedSchedules.push(s.id);continue;}
-    const completedDate = confirmed?.receiptDate||kstDate(s.completedAt);
+    const completedDate = confirmed?.receiptDate||(validDate(s.receiptDate)?s.receiptDate:kstDate(s.completedAt));
     if (!completedDate) { if (inRange(s.date, range)) excludedSchedules.push(s.id); continue; }
     if (!inRange(completedDate, range) || completedDate > range.today) continue;
     const createdDate = kstDate(s.createdAt);

@@ -11,6 +11,7 @@ import { getTodayKST as getToday } from '../utils/date.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUser,currentUserRole } from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
+import { validDate, kstDate } from '../services/statsLogic.js';
 
 import {pageResource} from '../state/pageResources.js';
 import {withReadCommand} from '../services/readCommand.js';
@@ -113,6 +114,7 @@ function renderScheduleLayout(schedules) {
                 <th>품목명</th>
                 <th>발주수량</th>
                 <th>실제수량</th>
+                <th>실제 입고일</th>
                 <th>입고담당자</th>
                 <th>상태</th>
                 <th>완료메모</th>
@@ -120,7 +122,7 @@ function renderScheduleLayout(schedules) {
             </thead>
             <tbody>
               ${done.length === 0 ?
-                `<tr><td colspan="8" style="text-align:center;color:#aaa;padding:20px;">없음</td></tr>` :
+                `<tr><td colspan="9" style="text-align:center;color:#aaa;padding:20px;">없음</td></tr>` :
                 done.map(s => renderDoneRow(s)).join('')}
             </tbody>
           </table>
@@ -192,7 +194,7 @@ function renderScheduleLayout(schedules) {
 }
 
 function isScheduleStaffRole() {
-  return currentUserRole === 'admin' || currentUserRole === 'office' || currentUserRole === 'production';
+  return currentUserRole === 'admin' || currentUserRole === 'office';
 }
 
 function renderScheduleRow(s, today, canManageSchedule = false) {
@@ -224,6 +226,7 @@ function renderDoneRow(s) {
       <td>${s.itemNameSnapshot}</td>
       <td>${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)}</td>
       <td>${s.actualQty ? formatScheduleQty(s.actualQty, s.actualUnit || s.orderedUnit, s.orderedUnitGrams) : '-'}</td>
+      <td>${isComplete ? (validDate(s.receiptDate) ? s.receiptDate : kstDate(s.completedAt) || '-') : '-'}</td>
       <td>${s.incomingStaffName || '-'}</td>
       <td>
         <span style="color:${isComplete ? '#2d7a3a' : '#e53e3e'};font-size:12px">
@@ -256,7 +259,7 @@ function getTypeLabel(type) {
   return type === 'meat' ? '원육' : type === 'bag' ? '봉투' : '계란';
 }
 
-async function showScheduleModal(editingSchedule = null) {
+async function showScheduleModal(editingSchedule = null, draft = null) {
   const isEdit = Boolean(editingSchedule);
   registerPageCleanup(()=>delete window.updateScheduleItem);
   const meatTypes=scheduleMeatTypes,bagTypes=scheduleBagTypes;
@@ -265,7 +268,7 @@ async function showScheduleModal(editingSchedule = null) {
     <h3 class="modal-title">입고 예정 ${isEdit ? '수정' : '등록'}</h3>
     <div class="form-group">
       <label>예정일 *</label>
-      <input type="date" id="m_date" value="${editingSchedule?.date || getToday()}" />
+      <input type="date" id="m_date" value="${editingSchedule?.date || draft?.date || getToday()}" />
     </div>
     <div class="form-group">
       <label>구분 *</label>
@@ -301,7 +304,7 @@ async function showScheduleModal(editingSchedule = null) {
       <input type="number" id="m_unit_grams" placeholder="예: 1500" min="0" step="1" value="${editingSchedule?.orderedUnitGrams ?? ''}" />
     </div>
     <div class="form-group">
-      <label>발주 담당자</label>
+      <label>발주 담당자 *</label>
       <select id="m_staff">
         <option value="">선택</option>
         ${getStaffOptions(['office'])}
@@ -311,6 +314,7 @@ async function showScheduleModal(editingSchedule = null) {
       <label>입고메모</label>
       <input type="text" id="m_memo" placeholder="메모" value="${escapeAttr(editingSchedule?.orderMemo || '')}" />
     </div>
+    ${!isEdit ? '<label style="display:block;margin:12px 0;"><input type="checkbox" id="m_continue" /> 저장 후 다음 품목 계속 입력 (예정일·구분·단위·담당자 유지)</label>' : ''}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn-primary" id="btnSaveSchedule">${isEdit ? '수정' : '등록'}</button>
@@ -364,9 +368,17 @@ async function showScheduleModal(editingSchedule = null) {
     const show = document.getElementById('m_type')?.value === 'meat' && document.getElementById('m_unit')?.value === '마리';
     if (wrap) wrap.style.display = show ? '' : 'none';
     if (!show && gramsInput) gramsInput.value = '';
+    if (show && gramsInput && !gramsInput.value) {
+      const item = meatTypes.find(m => m.id === document.getElementById('m_item')?.value);
+      if (Number(item?.defaultUnitWeightG) > 0) gramsInput.value = item.defaultUnitWeightG;
+    }
   };
 
   document.getElementById('m_unit')?.addEventListener('change', updateUnitGramsVisibility);
+  document.getElementById('m_item')?.addEventListener('change', () => {
+    document.getElementById('m_unit_grams').value = '';
+    updateUnitGramsVisibility();
+  });
 
   if (isEdit) {
     document.getElementById('m_type').value = editingSchedule.type || '';
@@ -378,9 +390,16 @@ async function showScheduleModal(editingSchedule = null) {
     document.getElementById('m_unit_grams').value = editingSchedule.orderedUnitGrams || '';
     updateUnitGramsVisibility();
     document.getElementById('m_staff').value = editingSchedule.orderStaffName || '';
+  } else if (draft) {
+    document.getElementById('m_type').value = draft.type;
+    window.updateScheduleItem();
+    document.getElementById('m_unit').value = draft.unit;
+    document.getElementById('m_staff').value = draft.staff;
+    document.getElementById('m_continue').checked = true;
+    updateUnitGramsVisibility();
   }
 
-  document.getElementById('btnSaveSchedule').addEventListener('click', () => runScheduleCommand(async command=>{
+  document.getElementById('btnSaveSchedule').addEventListener('click', () => runScheduleEntry(async command=>{
     const staged=commandBatch(command,db),{addDoc,updateDoc,recordActivity,recordMeatLog}=staged;
     const {getDoc}=command;
     if (!isScheduleStaffRole()) {
@@ -397,7 +416,7 @@ async function showScheduleModal(editingSchedule = null) {
     const staff = document.getElementById('m_staff').value;
     const memo = document.getElementById('m_memo').value;
 
-    if (!date || !type || !qty) { alert('날짜, 구분, 수량은 필수입니다.'); return; }
+    if (!validDate(date) || !type || !Number.isFinite(qty) || qty <= 0) { alert('유효한 날짜, 구분, 양수인 수량은 필수입니다.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (isCountIncomingUnit(unit) && (!orderedUnitGrams || orderedUnitGrams <= 0)) {
       alert('1마리당 g을 입력해주세요.');
@@ -489,7 +508,7 @@ async function showScheduleModal(editingSchedule = null) {
       if(!command.isCurrent())return;
       closeModal();
       await renderSchedule({force:true});
-      alert('입고 예정 수정 완료!');
+      showStatus('입고 예정 수정 완료!');
       return;
     }
 
@@ -531,12 +550,22 @@ async function showScheduleModal(editingSchedule = null) {
       },
     });
 
+    const next = document.getElementById('m_continue')?.checked ? {date,type,unit,staff} : null;
     await staged.commit();
     if(!command.isCurrent())return;
     closeModal();
     await renderSchedule({force:true});
-    alert('입고 예정 등록 완료!');
+    showStatus('입고 예정 등록 완료!');
+    return {continueWith:next};
   }));
+}
+
+async function runScheduleEntry(callback) {
+  const page = getPageContext();
+  const result = await runScheduleCommand(callback);
+  if (result?.continueWith && !scheduleResource.blocked && (!page || page.isCurrent())) {
+    await showScheduleModal(null, result.continueWith);
+  }
 }
 
 function showCancelScheduleModal(s) {
@@ -602,30 +631,33 @@ function showCancelScheduleModal(s) {
     if(!command.isCurrent())return;
     closeModal();
     await renderSchedule({force:true});
-    alert('취소 완료!');
+    showStatus('취소 완료!');
   }));
 }
 
 function showCompleteModal(s) {
   const isCountMeatOrder = s.type === 'meat' && isCountIncomingUnit(s.orderedUnit);
+  const actualUnits = s.type === 'meat' ? (isCountMeatOrder ? ['마리','kg','g'] : ['kg','g']) : s.type === 'bag' ? ['박스','장'] : ['개','판'];
   showModal(`
     <h3 class="modal-title">입고 완료 처리 — ${s.itemNameSnapshot}</h3>
     ${movementFields({incoming:true,reasonField:false})}
     <p style="font-size:12px;color:#888;margin-bottom:16px;">발주수량: ${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)}</p>
     <div class="form-group">
-      <label>실제 수량 *</label>
-      <input type="number" id="m_actual" placeholder="실제 입고 수량 입력" />
+      <label>실제 입고일 *</label>
+      <input type="date" id="m_receipt_date" value="${getToday()}" max="${getToday()}" />
+      <p style="font-size:12px;color:#888;margin:6px 0;">실제로 입고된 날짜를 선택해주세요. 마감된 날짜에는 입력할 수 없습니다.</p>
     </div>
-    ${isCountMeatOrder ? `
+    <div class="form-group">
+      <label>실제 수량 *</label>
+      <input type="number" id="m_actual" placeholder="실제 입고 수량 입력" min="0" step="any" />
+    </div>
       <div class="form-group">
         <label>실제 단위</label>
         <select id="m_actual_unit">
-          <option value="${s.orderedUnit}">${s.orderedUnit}</option>
-          <option value="g">g</option>
+          ${actualUnits.map(unit=>`<option value="${unit}" ${unit===s.orderedUnit?'selected':''}>${unit}</option>`).join('')}
         </select>
       </div>
-    ` : ''}
-    ${isCountMeatOrder&&!(Number(s.orderedUnitGrams)>0)?'<p style="font-size:12px;color:#805c16">총중량을 아는 경우 실제 단위에서 g을 선택해 입고할 수 있습니다. 개당 중량 정보가 없어 발주 중량과의 비교는 생략됩니다.</p>':''}
+    ${isCountMeatOrder&&!(Number(s.orderedUnitGrams)>0)?'<p style="font-size:12px;color:#805c16">총중량을 아는 경우 실제 단위에서 kg 또는 g을 선택해 입고할 수 있습니다. 개당 중량 정보가 없어 발주 중량과의 비교는 생략됩니다.</p>':''}
     <div class="form-group">
       <label>입고 담당자 *</label>
       <select id="m_staff">
@@ -652,21 +684,38 @@ function showCompleteModal(s) {
     const actualUnit = document.getElementById('m_actual_unit')?.value || s.orderedUnit;
     const staff = document.getElementById('m_staff').value;
     const memo = document.getElementById('m_memo').value;
+    const receiptDate = document.getElementById('m_receipt_date').value;
 
-    if (!actual || !staff) { alert('실제 수량과 담당자는 필수입니다.'); return; }
-    if (isCountMeatOrder && actualUnit!=='g' && (!s.orderedUnitGrams || s.orderedUnitGrams <= 0)) {
+    if (!Number.isFinite(actual) || actual <= 0 || !staff) { alert('양수인 실제 수량과 담당자는 필수입니다.'); return; }
+    if (!actualUnits.includes(actualUnit)) { alert('실제 단위를 선택해주세요.'); return; }
+    if (!validDate(receiptDate) || receiptDate > getToday()) { alert('실제 입고일은 오늘까지의 유효한 날짜를 선택해주세요.'); return; }
+    if (isCountMeatOrder && actualUnit==='마리' && (!s.orderedUnitGrams || s.orderedUnitGrams <= 0)) {
       alert('이 발주의 1마리당 g 정보가 없습니다. 발주를 수정해 1마리당 g을 입력해주세요.');
       return;
     }
-    const today = getToday();
-    if (await blockIfClosed(today,command)) return;
+    if (await blockIfClosed(receiptDate,command)) return;
+
+    // Compare in the stock's base unit so equivalent units do not cause another confirmation.
+    let bag = null;
+    if (s.type === 'bag') {
+      const snap = await getDoc(doc(db,'bagTypes',s.itemId));
+      if (!snap.exists()) throw Error('봉투를 찾을 수 없습니다.');
+      bag = snap.data();
+    }
+    const toBase = (amount,unit) => {
+      if (s.type === 'meat') return unit === 'g' ? amount : unit === 'kg' ? amount*1000
+        : unit === '마리' && Number(s.orderedUnitGrams)>0 ? amount*Number(s.orderedUnitGrams) : NaN;
+      if (s.type === 'bag') return unit === '장' ? amount : unit === '박스' && Number.isInteger(bag?.piecesPerBox) && bag.piecesPerBox>0 ? amount*bag.piecesPerBox : NaN;
+      return unit === '개' ? amount : unit === '판' ? amount*30 : NaN;
+    };
+    const qty = toBase(actual,actualUnit), orderedCompareQty = toBase(Number(s.orderedQty),s.orderedUnit);
+    if (!Number.isFinite(qty) || qty <= 0 || s.type !== 'meat' && !Number.isInteger(qty)) {
+      alert(s.type==='bag'&&actualUnit==='박스'&&!Number.isFinite(qty)?'박스당 수량 정보가 없습니다. 실제 장수로 입력해주세요.':'입고 수량·단위를 확인해주세요.'); return;
+    }
 
     // 발주/실제 수량 차이 시 한 번 더 확인
-    const comparisonAvailable=!(isCountMeatOrder&&actualUnit==='g'&&!(Number(s.orderedUnitGrams)>0));
-    const orderedCompareQty = isCountIncomingUnit(s.orderedUnit) && actualUnit === 'g'
-      ? Number(s.orderedQty || 0) * Number(s.orderedUnitGrams || 0)
-      : Number(s.orderedQty || 0);
-    const hasDiff=comparisonAvailable?actual!==orderedCompareQty:null;
+    const comparisonAvailable=Number.isFinite(orderedCompareQty);
+    const hasDiff=comparisonAvailable?Math.abs(qty-orderedCompareQty)>Number.EPSILON*8*Math.max(1,Math.abs(qty),Math.abs(orderedCompareQty)):null;
     if (hasDiff) {
       const proceed = await showConfirmModal({
         title: '수량 차이 확인',
@@ -677,30 +726,28 @@ function showCompleteModal(s) {
     }
 
     const name=s.type==='meat'?'meatLogs':s.type==='bag'?'bagLogs':'eggLogs';
-    let stockId,stockData=null,before=0,qty,log;
+    let stockId,stockData=null,before=0,log;
     if(s.type==='meat'){
       stockId=doc(collection(db,'meatStocks')).id;
-      qty=isCountIncomingUnit(s.orderedUnit)?(actualUnit==='g'?actual:actual*Number(s.orderedUnitGrams||0)):(s.orderedUnit==='kg'?actual*1000:actual);
-      stockData={meatTypeId:s.itemId,meatNameSnapshot:s.itemNameSnapshot,stage:'frozen',incomingDate:today,initialQtyG:qty,remaining:0,staffName:staff,note:'입고예정 완료',createdAt:new Date()};
-      log={type:'frozenIncoming',date:today,meatTypeId:s.itemId,meatNameSnapshot:s.itemNameSnapshot,stage:'frozen',meatStockId:stockId,delta:qty,staff,reason:'입고예정 완료'};
+      stockData={meatTypeId:s.itemId,meatNameSnapshot:s.itemNameSnapshot,stage:'frozen',incomingDate:receiptDate,initialQtyG:qty,remaining:0,staffName:staff,note:'입고예정 완료',createdAt:new Date()};
+      log={type:'frozenIncoming',date:receiptDate,meatTypeId:s.itemId,meatNameSnapshot:s.itemNameSnapshot,stage:'frozen',meatStockId:stockId,delta:qty,staff,reason:'입고예정 완료'};
     }else if(s.type==='bag'){
-      stockId=s.itemId;const snap=await getDoc(doc(db,'bagTypes',stockId));if(!snap.exists())throw Error('봉투를 찾을 수 없습니다.');
-      before=Number(snap.data().currentQty||0);qty=s.orderedUnit==='박스'?actual*(snap.data().piecesPerBox||1):actual;
-      log={type:'incoming',date:today,bagTypeId:stockId,bagNameSnapshot:s.itemNameSnapshot,qty,staffName:staff,note:'입고예정 완료'};
+      stockId=s.itemId;before=Number(bag.currentQty||0);
+      log={type:'incoming',date:receiptDate,bagTypeId:stockId,bagNameSnapshot:s.itemNameSnapshot,qty,staffName:staff,note:'입고예정 완료'};
     }else{
       stockId='global';const snap=await getDoc(doc(db,'eggStock',stockId));before=snap.exists()?Number(snap.data().currentQty||0):0;
-      stockData={currentQty:0,minimumQty:0};qty=s.orderedUnit==='판'?actual*30:actual;
-      log={type:'in',date:today,qty,staffName:staff,note:'입고예정 완료'};
+      stockData={currentQty:0,minimumQty:0};
+      log={type:'in',date:receiptDate,qty,staffName:staff,note:'입고예정 완료'};
     }
     if(!Number.isFinite(qty)||qty<=0||s.type!=='meat'&&!Number.isInteger(qty))throw Error('입고 수량·단위를 확인해주세요.');
-    const review=selection.kind==='test'?{approved:true}:await checkQuantityBeforeSave({itemId:name+':'+(s.type==='egg'?'egg':s.itemId),date:today,qty:s.type==='meat'?qty/1000:qty,unit:s.type==='meat'?'kg':s.type==='bag'?'장':'개',stage:s.type==='meat'?'원료':s.type==='bag'?'봉투':'계란'},command.isCurrent);
+    const review=selection.kind==='test'?{approved:true}:await checkQuantityBeforeSave({itemId:name+':'+(s.type==='egg'?'egg':s.itemId),date:receiptDate,qty:s.type==='meat'?qty/1000:qty,unit:s.type==='meat'?'kg':s.type==='bag'?'장':'개',stage:s.type==='meat'?'원료':s.type==='bag'?'봉투':'계란'},command.isCurrent);
     if(!review.approved)return;if(review.review)log.statsQuantityReview=review.review;
     await saveManualMovement({db,command,name,stockId,stockData,expectedBefore:before,log,selection,uid:currentUser?.uid||null,
       activity:selection.kind==='test'?null:{action:'schedule',subAction:hasDiff?'completeDiff':'complete',
-        message:!comparisonAvailable?`${s.itemNameSnapshot} 입고 완료 · 발주 중량 비교 불가 (개당 중량 정보 없음) / 담당: ${staff}`:hasDiff?`${s.itemNameSnapshot} 입고 완료 ⚠️ 발주 ${formatScheduleQty(s.orderedQty,s.orderedUnit,s.orderedUnitGrams)} → 실제 ${formatScheduleQty(actual,actualUnit,s.orderedUnitGrams)} / 담당: ${staff}`:`${s.itemNameSnapshot} 입고 완료 차이 없음 / 담당: ${staff}`,
-        details:{scheduleId:s.id,type:s.type,itemId:s.itemId||null,itemName:s.itemNameSnapshot,orderedQty:s.orderedQty,actualQty:actual,unit:actualUnit,orderedUnit:s.orderedUnit,orderedUnitGrams:s.orderedUnitGrams||null,hasDiff,comparisonAvailable,memo:memo||null}},
+        message:!comparisonAvailable?`${s.itemNameSnapshot} 입고 완료 · 발주 ${s.type==='meat'?'중량':'수량'} 비교 불가 (환산 정보 없음) / 담당: ${staff}`:hasDiff?`${s.itemNameSnapshot} 입고 완료 ⚠️ 발주 ${formatScheduleQty(s.orderedQty,s.orderedUnit,s.orderedUnitGrams)} → 실제 ${formatScheduleQty(actual,actualUnit,s.orderedUnitGrams)} / 담당: ${staff}`:`${s.itemNameSnapshot} 입고 완료 차이 없음 / 담당: ${staff}`,
+        details:{scheduleId:s.id,type:s.type,itemId:s.itemId||null,itemName:s.itemNameSnapshot,orderedQty:s.orderedQty,actualQty:actual,unit:actualUnit,orderedUnit:s.orderedUnit,orderedUnitGrams:s.orderedUnitGrams||null,receiptDate,hasDiff,comparisonAvailable,memo:memo||null}},
       scheduleChange:{id:s.id,expected:{type:s.type,itemId:s.itemId||null,date:s.date,orderedQty:s.orderedQty,orderedUnit:s.orderedUnit,orderedUnitGrams:s.orderedUnitGrams||null},
-        patch:{status:'completed',actualQty:actual,actualUnit,actualQtyG:s.type==='meat'?qty:null,incomingStaffName:staff,completeMemo:memo}}});
+        patch:{status:'completed',actualQty:actual,actualUnit,actualQtyG:s.type==='meat'?qty:null,receiptDate,incomingStaffName:staff,completeMemo:memo}}});
     if(!command.isCurrent())return;
     closeModal();
     await renderSchedule({force:true});
