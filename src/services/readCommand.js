@@ -2,6 +2,7 @@ import { openAction } from './actionGateway.js';
 import { createServerReadScope } from './serverReadScope.js';
 import { snapshotFingerprint } from '../state/pageResources.js';
 import { runTransaction } from 'firebase/firestore';
+import { lockModalWhileSaving } from '../utils/modalSaving.js';
 
 // Display snapshots are comparison baselines, never authority to write.
 export async function withReadCommand(resource, callback, {
@@ -13,6 +14,7 @@ export async function withReadCommand(resource, callback, {
   const baseline = [...(resource.getCommandBaseline?.() || resource.observations)];
   const view = resource.viewRevision;
   let completed = 0, dispatching = false, attempted = false, failure = null;
+  const unlockModal = lockModalWhileSaving();
   try {
     const gate = await openAction({ roles, reusableConfirm:true });
     let observations = baseline;
@@ -100,6 +102,7 @@ export async function withReadCommand(resource, callback, {
     };
     return await callback(command);
   } finally {
+    unlockModal();
     resource.busy = false;
   }
 }

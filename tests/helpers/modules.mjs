@@ -23,6 +23,8 @@ export async function environment(options = {}) {
     cache.set(id,module);return module;
   }
   synthetic('firebase/firestore',fake.api);
+  const rejectServerCall=()=>{throw new Error('Server calls are forbidden in isolated module tests');};
+  synthetic('firebase/functions',{getFunctions:rejectServerCall,httpsCallable:rejectServerCall});
   synthetic('sortablejs',{default:class Sortable { destroy(){} }});
   synthetic(resolve('src/firebase.js'),{db:{},auth:{}});
   synthetic(resolve('src/app.js'),{currentUser:{uid:'fixture',email:'fixture@example.invalid'},currentUserRole:'office',currentMenu:'main',setCurrentMenu:()=>{},MENUS:[]});

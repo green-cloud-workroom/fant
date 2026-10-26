@@ -3753,3 +3753,16 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
 .subbar-date-button, .main-date-button { border: 0; background: transparent; font-family: inherit; padding: 0; cursor: pointer; text-align: left; }
 .subbar-date-button:disabled { cursor: default; opacity: 1; }
 .subbar-date-button:focus-visible, .main-date-button:focus-visible { outline: 2px solid #3182ce; outline-offset: 3px; }
+.modal-saving-status {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  border-radius: 6px;
+  background: #263c30;
+  color: #fff;
+  font-size: 14px;
+  z-index: 1;
+}
+

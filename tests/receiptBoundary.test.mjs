@@ -23,7 +23,10 @@ const api={...e.api,Timestamp:{fromMillis:n=>({toMillis:()=>n,toDate:()=>new Dat
   getDoc:async ref=>wrap(ref,await e.api.getDocFromServer(ref)),
   runTransaction:(_db,fn)=>e.api.runTransaction({},tx=>fn({...tx,get:async ref=>wrap(ref,await tx.get(ref))})),
 };
-synthetic('firebase/firestore',api);synthetic('../../lib/firebase',{db:{},auth:null});
+synthetic('firebase/firestore',api);synthetic('../../lib/firebase',{db:{},auth:null,functions:{}});
+// Load the real date helper module, but fail closed if this isolated audit
+// ever attempts its server-call path. No Firebase Functions SDK is loaded.
+synthetic('firebase/functions',{httpsCallable:()=>{throw Error('Server calls are forbidden in the receipt boundary audit');}});
 synthetic('../../lib/date',{todayKstDateInput:()=> '2026-09-14'});
 synthetic('./receiptCountCoverage',{loadReceiptCountCoverage:async()=>[],readReceiptCountCoverage:async()=>[],findReceiptAbsorbingCount:()=>null});
 synthetic('../shipping/outboundSettlementScopeService',{readOutboundScopes:async()=>[],prepareOutboundScopeWrite:async()=>({protocol:{version:1,scopes:{}},write(){}}),retryOutboundScope:callback=>callback()});
@@ -33,6 +36,7 @@ synthetic('../../lib/firestore',{
   stockLotsCollection:()=>e.api.collection({},'stockLots'),stockMovementsCollection:()=>e.api.collection({},'stockMovements'),
 });
 for(const [id,path] of [['../../lib/units','lib/units.ts'],['../../types/bundleE','types/bundleE.ts'],['../../types/recipes','types/recipes.ts']])await source(id,path);
+await source('./receiptWorkflowClient','features/productReceipts/receiptWorkflowClient.ts');
 const received=[];
 synthetic('../inventory/stockLotService',{STOCK_LOT_STATUS:{depleted:'depleted',shippable:'shippable'},createInboundStockLotWithGenesisMovementInTransaction:args=>{received.push({refId:args.refId,input:args.input});args.transaction.set(args.lotRef,JSON.parse(JSON.stringify(args.input)));}});
 synthetic('../inventory/stockMovementService',{getFifoStockLotRefs:async()=>[],recordStockMovementForReadLotInTransaction:()=>{throw Error('Not part of raw audit');}});
