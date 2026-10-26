@@ -15,6 +15,7 @@ import { recordMeatLog } from '../services/meatLogs.js';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { sessionStore } from '../state/sessionStore.js';
 import Sortable from '../utils/sortable.js';
+import { fingerprint } from '../services/actionGateway.js';
 
 let meatTypes = [];
 let meatStockCategories = [];
@@ -1932,12 +1933,45 @@ function showMeatTypesModal(options = {}) {
 
   initMeatTypeSortable();
 
+  // Keep the open table and typed drafts intact. Only a confirmed own write
+  // may advance its expected rows; a fresh read must not adopt another edit.
+  let expectedTypes = meatTypes.map(row => ({ ...row }));
+  let editQueue = Promise.resolve();
+  const editPage = getPageContext();
+  const saveTypeField = (input, field, value) => {
+    const id = input.dataset.id;
+    const task = editQueue.then(() => {
+      if (!input.isConnected || (editPage && !editPage.isCurrent())) return;
+      return runPageCommand(meatResource, async command => {
+        const expected = expectedTypes.find(row => row.id === id);
+        const targetRef = doc(db, 'meatTypes', id);
+        const patch = { [field]: value, updatedAt: new Date() };
+        await command.transaction(db, async transaction => {
+          const snap = await transaction.get(targetRef);
+          if (!expected || !snap.exists() || fingerprint({ id: snap.id, ...snap.data() }) !== fingerprint(expected)) {
+            throw new Error('다른 작업으로 원본이 변경되었습니다. 입력을 보존한 뒤 최신 자료를 다시 불러와주세요.');
+          }
+          transaction.update(targetRef, patch);
+        }, { targets: [targetRef] });
+        expectedTypes = expectedTypes.map(row => row.id === id ? { ...row, ...patch } : row);
+        if (!command.isCurrent()) return;
+        try {
+          await loadMeatPage({ force: true });
+          if (fingerprint(meatTypes) !== fingerprint(expectedTypes)) {
+            throw new Error('저장은 완료됐지만 다른 품목 변경도 확인됐습니다. 입력을 보존한 뒤 최신 자료를 다시 불러와주세요.');
+          }
+        } catch (error) {
+          meatResource.blocked = true;
+          throw error;
+        }
+      }, { roles: ['admin', 'office'] });
+    });
+    editQueue = task.catch(() => {});
+    return task;
+  };
 
   document.querySelectorAll('.m-unit-weight').forEach(input => {
     input.addEventListener('change', async (e) => {
- return runPageCommand(meatResource,async command=>{
-  const {updateDoc}=commandWrites(command);
-
       const id = e.target.dataset.id;
       const target = meatTypes.find(m => m.id === id);
       const prev = target?.defaultUnitWeightG;
@@ -1947,27 +1981,12 @@ function showMeatTypesModal(options = {}) {
         e.target.value = prev ?? '';
         return;
       }
-      try {
-        await updateDoc(doc(db, 'meatTypes', id), {
-          defaultUnitWeightG: value,
-          updatedAt: new Date(),
-        });
-        if (target) target.defaultUnitWeightG = value;
-      } catch (err) {
-        console.error('[meat] defaultUnitWeightG 저장 실패:', err);
-        alert('저장 실패: ' + (err.message || err));
-        e.target.value = prev ?? '';
-      }
-
- },{roles:['admin','office']});
+      return saveTypeField(e.target, 'defaultUnitWeightG', value);
 });
   });
 
   document.querySelectorAll('.m-min-qty').forEach(input => {
     input.addEventListener('change', async (e) => {
- return runPageCommand(meatResource,async command=>{
-  const {updateDoc}=commandWrites(command);
-
       const id = e.target.dataset.id;
       const target = meatTypes.find(m => m.id === id);
       const prevG = target?.minimumQtyG ?? 0;
@@ -1978,19 +1997,7 @@ function showMeatTypesModal(options = {}) {
         return;
       }
       const grams = isProduceModal ? Math.round(value) : Math.round(value * 1000);
-      try {
-        await updateDoc(doc(db, 'meatTypes', id), {
-          minimumQtyG: grams,
-          updatedAt: new Date(),
-        });
-        if (target) target.minimumQtyG = grams;
-      } catch (err) {
-        console.error('[meat] minimumQtyG 저장 실패:', err);
-        alert('저장 실패: ' + (err.message || err));
-        e.target.value = isProduceModal ? prevG : (prevG / 1000).toFixed(1);
-      }
-
- },{roles:['admin','office']});
+      return saveTypeField(e.target, 'minimumQtyG', grams);
 });
   });
 
