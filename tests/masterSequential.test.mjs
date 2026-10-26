@@ -108,3 +108,86 @@ test('material type management: reorder then edit unit weight',async()=>{
   assert.equal(e.state.rows.meatTypes.find(row=>row.id===id).defaultUnitWeightG,750,e.alerts.join('\n'));e.assertPreserved();
  }finally{await e.cleanup();}
 });
+
+test('rapid category renames preserve both edits and the open form',async()=>{
+ const e=await setup('meat');try{
+  e.page.showMeatStockCategoriesModal();e.fill('#newStockCategoryName','작성 중');
+  e.fill('.stock-category-name[data-id="g1"]','첫 수정');const first=e.fire('.stock-category-name[data-id="g1"]','change');
+  e.fill('.stock-category-name[data-id="g2"]','둘째 수정');const second=e.fire('.stock-category-name[data-id="g2"]','change');
+  await Promise.all([first,second]);assert.equal(e.state.rows.settings[0].groups.find(row=>row.id==='g1').name,'첫 수정');
+  assert.equal(e.state.rows.settings[0].groups.find(row=>row.id==='g2').name,'둘째 수정',e.alerts.join('\n'));
+  assert.equal(e.document.querySelector('#newStockCategoryName').value,'작성 중');assert.deepEqual(e.alerts,[]);e.assertPreserved();
+ }finally{await e.cleanup();}
+});
+
+test('rapid activation then field edit keeps the queued field and other draft',async()=>{
+ const e=await setup('meat');try{
+  e.page.showMeatTypesModal();e.fill('#m_newMeatName','입력 중');
+  e.document.querySelector('.m-active-toggle').checked=false;const active=e.fire('.m-active-toggle','change');
+  e.fill('.m-unit-weight','750');const weight=e.fire('.m-unit-weight','change');await Promise.all([active,weight]);
+  assert.equal(e.state.rows.meatTypes[0].active,false);assert.equal(e.state.rows.meatTypes[0].defaultUnitWeightG,750,e.alerts.join('\n'));
+  assert.equal(e.document.querySelector('#m_newMeatName').value,'입력 중');assert.equal(e.state.rows.activityLogs.filter(row=>row.subAction==='activeToggle').length,1);e.assertPreserved();
+ }finally{await e.cleanup();}
+});
+
+test('an external category edit is not overwritten by the next rename',async()=>{
+ const e=await setup('meat');try{
+  e.page.showMeatStockCategoriesModal();e.fill('.stock-category-name[data-id="g1"]','내 수정');await e.fire('.stock-category-name[data-id="g1"]','change');
+  e.state.rows.settings[0].groups.find(row=>row.id==='g2').name='다른 직원 수정';
+  e.fill('.stock-category-name[data-id="g2"]','두번째 내 수정');await e.fire('.stock-category-name[data-id="g2"]','change');
+  assert.equal(e.state.rows.settings[0].groups.find(row=>row.id==='g2').name,'다른 직원 수정');assert.equal(e.state.writes.length,1);
+  assert.match(e.alerts.join('\n'),/원본이 변경|카테고리가 변경/);e.assertPreserved();
+ }finally{await e.cleanup();}
+});
+
+test('external change during category refresh blocks queued work until explicit reload',async()=>{
+ const e=await setup('meat');try{
+  e.page.showMeatStockCategoriesModal();const notify=e.state.notify;
+  e.state.notify=async path=>{if(path==='settings')e.state.rows.meatTypes[0].name='외부 변경';return notify(path);};
+  e.fill('.stock-category-name[data-id="g1"]','내 수정');await e.fire('.stock-category-name[data-id="g1"]','change');
+  e.fill('.stock-category-name[data-id="g2"]','후속 수정');await e.fire('.stock-category-name[data-id="g2"]','change');
+  assert.equal(e.state.rows.settings[0].groups.find(row=>row.id==='g2').name,'분류2');assert.equal(e.state.writes.length,1);
+  assert.match(e.alerts.join('\n'),/다른 품목 변경/);e.assertPreserved();
+ }finally{await e.cleanup();}
+});
+
+test('lost category acknowledgement never retries or sends the next queued edit',async()=>{
+ const e=await setup('meat');try{
+  e.page.showMeatStockCategoriesModal();e.state.failNextCommit='after';
+  e.fill('.stock-category-name[data-id="g1"]','내 수정');const first=e.fire('.stock-category-name[data-id="g1"]','change');
+  e.fill('.stock-category-name[data-id="g2"]','후속 수정');const second=e.fire('.stock-category-name[data-id="g2"]','change');await Promise.all([first,second]);
+  assert.equal(e.state.writes.length,1);assert.equal(e.state.rows.settings[0].groups.find(row=>row.id==='g2').name,'분류2');assert.match(e.alerts.join('\n'),/자동 재전송하지 않습니다/);e.assertPreserved();
+ }finally{await e.cleanup();}
+});
+
+test('new type is appended even when existing sort numbers have gaps',async()=>{
+ const e=await setup('meat');try{
+  e.state.rows.meatTypes[1].sortOrder=20;await e.page.renderMeat({force:true});e.page.showMeatTypesModal();
+  e.fill('#m_newMeatName','새 종류');await e.fire('#btnAddMeatType');
+  const created=e.state.rows.meatTypes.find(row=>row.name==='새 종류');assert.equal(created.sortOrder,21);
+  const field=`.m-min-qty[data-id="${created.id}"]`;e.fill(field,'2');await e.fire(field,'change');
+  assert.equal(e.state.rows.meatTypes.find(row=>row.id===created.id).minimumQtyG,2000,e.alerts.join('\n'));e.assertPreserved();
+ }finally{await e.cleanup();}
+});
+
+test('adding a stock category still allows immediate rename',async()=>{
+ const e=await setup('meat');try{
+  e.page.showMeatStockCategoriesModal();e.fill('#newStockCategoryName','추가 분류');await e.fire('#btnAddStockCategory');
+  const group=e.state.rows.settings[0].groups.find(row=>row.name==='추가 분류');assert.ok(group,e.alerts.join('\n'));
+  const field=`.stock-category-name[data-id="${group.id}"]`;e.fill(field,'수정 분류');await e.fire(field,'change');
+  assert.equal(e.state.rows.settings[0].groups.find(row=>row.id===group.id).name,'수정 분류',e.alerts.join('\n'));e.assertPreserved();
+ }finally{await e.cleanup();}
+});
+
+for(const operation of ['activation','add','reorder'])test(`uncertain ${operation} does not duplicate writes or allow next field save`,async()=>{
+ const e=await setup('meat');try{
+  e.page.showMeatTypesModal();e.state.failNextCommit='after';
+  if(operation==='activation'){e.document.querySelector('.m-active-toggle').checked=false;await e.fire('.m-active-toggle','change');}
+  else if(operation==='add'){e.fill('#m_newMeatName','불확실한 추가');await e.fire('#btnAddMeatType');}
+  else await e.page.persistMeatTypeOrder();
+  const commits=e.state.commits.length;assert.equal(commits,1);
+  e.fill('.m-unit-weight','750');await e.fire('.m-unit-weight','change');
+  assert.equal(e.state.commits.length,commits);assert.equal(e.state.rows.meatTypes.find(row=>row.id==='m1').defaultUnitWeightG,1000);
+  assert.match(e.alerts.join('\n'),/자동 재전송하지 않습니다/);e.assertPreserved();
+ }finally{await e.cleanup();}
+});

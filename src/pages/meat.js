@@ -74,6 +74,7 @@ async function saveMeatStockCategories(groups, command) {
   if(!command)return runMeatMasterCommand(async command=>{
     await saveMeatStockCategories(groups,command);
     await refreshMeatMasterAfterSave(command);
+    return true;
   });
   const normalized = normalizeMeatStockCategories(groups)
     .map((g, idx) => ({ ...g, sortOrder: idx }));
@@ -1792,11 +1793,11 @@ function showMeatStockCategoriesModal() {
         const orderedIds = Array.from(listEl.querySelectorAll('tr[data-id]')).map(row => row.dataset.id);
         const orderMap = new Map(orderedIds.map((id, idx) => [id, idx]));
         try {
-          await saveMeatStockCategories(meatStockCategories.map(g => (
+          if(!await saveMeatStockCategories(meatStockCategories.map(g => (
             (g.scope || 'meat') === scope
               ? { ...g, sortOrder: orderMap.has(g.id) ? orderMap.get(g.id) : g.sortOrder }
               : g
-          )));
+          ))))return;
           await renderTab(currentTab);
         } catch (err) {
           console.error('[meat] stock category modal order save failed:', err);
@@ -1820,12 +1821,13 @@ function showMeatStockCategoriesModal() {
         return;
       }
       try {
-        await runMeatMasterCommand(async command=>{
+        const saved=await runMeatMasterCommand(async command=>{
           if(!e.target.isConnected)return;
           await saveMeatStockCategories(meatStockCategories.map(g => g.id === id ? { ...g, name } : g),command);
           await refreshMeatMasterAfterSave(command);
+          return true;
         });
-        await renderTab(currentTab);
+        if(saved)await renderTab(currentTab);
       } catch (err) {
         console.error('[meat] stock category rename failed:', err);
         alert('카테고리명 저장 실패: ' + (err.message || err));
@@ -1843,7 +1845,7 @@ function showMeatStockCategoriesModal() {
       { id: createMeatStockCategoryId(), name, sortOrder: scopedCategories.length, scope },
     ];
     try {
-      await saveMeatStockCategories(nextGroups);
+      if(!await saveMeatStockCategories(nextGroups))return;
       await refreshMeatStockCategoryModal();
     } catch (err) {
       console.error('[meat] stock category add failed:', err);
@@ -2046,9 +2048,15 @@ function showMeatTypesModal(options = {}) {
         }
         await refreshMeatMasterAfterSave(command);
         if(!command.isCurrent())return;
-        closeModal();
-        if(!command.isCurrent())return;
-        showMeatTypesModal(options);
+        const row=e.target.closest('tr'),label=e.target.closest('label');
+        row?.classList.toggle('inactive-master',!active);
+        if(label)label.title=active?'활성':'비활성';
+        const tag=row?.querySelector('.tag-inactive');
+        if(active)tag?.remove();
+        else if(row&&!tag){
+          const badge=document.createElement('span');badge.className='tag tag-inactive';
+          badge.style.marginLeft='6px';badge.textContent='비활성';row.children[1].append(badge);
+        }
       } catch (err) {
         console.error('[meat] active save failed:', err);
         alert('Save failed: ' + (err.message || err));
@@ -2075,7 +2083,7 @@ function showMeatTypesModal(options = {}) {
       defaultUnitWeightG: unitWeight,
       minimumQtyG: isProduceModal ? Math.round(minQty) : Math.round(minQty * 1000),
       category,
-      sortOrder: meatTypes.length,
+      sortOrder: Math.max(-1,...meatTypes.map(row=>Number(row.sortOrder)||0))+1,
       active: true,
       showInStats: true,
       createdAt: new Date(),
