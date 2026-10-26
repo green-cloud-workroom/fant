@@ -465,18 +465,36 @@ function showBagModal(bag) {
       </div>
       <div class="form-group">
         <label>박스당 장수</label>
-        <input type="number" id="m_piecesPerBox" value="${bag?.piecesPerBox || ''}" placeholder="장" />
+        <input type="number" id="m_piecesPerBox" min="0" step="1" value="${bag?.piecesPerBox || ''}" placeholder="장" />
       </div>
       <div class="form-group">
         <label>최소재고(박스)</label>
-        <input type="number" id="m_minBox" value="${bag?.minimumBoxQty || ''}" placeholder="박스" />
+        <input type="number" id="m_minBox" min="0" step="1" value="${bag?.minimumBoxQty || ''}" placeholder="박스" />
       </div>
     </div>
+    <p id="m_bagMinimumPreview" class="text-muted" aria-live="polite"></p>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
       <button class="btn-primary" id="btnSaveBag">${isNew ? '추가' : '저장'}</button>
     </div>
   `);
+
+  const readBoxValues = () => {
+    const piecesPerBox = Number(document.getElementById('m_piecesPerBox').value);
+    const minBox = Number(document.getElementById('m_minBox').value);
+    if (![piecesPerBox, minBox, piecesPerBox * minBox].every(value => Number.isSafeInteger(value) && value >= 0)) {
+      return {error: '박스당 장수와 최소재고는 0 이상의 정수로 입력해주세요.'};
+    }
+    if (minBox > 0 && piecesPerBox === 0) return {error: '최소재고를 환산하려면 박스당 장수를 입력해주세요.'};
+    return {piecesPerBox, minBox};
+  };
+  const updateMinimumPreview = () => {
+    const values = readBoxValues();
+    document.getElementById('m_bagMinimumPreview').textContent = values.error ||
+      `최소재고 ${values.minBox.toLocaleString()}박스 = ${(values.minBox * values.piecesPerBox).toLocaleString()}장${isNew ? '' : ' · 현재 재고와 입출고 이력은 바뀌지 않습니다.'}`;
+  };
+  for (const id of ['m_piecesPerBox', 'm_minBox']) document.getElementById(id).addEventListener('input', updateMinimumPreview);
+  updateMinimumPreview();
 
   document.getElementById('btnSaveBag').addEventListener('click', () => runBagCommand(async command => {
     const batch=writeBatch(db);
@@ -486,8 +504,9 @@ function showBagModal(bag) {
     }
     const name = document.getElementById('m_bagName').value.trim();
     const category = document.getElementById('m_bagCategory').value;
-    const piecesPerBox = parseInt(document.getElementById('m_piecesPerBox').value) || 0;
-    const minBox = parseInt(document.getElementById('m_minBox').value) || 0;
+    const values = readBoxValues();
+    if (values.error) { alert(values.error); return; }
+    const {piecesPerBox, minBox} = values;
 
     if (!name || !category) { alert('봉투명과 종류는 필수입니다.'); return; }
 
@@ -502,12 +521,13 @@ function showBagModal(bag) {
       updatedAt: new Date(),
     };
 
+    const target = isNew ? doc(collection(db, 'bagTypes')) : doc(db, 'bagTypes', bag.id);
     if (isNew) {
       data.currentQty = 0;
       data.createdAt = new Date();
       batch.set(target, data);
     } else {
-      batch.update(doc(db, 'bagTypes', bag.id), data);
+      batch.update(target, data);
     }
 
     await command.commit(batch,{targets:[target]});
