@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {pageEnvironment} from './helpers/pageDom.mjs';
 
 const instrument={meat:'showMeatTypesModal,showMeatStockCategoriesModal',egg:'showSetMinModal',frozenProduct:'showProductModal',equipment:'showEquipmentModal,showPartModal,showCategoryManageModal',recipe:'showRecipeDetail'};
-async function setup(route){
-  const e=await pageEnvironment(route,{instantRoutes:[route],instrument:`\nexport {${instrument[route]}};`});
+async function setup(route,{role='office'}={}){
+  const e=await pageEnvironment(route,{role,instantRoutes:[route],instrument:`\nexport {${instrument[route]}};`});
   // structuredClone in the isolated Firestore returns native Date instances.
   // Share that constructor so Date/Timestamp fingerprints match real SDK data.
   e.context.Date=Date;
@@ -38,6 +38,66 @@ for(const category of ['meat','produce'])test(`${category}: consecutive inline s
     assert.equal(e.state.writes.length,3);assert.deepEqual(e.alerts,[]);
     assert.equal(e.document.querySelector('.m-min-qty').value,'2.5');
     e.assertPreserved();
+  }finally{await e.cleanup();}
+});
+
+for(const category of ['meat','produce'])test(`${category}: rapid edits keep event values and unsaved draft text`,async()=>{
+  const e=await setup('meat');try{
+    e.state.rows.meatTypes[0].category=category;await e.page.renderMeat({force:true});e.page.showMeatTypesModal({categoryFilter:category});
+    e.fill('.m-min-qty','1234');
+    e.fill('.m-unit-weight','750');const first=e.fire('.m-unit-weight','change');
+    e.fill('.m-unit-weight','800');const second=e.fire('.m-unit-weight','change');
+    await Promise.all([first,second]);
+    assert.equal(e.state.rows.meatTypes[0].defaultUnitWeightG,800,e.alerts.join('\n'));
+    assert.equal(e.state.commits[0][0].data.defaultUnitWeightG,750);
+    assert.equal(e.document.querySelector('.m-min-qty').value,'1234');
+    assert.equal(e.state.rows.meatTypes[0].minimumQtyG,undefined);assert.deepEqual(e.alerts,[]);e.assertPreserved();
+  }finally{await e.cleanup();}
+});
+
+test('editing several rows consecutively keeps each row and unit conversion correct',async()=>{
+  const e=await setup('meat');try{
+    e.state.rows.meatTypes.push({...e.state.rows.meatTypes[0],id:'m2',name:'소',sortOrder:1});await e.page.renderMeat({force:true});e.page.showMeatTypesModal();
+    e.fill('.m-unit-weight[data-id="m1"]','750');await e.fire('.m-unit-weight[data-id="m1"]','change');
+    e.fill('.m-min-qty[data-id="m2"]','3.25');await e.fire('.m-min-qty[data-id="m2"]','change');
+    assert.equal(e.state.rows.meatTypes.find(row=>row.id==='m1').defaultUnitWeightG,750);
+    assert.equal(e.state.rows.meatTypes.find(row=>row.id==='m2').minimumQtyG,3250,e.alerts.join('\n'));assert.deepEqual(e.alerts,[]);e.assertPreserved();
+  }finally{await e.cleanup();}
+});
+
+test('another staff edit after first save is still rejected without overwriting input or data',async()=>{
+  const e=await setup('meat');try{
+    e.page.showMeatTypesModal();e.fill('.m-unit-weight','750');await e.fire('.m-unit-weight','change');
+    e.state.rows.meatTypes[0].minimumQtyG=9000;
+    e.fill('.m-min-qty','3');await e.fire('.m-min-qty','change');
+    assert.equal(e.state.rows.meatTypes[0].minimumQtyG,9000);assert.equal(e.state.writes.length,1);
+    assert.equal(e.document.querySelector('.m-min-qty').value,'3');assert.match(e.alerts.join('\n'),/원본이 변경/);e.assertPreserved();
+  }finally{await e.cleanup();}
+});
+
+test('external master change during post-save refresh is not silently adopted',async()=>{
+  const e=await setup('meat');try{
+    e.page.showMeatTypesModal();const notify=e.state.notify;
+    e.state.notify=async path=>{if(path==='meatTypes')e.state.rows.meatTypes[0].name='외부 변경';return notify(path);};
+    e.fill('.m-unit-weight','750');await e.fire('.m-unit-weight','change');
+    e.fill('.m-min-qty','3');await e.fire('.m-min-qty','change');
+    assert.equal(e.state.rows.meatTypes[0].name,'외부 변경');assert.equal(e.state.rows.meatTypes[0].minimumQtyG,undefined);
+    assert.equal(e.state.writes.length,1);assert.match(e.alerts.join('\n'),/다른 품목 변경/);e.assertPreserved();
+  }finally{await e.cleanup();}
+});
+
+test('lost write acknowledgement blocks queued edits without a duplicate dispatch',async()=>{
+  const e=await setup('meat');try{
+    e.page.showMeatTypesModal();e.state.failNextCommit='after';
+    e.fill('.m-unit-weight','750');const first=e.fire('.m-unit-weight','change');
+    e.fill('.m-min-qty','3');const second=e.fire('.m-min-qty','change');await Promise.all([first,second]);
+    assert.equal(e.state.writes.length,1);assert.equal(e.state.rows.meatTypes[0].minimumQtyG,undefined);assert.match(e.alerts.join('\n'),/자동 재전송하지 않습니다/);e.assertPreserved();
+  }finally{await e.cleanup();}
+});
+
+test('production role cannot write the material master',async()=>{
+  const e=await setup('meat',{role:'production'});try{
+    e.page.showMeatTypesModal();e.fill('.m-unit-weight','750');await e.fire('.m-unit-weight','change');assert.equal(e.state.writes.length,0);assert.match(e.alerts.join('\n'),/권한/);e.assertPreserved();
   }finally{await e.cleanup();}
 });
 
