@@ -1,3 +1,4 @@
+import { inventoryHandoffButton, bindInventoryHandoff } from '../services/inventoryHandoff.js';
 import {showStatus} from '../utils/statusToast.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
@@ -28,6 +29,7 @@ const FROZEN_PRODUCT_CATEGORIES = [
 ];
 
 export async function renderFrozenProduct({force=false}={}) {
+  bindInventoryHandoff();
  const content=document.getElementById('mainContent');
  content.innerHTML='<p style="padding:24px">동결제품 입고 로딩 중...</p>';
  const data=await frozenProductResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(frozenProductResource,renderFrozenProduct)});
@@ -340,6 +342,7 @@ async function showProductDetail(product) {
                     <td>${l.staffName || '-'}</td>
                     <td>${l.note || '-'}</td>
                     <td>
+                      ${inventoryHandoffButton(`frozenLogs:${l.id}:1`)}
                       ${canManageFrozenProduct ? `
                         <button class="btn-edit-row" data-logid="${l.id}" style="margin-right:4px;">수정</button>
                         <button class="btn-del-row" data-logid="${l.id}" data-qty="${l.qty}" data-bagqty="${l.deductedBagQty || 0}" data-bagid="${product.bagTypeId || ''}">삭제</button>

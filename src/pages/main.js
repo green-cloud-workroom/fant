@@ -1,3 +1,4 @@
+import { inventoryHandoffButton, bindInventoryHandoff } from '../services/inventoryHandoff.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { createReadScope } from '../services/readScope.js';
 import { createServerReadScope } from '../services/serverReadScope.js';
@@ -384,6 +385,7 @@ function installMainModel(source, {detached=false}={}) {
 }
 
 function renderMainLayout() {
+  bindInventoryHandoff();
   if (currentMenu !== 'main') return;
   const content = document.getElementById('mainContent');
   const today = getToday();
@@ -2115,7 +2117,8 @@ function renderReceivedBadge(p) {
     const unit = p.receivedFreezeType === 'breadPan' ? '빵판' : '동결판';
     return `<span class="main-received-badge">✅ 입고완료 ${p.receivedFreezeQty || 0}${unit}</span>`;
   }
-  return `<span class="main-received-badge">✅ 입고완료 ${p.receivedBox || 0}박스${p.receivedRemainder ? ` +${p.receivedRemainder}낱개` : ''}</span>`;
+  const handoff = p.receivedRevision ? inventoryHandoffButton(`productions:${p.id}:${p.receivedRevision}`) : '';
+  return `<span class="main-received-badge">✅ 입고완료 ${p.receivedBox || 0}박스${p.receivedRemainder ? ` +${p.receivedRemainder}낱개` : ''}</span>${handoff}`;
 }
 
 function showReceiptSummaryModal(targetProductions, dateStr) {
