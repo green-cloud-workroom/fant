@@ -2,7 +2,7 @@
 // Inventory stock helpers are captured at their transaction boundary.
 import vm from 'node:vm';
 import { stripTypeScriptTypes } from 'node:module';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pageEnvironment } from '../tests/helpers/pageDom.mjs';
 const e=await pageEnvironment('main',{instantRoutes:['main'],instrument:'\nexport {openProductReceiptModal,renderInstantMain};'});
@@ -52,4 +52,4 @@ if (listedAfterLatest.length) throw Error('Pending server query resurrected old 
 let staleRejected=false;try {await inventory.namespace.reviewProductReceipt({receiptId:'productions:audit:1',reviewedBy:'audit',productId:'sku',productName:'검증'});}catch(error){if (!error.message.includes('정정되었거나')) throw error;staleRejected=true;}
 if (!staleRejected || afterLatest.length || received.length!==1 || received[0].input.initialQty!==10) throw Error('Cross-app duplicate guard failed');
 const report={staleRejected,productionRevision:e.state.rows.productions[0].receivedRevision,pendingBeforeReceiving:before,pendingAfterReceivingLatest:afterLatest,received,completedRevisions:e.state.rows.productTransferRequests.filter(r=>r.status==='completed').map(r=>r.revision),limitation:'Actual production and inventory service code with in-memory Firestore; stock helper captured at transaction boundary; no production connection.'};
-console.log(JSON.stringify(report,null,2));await writeFile(resolve('output/receipt-boundary-audit.json'),JSON.stringify(report,null,2));await e.cleanup();
+console.log(JSON.stringify(report,null,2));await mkdir(resolve('output'),{recursive:true});await writeFile(resolve('output/receipt-boundary-audit.json'),JSON.stringify(report,null,2));await e.cleanup();
