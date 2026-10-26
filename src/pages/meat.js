@@ -71,15 +71,43 @@ async function loadMeatStockCategories(scope={getDocs,getDoc}) {
 }
 
 async function saveMeatStockCategories(groups, command) {
-  if(!command)return runPageCommand(meatResource,command=>saveMeatStockCategories(groups,command));
-  const {setDoc}=commandWrites(command);
+  if(!command)return runMeatMasterCommand(async command=>{
+    await saveMeatStockCategories(groups,command);
+    await refreshMeatMasterAfterSave(command);
+  });
   const normalized = normalizeMeatStockCategories(groups)
     .map((g, idx) => ({ ...g, sortOrder: idx }));
-  await setDoc(doc(db, 'settings', 'meatStockCategories'), {
-    groups: normalized,
-    updatedAt: new Date(),
-  }, { merge: true });
+  const ref=doc(db,'settings','meatStockCategories'),before=fingerprint(meatStockCategories);
+  await command.transaction(db,async transaction=>{
+    const snap=await transaction.get(ref);
+    if(fingerprint(normalizeMeatStockCategories(snap.exists()?snap.data().groups:[]))!==before) {
+      throw new Error('다른 작업으로 카테고리가 변경되었습니다. 최신 자료를 다시 불러와주세요.');
+    }
+    transaction.set(ref,{groups:normalized,updatedAt:new Date()},{merge:true});
+  },{targets:[ref]});
   meatStockCategories = normalized;
+}
+
+// Serialize only master edits, keeping the normal stock workflows unchanged.
+let meatMasterQueue=Promise.resolve();
+function runMeatMasterCommand(callback) {
+  const page=getPageContext();
+  const task=meatMasterQueue.then(()=>{
+    if(page&&!page.isCurrent())return;
+    return runPageCommand(meatResource,callback,{roles:['admin','office']});
+  });
+  meatMasterQueue=task.catch(()=>{});
+  return task;
+}
+async function refreshMeatMasterAfterSave(command,types=meatTypes,categories=meatStockCategories) {
+  if(!command.isCurrent())return;
+  const expected=fingerprint({types,categories});
+  try {
+    await loadMeatPage({force:true});
+    if(fingerprint({types:meatTypes,categories:meatStockCategories})!==expected) {
+      throw new Error('저장은 완료됐지만 다른 품목 변경도 확인됐습니다. 입력을 보존한 뒤 최신 자료를 다시 불러와주세요.');
+    }
+  } catch(error) {meatResource.blocked=true;throw error;}
 }
 
 function getCurrentStockCategoryScope() {
@@ -1792,7 +1820,11 @@ function showMeatStockCategoriesModal() {
         return;
       }
       try {
-        await saveMeatStockCategories(meatStockCategories.map(g => g.id === id ? { ...g, name } : g));
+        await runMeatMasterCommand(async command=>{
+          if(!e.target.isConnected)return;
+          await saveMeatStockCategories(meatStockCategories.map(g => g.id === id ? { ...g, name } : g),command);
+          await refreshMeatMasterAfterSave(command);
+        });
         await renderTab(currentTab);
       } catch (err) {
         console.error('[meat] stock category rename failed:', err);
@@ -1935,15 +1967,12 @@ function showMeatTypesModal(options = {}) {
 
   // Keep the open table and typed drafts intact. Only a confirmed own write
   // may advance its expected rows; a fresh read must not adopt another edit.
-  let expectedTypes = meatTypes.map(row => ({ ...row }));
-  let editQueue = Promise.resolve();
   const editPage = getPageContext();
   const saveTypeField = (input, field, value) => {
     const id = input.dataset.id;
-    const task = editQueue.then(() => {
+    return runMeatMasterCommand(async command => {
       if (!input.isConnected || (editPage && !editPage.isCurrent())) return;
-      return runPageCommand(meatResource, async command => {
-        const expected = expectedTypes.find(row => row.id === id);
+        const expected = meatTypes.find(row => row.id === id);
         const targetRef = doc(db, 'meatTypes', id);
         const patch = { [field]: value, updatedAt: new Date() };
         await command.transaction(db, async transaction => {
@@ -1953,21 +1982,8 @@ function showMeatTypesModal(options = {}) {
           }
           transaction.update(targetRef, patch);
         }, { targets: [targetRef] });
-        expectedTypes = expectedTypes.map(row => row.id === id ? { ...row, ...patch } : row);
-        if (!command.isCurrent()) return;
-        try {
-          await loadMeatPage({ force: true });
-          if (fingerprint(meatTypes) !== fingerprint(expectedTypes)) {
-            throw new Error('저장은 완료됐지만 다른 품목 변경도 확인됐습니다. 입력을 보존한 뒤 최신 자료를 다시 불러와주세요.');
-          }
-        } catch (error) {
-          meatResource.blocked = true;
-          throw error;
-        }
-      }, { roles: ['admin', 'office'] });
+        await refreshMeatMasterAfterSave(command,meatTypes.map(row=>row.id===id?{...row,...patch}:row));
     });
-    editQueue = task.catch(() => {});
-    return task;
   };
 
   document.querySelectorAll('.m-unit-weight').forEach(input => {
@@ -2003,19 +2019,17 @@ function showMeatTypesModal(options = {}) {
 
   document.querySelectorAll('.m-active-toggle').forEach(cb => {
     cb.addEventListener('change', async (e) => {
- return runPageCommand(meatResource,async command=>{
+ const id = e.target.dataset.id;
+ const active = e.target.checked;
+ return runMeatMasterCommand(async command=>{
   const {updateDoc,recordActivity}=commandWrites(command);
 
-      const id = e.target.dataset.id;
-      const active = e.target.checked;
       const target = meatTypes.find(m => m.id === id);
       const previousActive = target?.active !== false;
       try {
-        await updateDoc(doc(db, 'meatTypes', id), {
-          active,
-          updatedAt: new Date(),
-        });
-        if (target) target.active = active;
+        const patch={active,updatedAt:new Date()};
+        await updateDoc(doc(db, 'meatTypes', id), patch);
+        if (target) Object.assign(target,patch);
         if (previousActive !== active) {
           await recordActivity({
             action: 'meat',
@@ -2030,6 +2044,7 @@ function showMeatTypesModal(options = {}) {
             },
           });
         }
+        await refreshMeatMasterAfterSave(command);
         if(!command.isCurrent())return;
         closeModal();
         if(!command.isCurrent())return;
@@ -2037,15 +2052,15 @@ function showMeatTypesModal(options = {}) {
       } catch (err) {
         console.error('[meat] active save failed:', err);
         alert('Save failed: ' + (err.message || err));
-        e.target.checked = !active;
+        if(!command.committed)e.target.checked = !active;
       }
 
- },{roles:['admin','office']});
+ });
 });
   });
 
   document.getElementById('btnAddMeatType').addEventListener('click', async () => {
- return runPageCommand(meatResource,async command=>{
+ return runMeatMasterCommand(async command=>{
   const {addDoc}=commandWrites(command);
 
     const name = document.getElementById('m_newMeatName').value.trim();
@@ -2055,7 +2070,7 @@ function showMeatTypesModal(options = {}) {
 
     if (!name) { alert(`${itemLabel}명은 필수입니다.`); return; }
 
-    await addDoc(collection(db, 'meatTypes'), {
+    const data={
       name,
       defaultUnitWeightG: unitWeight,
       minimumQtyG: isProduceModal ? Math.round(minQty) : Math.round(minQty * 1000),
@@ -2065,15 +2080,16 @@ function showMeatTypesModal(options = {}) {
       showInStats: true,
       createdAt: new Date(),
       updatedAt: new Date(),
-    });
+    };
+    const ref=await addDoc(collection(db, 'meatTypes'),data);
 
-    meatTypes = await loadMeatTypes();
+    await refreshMeatMasterAfterSave(command,[...meatTypes,{id:ref.id,...data}]);
     if(!command.isCurrent())return;
     closeModal();
     if(!command.isCurrent())return;
     showMeatTypesModal(options);
 
- },{roles:['admin','office']});
+ });
 });
 }
 
@@ -2107,7 +2123,7 @@ function destroyMeatTypeSortable() {
 }
 
 async function persistMeatTypeOrder() {
- return runPageCommand(meatResource,async command=>{
+ return runMeatMasterCommand(async command=>{
   const {writeBatch}=commandWrites(command);
 
   const listEl = document.getElementById('meatTypesList');
@@ -2131,6 +2147,7 @@ async function persistMeatTypeOrder() {
     meatTypes = meatTypes
       .map(m => orderMap.has(m.id) ? { ...m, sortOrder: orderMap.get(m.id), updatedAt: now } : m)
       .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    await refreshMeatMasterAfterSave(command);
   } catch (err) {
     console.error('[meat] reorder save failed:', err);
     alert('순번 저장 실패: ' + (err.message || err));
