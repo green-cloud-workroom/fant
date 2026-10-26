@@ -136,11 +136,86 @@ export function weeklySummary(data, today) {
   const range = { startDate, endDate, today };
   const production = productionEvents(data, range), supply = supplyEvents(data, range), usage = usageEvents(data, range);
   const clean = rows => rows.map(({ name, stage, unit, total }) => ({ name, stage, unit, total }));
+  const due=(data.schedules||[]).filter(s=>validDate(s.date)&&s.date>=startDate&&s.date<=endDate
+    && ['scheduled','completed'].includes(s.status)&&!supply.excludedSchedules.includes(s.id));
   return { key: 'weekly:' + startDate, startDate, endDate, kind: '공유',
     production: clean(summarize(production.events, range)), supply: clean(summarize(supply.events, range)),
     usage: clean(summarize(usage.events, range)),
+    outlook: weeklyOutlook(data, today),
+    scheduleCompletion:{due:due.length,completed:due.filter(s=>s.status==='completed').length},
     unknown: { production: production.unconfirmed.length, supply: supply.excludedReceipts.length + supply.pending.length, usage: usage.missing.length + usage.pending.length },
     note: '단계·단위를 합산하지 않음. 계산상 사용량과 재고 순차감은 별도. 기록 없음은 사용 0의 증거가 아님.' };
+}
+
+function scheduledAmount(s) {
+  const q = s.orderedQty;
+  if (!number(q) || q <= 0) return null;
+  if (s.type === 'meat' && s.orderedUnit === 'kg') return { qty: q, unit: 'kg' };
+  if (s.type === 'meat' && s.orderedUnit === 'g') return { qty: q / 1000, unit: 'kg' };
+  if (s.type === 'egg' && ['개', '판'].includes(s.orderedUnit)) return { qty: q * (s.orderedUnit === '판' ? 30 : 1), unit: '개' };
+  if (s.type === 'bag' && s.orderedUnit === '장') return { qty: q, unit: '장' };
+  // Count-weight and box conversion must never be guessed from current masters.
+  return null;
+}
+
+export function weeklyOutlook(data, today) {
+  const range = automationRange(today), usage = usageEvents(data, range);
+  const weekEnd = addDays(periodKey(today, 'weekly'), 6);
+  const schedules = (data.schedules || []).filter(s => s.status === 'scheduled').map(s => ({
+    source: 'schedules/' + s.id, itemId: scheduleItem(s), name: s.itemNameSnapshot || s.itemId || '품목 확인 필요',
+    date: validDate(s.date) ? s.date : null, qty: number(s.orderedQty) ? s.orderedQty : null,
+    unit: s.orderedUnit || '단위 확인 필요', amount: scheduledAmount(s) })).sort((a,b) => String(a.date).localeCompare(String(b.date)) || a.source.localeCompare(b.source));
+  const forecasts = [], minimum = [], unavailable = [];
+  for (const stock of currentStocks(data)) {
+    const pending = schedules.filter(s => s.itemId === stock.itemId);
+    if (number(stock.qty) && number(stock.minimum) && stock.minimum > 0 && stock.qty < stock.minimum) minimum.push({
+      ...stock, hasSchedule: pending.length > 0, schedules: pending.map(s => ({ date:s.date, qty:s.qty, unit:s.unit })) });
+    const events = usage.events.filter(e => e.itemId === stock.itemId && e.unit === stock.unit);
+    const total = events.reduce((n,e) => n + e.qty, 0), days = new Set(events.filter(e => e.qty > 0).map(e => e.date)).size;
+    const last = events.map(e => e.date).sort().at(-1);
+    if (stockUsageUncertain(stock,data,usage) || !number(stock.qty) || stock.qty < 0 || total <= 0 || days < DEFAULT_POLICY.minAmounts
+      || !last || daysBetween(last,today) > 14) { unavailable.push(stock.name); continue; }
+    const daily = total / DEFAULT_POLICY.lookbackDays;
+    const arrivals = pending.filter(s => s.date && s.date >= today && s.amount?.unit === stock.unit);
+    // An arrival later than the first deficit cannot erase that earlier shortage.
+    let available = stock.qty, shortageDate = null;
+    for (let offset = 0; offset < 21; offset++) {
+      const date = addDays(today,offset);
+      available += arrivals.filter(s => s.date === date).reduce((n,s) => n + s.amount.qty,0);
+      available -= daily;
+      if (available < -1e-9) { shortageDate=date; break; }
+    }
+    if (shortageDate) forecasts.push({ ...stock, daily, daysWithoutReceipts: stock.qty / daily, shortageDate,
+      horizon: daysBetween(today,shortageDate) < 14 ? 'twoWeeks' : 'thirdWeek',
+      urgent: daysBetween(today,shortageDate) < 2, hasSchedule: pending.length > 0,
+      uncertainSchedule: pending.some(s => !s.date || !s.amount || s.date < today),
+      action: pending.length ? '예정 입고일·수량으로 부족을 막을 수 있는지 확인' : '발주 여부·입고 가능일 확인' });
+  }
+  return { schemaVersion:1, today, weekEnd, urgent:forecasts.filter(s => s.urgent),
+    twoWeeks:forecasts.filter(s => !s.urgent && s.horizon === 'twoWeeks'), thirdWeek:forecasts.filter(s => s.horizon === 'thirdWeek'),
+    minimum:minimum.filter(s => !forecasts.some(f => f.itemId === s.itemId)), unavailable,
+    thisWeek:schedules.filter(s => s.date && s.date >= today && s.date <= weekEnd),
+    later:schedules.filter(s => s.date && s.date > weekEnd && s.date < addDays(today,21)),
+    overdue:schedules.filter(s => !s.date || s.date < today),
+    coverageNote:'최근 90일 달력 일평균 순사용량과 등록된 입고 예정 기준 추정입니다. 원료·영양제 및 일부 봉투는 근거 부족으로 예측 보류하며, 전체 품목이 3주간 충분하다는 뜻은 아닙니다.' };
+}
+
+export function weeklyOutlookText(e) {
+  const o=e.outlook, fmt=n => number(n) ? n.toLocaleString('ko-KR',{maximumFractionDigits:1}) : '확인 필요';
+  if (!o) return `${e.startDate} ~ ${e.endDate}\n주간 상세는 생산앱 통계에서 확인해주세요.`;
+  const row=s => `${s.name} ${s.qty === null ? '?' : fmt(s.qty)}${s.unit}`;
+  const risk=s => `${s.name}: 재고 ${fmt(s.qty)}${s.unit} · ${s.shortageDate} 부족 예상 · ${s.hasSchedule?'입고 예정 있음':'입고 예정 없음'}\n→ ${s.action}`;
+  const totals=new Map();for(const s of e.supply){const key=s.stage+' '+s.unit;totals.set(key,(totals.get(key)||0)+s.total);}
+  return [`이번 주 입고·발주 확인｜${o.today} ~ ${o.weekEnd}`,
+    ...(o.urgent.length?['🔴 즉시 확인',...o.urgent.map(risk)]:[]),
+    ...([...o.twoWeeks,...o.thirdWeek].length?['🟠 2~3주 내 발주 확인',...[...o.twoWeeks,...o.thirdWeek].map(risk)]:[]),
+    ...(o.minimum.length?['🟠 최소재고 미만',...o.minimum.map(s=>`${s.name}: ${fmt(s.qty)} / ${fmt(s.minimum)}${s.unit} · ${s.hasSchedule?'입고 예정 있음':'입고 예정 없음'}`)]:[]),
+    '이번 주 입고 예정',...(o.thisWeek.length?o.thisWeek.map(s=>`${s.date} · ${row(s)}`):['등록된 예정 없음']),
+    '2~3주 전망',`2주 내: ${[...o.urgent,...o.twoWeeks].length}품목 / 3주 차: ${o.thirdWeek.length}품목 (예측 가능한 범위)`,
+    ...o.later.map(s=>`${s.date} 예정 · ${row(s)}`),o.coverageNote,
+    ...(o.overdue.length?[`지난 날짜 또는 날짜 미확인 예정 ${o.overdue.length}건 확인 필요`]:[]),
+    `지난주 입고: ${[...totals].map(([key,n])=>`${key.split(' ')[0]} ${fmt(n)}${key.split(' ')[1]}`).join(' · ')||'확인된 기록 없음'}`,
+    ...(e.scheduleCompletion?[`지난주 예정 ${e.scheduleCompletion.due}건 중 ${e.scheduleCompletion.completed}건 완료`]:[])].join('\n\n');
 }
 
 export function evaluateStatsAutomation(data, { today, complete = false, policy = DEFAULT_POLICY } = {}) {
@@ -249,10 +324,12 @@ export function reconcileIssues(previous, evaluation, { today, holidays = [], ca
     // Reuse an already delivered quantity issue for the very same source; do not
     // create another personal confirm just because a stronger integrity rule now applies.
     const reused = candidate.kind === 'duplicateReceipt' && Object.values(previous).find(row =>
-      row.state === 'open' && ['quantity', 'duplicateReceipt'].includes(row.kind) && row.evidence.source === candidate.evidence.source);
+      (row.state === 'open' || row.resolution?.type === 'normal') && ['quantity', 'duplicateReceipt'].includes(row.kind) && row.evidence.source === candidate.evidence.source);
     const item = reused ? { ...candidate, key: reused.key } : candidate;
     active.add(item.key);
     const old = next[item.key];
+    if (old?.state === 'resolved' && old.resolution?.type === 'normal'
+      && old.resolution.fingerprint === normalIssueFingerprint(item)) continue;
     const episode = old?.state === 'open' ? old.episode : (old?.episode || 0) + 1;
     const started = old?.state === 'open' ? old.firstSeen : today;
     const escalated = item.kind === 'registration' && calendarComplete
@@ -276,6 +353,31 @@ export function reconcileIssues(previous, evaluation, { today, holidays = [], ca
   return next;
 }
 
+// Compare source facts, not rolling medians, elapsed days or appended stock context.
+// A new source/counterpart/quantity must be reviewed again; unchanged facts stay closed.
+export function normalIssueFingerprint(item) {
+  if (!['quantity', 'duplicateReceipt', 'cancellation'].includes(item?.kind)) return null;
+  const e = item.evidence || {};
+  return JSON.stringify([item.kind, ...['source', 'originalSource', 'itemId', 'date', 'originalDate',
+    'qty', 'originalQty', 'cancelQty', 'remainingQty', 'unit', 'stage', 'problem'].map(k => e[k] ?? null),
+    [...(e.scheduleIds || [])].sort()]);
+}
+
+export function normalResolutionReason(item, input, request) {
+  const choices = { separateReceipt: '서로 다른 실제 입고입니다', actualAmount: '실제 수량이 맞습니다' };
+  if (input.reasonCode === 'separateReceipt' && item.kind !== 'duplicateReceipt') throw Error('중복입고 확인에서만 선택할 수 있습니다.');
+  if (input.reasonCode === 'actualAmount' && item.kind !== 'quantity') throw Error('수량 확인에서만 선택할 수 있습니다.');
+  if (input.reasonCode === 'existingReply') {
+    const reply = request.replies?.[input.replyIndex];
+    if (!Number.isInteger(input.replyIndex) || !reply?.text?.trim()) throw Error('사용할 기존 답변을 선택해주세요.');
+    if (input.replyText !== reply.text) throw Error('선택한 답변이 변경됐습니다. 다시 선택해주세요.');
+    return reply.text.trim();
+  }
+  if (choices[input.reasonCode]) return choices[input.reasonCode];
+  if (input.reasonCode === 'other' && typeof input.reason === 'string' && input.reason.trim().length <= 1000 && input.reason.trim()) return input.reason.trim();
+  throw Error('정상으로 판단한 사유를 선택하거나 입력해주세요.');
+}
+
 export function deliveryIdentity(item, recipientUid) {
   return JSON.stringify([AUTOMATION_VERSION, item.key, item.episode || 1, item.escalation || 0, item.notificationLevel || 0, recipientUid]);
 }
@@ -288,7 +390,8 @@ export function confirmPayload(item, recipient, today, requestId) {
     approverUid: recipient.uid, approverName: recipient.name,
     participantUids: [system.uid, recipient.uid], participantNames: { [system.uid]: system.name, [recipient.uid]: recipient.name },
     date: today, effectiveDate: today, deferredFrom: null, title: item.title,
-    body: [item.title, integrity ? '' : evidenceText(item), '확인은 읽음 표시입니다. 원본의 문제 해결 상태와 별도입니다.'].filter(Boolean).join('\n')
+    ...(weekly && item.evidence.outlook ? { statsWeeklyReport: item.evidence } : {}),
+    body: [item.title, integrity ? '' : evidenceText(item), weekly ? '' : '확인은 읽음 표시입니다. 원본의 문제 해결 상태와 별도입니다.'].filter(Boolean).join('\n')
       + (context ? '\n\n' + context : '') + (integrity ? '\n\n' + integrity : ''),
     ...(context ? { statsAdjustmentContextText: context } : {}),
     ...(integrity ? { statsIntegrityContextText: integrity } : {}),
@@ -306,9 +409,7 @@ function evidenceText(item) {
   if (item.kind === 'duplicateReceipt') return `먼저 기록된 입고: ${e.originalDate} · ${fmt(e.originalQty)}${e.unit}\n확인이 필요한 입고: ${e.date} · ${fmt(e.qty)}${e.unit}\n판단 근거: ${e.basis}\n${e.scheduleIds.length ? '입고예정: ' + e.scheduleIds.join(', ') + '\n' : ''}실제로 각각 입고됐는지 확인해주세요. 오류 확정이나 자동 재고 조정은 아닙니다.\n비교 원본: ${e.originalSource}\n확인 원본: ${e.source}`;
   if (item.kind === 'cancellation') return `취소 기록일: ${e.date}\n원본 기록일: ${e.originalDate}\n원본 수량: ${fmt(e.qty)}${e.unit}\n취소 수량: ${fmt(e.cancelQty)}${e.unit}\n합산 잔량: ${fmt(e.remainingQty)}${e.unit}\n확인 사항: ${e.problem}\n사유: ${e.reason}\n원본 연결·품목·반대 수량과 처리 이력을 확인해주세요. 자동 재고 조정은 하지 않습니다.\n취소 대상: ${e.originalSource}\n취소 기록: ${e.source}`;
   if (item.kind === 'shortage') return `현재 재고: ${fmt(e.qty)}${e.unit}\n기록상 달력 일평균: ${fmt(e.calendarDailyMean)}${e.unit}\n추정 잔여: ${fmt(e.estimatedDaysLeft)}일\n현재 재고와 보충 필요 여부를 확인해주세요.\n${e.note}`;
-  if (item.kind === 'weekly') return [`${e.startDate} ~ ${e.endDate}`, ...['production', 'supply', 'usage'].flatMap((key, i) =>
-    [`[${['생산', '입고', '사용'][i]}]`, ...e[key].map(r => `${r.name} · ${r.stage}: ${fmt(r.total)}${r.unit}`)]),
-    `미확인: 생산 ${e.unknown.production}건 / 입고 ${e.unknown.supply}건 / 사용 ${e.unknown.usage}건`, e.note].join('\n');
+  if (item.kind === 'weekly') return weeklyOutlookText(e);
   throw Error('알 수 없는 알림 종류');
 }
 
@@ -319,7 +420,7 @@ export function planStatsDeliveries(issues, weekly, { today, activationDate }) {
     && (!datedKinds.includes(row.kind) || row.evidence.date >= activationDate));
   if (new Date(today).getUTCDay() === 1 && weekly && weekly.endDate >= activationDate
     && !weekly.unknown?.supply && !weekly.unknown?.usage) rows.push({
-    key: weekly.key, kind: 'weekly', title: '지난주 생산·원료 운영 요약', evidence: weekly,
+    key: weekly.key, kind: 'weekly', title: '이번 주 입고·발주 확인', evidence: weekly,
     episode: 1, escalation: 0, target: 'stats', recipientRoles: ['office', 'owner'] });
   return rows;
 }
