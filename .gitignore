@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+/output/d0-public-20261029/capture-3deff9db/
 *.local
 .env
 .env.*

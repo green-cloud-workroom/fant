@@ -1,4 +1,5 @@
 import { collection, doc, getDocFromServer, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { newProductionWriteToken } from '../utils/productionWriteToken.js';
 
 // Execute the existing FIFO calculation against fresh snapshots; commit its
 // stock, movement logs, ledger and completion together or commit nothing.
@@ -40,6 +41,11 @@ export async function atomicProductionLoad({ db, date, productionIds, stockIds, 
     const put = (ref, data, update) => {
       const name = ref.path.split('/')[0];
       if (!writable.has(name)) throw Error('생산 저장 범위를 벗어났습니다.');
+      if (name === 'productions') {
+        const source = cache.get(ref.path);
+        if (!source?.exists()) throw Error('생산 원본이 없습니다. 다시 불러와주세요.');
+        data = { ...data, mutationToken: newProductionWriteToken() };
+      }
       const old = staged.get(ref.path);
       staged.set(ref.path, { ref, data: old ? { ...old.data, ...data } : data, update: old ? old.update : update });
     };
@@ -144,7 +150,8 @@ export async function atomicProductionRollback({ db, date, ledgerId, productionI
     for (const op of operations) tx.set(op.ref,op.entry);
     tx.update(ledgerRef,{status:'rolledBack',rolledBackAt:serverTimestamp(),rollbackReason:reason});
     tx.update(completionRef,{status:'cancelled',cancelReason:reason,cancelledAt:serverTimestamp()});
-    for (const p of productions) if(p.exists())tx.update(p.ref,{lockedByCompletion:false});
+    for (const p of productions) if(p.exists())tx.update(p.ref,{lockedByCompletion:false,
+      mutationToken:newProductionWriteToken()});
     return { restored:true, movementLogs:operations.length };
   });
 }

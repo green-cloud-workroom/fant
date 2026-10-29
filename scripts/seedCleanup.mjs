@@ -1,3 +1,5 @@
+// 2026-10-27: initialization complete; inspection-only. Historical notes below are not execution/backup approval.
+import { readLegacyMaintenanceTarget, assertLegacyProjectBinding, legacyMaintenanceUsage } from './legacyMaintenanceReadOnly.mjs';
 // 시드 직전 정리. handoff_v28 §"시드 입력 전 정리 필요" 사양 + 호두 2026-05-20 확정.
 // dry-run 기본. --execute 는 호두가 직접 누름.
 // 백업 사전 조건: backup_pre_wipe_adc_20260520_210654 존재(2026-05-20).
@@ -11,10 +13,7 @@ import fs from 'node:fs/promises';
 import process from 'node:process';
 import { applicationDefault, cert, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { parseArgs } from './firestoreConfig.mjs';
 
-const DEFAULT_PROJECT_ID = 'fant-e5ae5';
-const BATCH_LIMIT = 450;
 
 const TEST_RECIPE_IDS = [
   'VNGOvGiefHOXm8ldZkSP', // Codex 프리셋 검증
@@ -25,7 +24,6 @@ const SETTINGS_DOC_IDS = ['systemValues', 'menuStaffGroups', 'copySheetOrder'];
 const SUPPLEMENT_TEST_PREFIX = 'VNGOvGiefHOXm8ldZkSP_';
 const CONVERSION_HISTORY_RECIPE_ID = 'yEhV7xTxX8giuDtSnFmQ'; // 고양이 치킨
 const PRODUCTIONS_STATUS_REQUIRED = 'deleted';
-const BACKUP_REMINDER = 'backup_pre_wipe_adc_20260520_210654';
 
 async function loadServiceAccount(args) {
   const keyPath = args.get('key') || process.env.FANT_ADMIN_KEY_PATH;
@@ -37,16 +35,6 @@ async function loadServiceAccount(args) {
     if (!key[field]) throw new Error(`Service account key is missing ${field}.`);
   }
   return key;
-}
-
-function resolveProjectId(args, serviceAccount) {
-  return (
-    args.get('project') ||
-    process.env.GOOGLE_CLOUD_PROJECT ||
-    process.env.GCLOUD_PROJECT ||
-    serviceAccount?.project_id ||
-    DEFAULT_PROJECT_ID
-  );
 }
 
 function formatDocPath(docRef) {
@@ -97,20 +85,6 @@ function logRefs(refs) {
   for (const ref of refs) {
     console.log(`    - ${formatDocPath(ref)}`);
   }
-}
-
-async function batchDeleteRefs(db, refs) {
-  let deleted = 0;
-  for (let i = 0; i < refs.length; i += BATCH_LIMIT) {
-    const batch = db.batch();
-    const chunk = refs.slice(i, i + BATCH_LIMIT);
-    for (const ref of chunk) {
-      batch.delete(ref);
-    }
-    await batch.commit();
-    deleted += chunk.length;
-  }
-  return deleted;
 }
 
 async function collectPlan(db) {
@@ -215,63 +189,24 @@ async function collectPlan(db) {
   return plan;
 }
 
-async function executePlan(db, plan) {
-  let totalDeleted = 0;
-
-  for (const step of plan) {
-    if (step.refs.length === 0) {
-      console.log(`[seed-cleanup] execute: ${step.label}: empty`);
-      continue;
-    }
-
-    if (step.recursive) {
-      for (const ref of step.refs.filter((candidate) => candidate.parent.id === 'recipes')) {
-        await db.recursiveDelete(ref);
-      }
-      totalDeleted += step.refs.length;
-      console.log(`[seed-cleanup] execute: ${step.label}: deleted ${step.refs.length}`);
-      continue;
-    }
-
-    const deleted = await batchDeleteRefs(db, step.refs);
-    totalDeleted += deleted;
-    console.log(`[seed-cleanup] execute: ${step.label}: deleted ${deleted}`);
-  }
-
-  return totalDeleted;
-}
-
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  const execute = args.has('execute');
+  const parsed = readLegacyMaintenanceTarget(process.argv.slice(2), 'seedCleanup');
+  if (parsed.help) { console.log(legacyMaintenanceUsage('seedCleanup')); return; }
+  const { args, target } = parsed;
+
   const serviceAccount = await loadServiceAccount(args);
-  const projectId = resolveProjectId(args, serviceAccount);
-
-  initializeApp({
+  if (serviceAccount) assertLegacyProjectBinding(target, serviceAccount.project_id);
+  const app = initializeApp({
     credential: serviceAccount ? cert(serviceAccount) : applicationDefault(),
-    projectId,
+    projectId: target.projectId,
   });
-
-  const db = getFirestore();
-
-  console.log(`[seed-cleanup] mode: ${execute ? 'execute' : 'dry-run'}`);
-  console.log(`[seed-cleanup] project: ${projectId}`);
-  console.log(`[seed-cleanup] credential: ${serviceAccount ? 'service-account-key' : 'application-default'}`);
-  console.log('[seed-cleanup] scope: targeted handoff_v28 cleanup only.');
-
+  const db = getFirestore(app);
+  console.log('[seed-cleanup] mode: dry-run (retired initialization tool)');
+  console.log('[seed-cleanup] target:', target.projectId, target.databaseId);
   const plan = await collectPlan(db);
-  const totalIntended = plan.reduce((sum, step) => sum + step.refs.length, 0);
-  console.log(`[seed-cleanup] total intended delete docs: ${totalIntended}`);
-
-  if (!execute) {
-    console.log('[seed-cleanup] dry-run only. No documents deleted.');
-    console.log('[seed-cleanup] run npm run seed-cleanup:execute only after Hodoo review.');
-    return;
-  }
-
-  const totalDeleted = await executePlan(db, plan);
-  console.log(`[seed-cleanup] total actual deleted docs: ${totalDeleted}`);
-  console.log(`[seed-cleanup] backup reminder: ${BACKUP_REMINDER}`);
+  const total = plan.reduce((sum, step) => sum + step.refs.length, 0);
+  console.log('[seed-cleanup] total inspection targets:', total);
+  console.log('[seed-cleanup] read-only inspection complete. Execution is retired.');
 }
 
 main()

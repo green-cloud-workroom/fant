@@ -113,6 +113,36 @@ function currentStocks(data) {
       name: s.name || s.id, unit: '장', qty: s.currentQty, minimum: s.minimumQty ?? null, source: 'bagTypes/' + s.id })),
   ];
 }
+function minimumSchedule(data,stock,today) {
+  return (data.schedules||[]).some(s=>s.status==='scheduled'&&scheduleItem(s)===stock.itemId
+    &&validDate(s.date)&&s.date>=today&&number(s.orderedQty)&&s.orderedQty>0&&typeof s.orderedUnit==='string'&&s.orderedUnit.trim());
+}
+function stockForecast(stock,data,today) {
+  const usage=usageEvents(data,automationRange(today));
+  const events=usage.events.filter(e=>e.itemId===stock.itemId&&e.unit===stock.unit);
+  const total=events.reduce((n,e)=>n+e.qty,0),last=events.map(e=>e.date).sort().at(-1);
+  if(stockUsageUncertain(stock,data,usage)||!number(stock.qty)||stock.qty<0||total<=0
+    ||new Set(events.filter(e=>e.qty>0).map(e=>e.date)).size<DEFAULT_POLICY.minAmounts||!last||daysBetween(last,today)>14)return null;
+  const days=stock.qty/(total/DEFAULT_POLICY.lookbackDays);
+  return {daysLeft:days,shortageDate:addDays(today,Math.floor(days))};
+}
+export function deferralBreaks(item,deferral,today) {
+  if(!deferral||!validDate(deferral.until)||deferral.until<=today)return true;
+  if(['minimum','shortage'].includes(item.kind)) {
+    return number(item.evidence.qty)&&item.evidence.qty<=0
+      ||validDate(item.evidence.shortageDate)&&item.evidence.shortageDate<=deferral.until;
+  }
+  return normalIssueFingerprint(item)!==deferral.fingerprint;
+}
+export function deferralUntil(item,input,today) {
+  if(!validDate(input.until)||input.until<=today||input.until>addDays(today,365))throw Error('내일부터 1년 이내의 확인 날짜를 선택해주세요.');
+  if(['minimum','shortage'].includes(item.kind)) {
+    if(item.evidence.qty<=0)throw Error('재고가 0인 건은 유예할 수 없습니다.');
+    if(validDate(item.evidence.shortageDate)&&item.evidence.shortageDate<=input.until)throw Error('소진 예상일보다 이른 확인 날짜를 선택해주세요.');
+  }
+  if(input.memo!=null&&(typeof input.memo!=='string'||input.memo.length>1000))throw Error('메모는 1000자 이내로 입력해주세요.');
+  return input.until;
+}
 function comparableUsage(data, usage) {
   const productions = new Map((data.productions || []).map(p => ['productions/' + p.id, p]));
   // Automatic lot deductions can be split arbitrarily by FIFO and restoration.
@@ -224,6 +254,13 @@ export function evaluateStatsAutomation(data, { today, complete = false, policy 
   if (!complete || AUTOMATION_SOURCES.some(name => !Array.isArray(data[name]))) return { version: AUTOMATION_VERSION, mode: 'shadow', range, candidates,
     held: [{ reason: '전체 원본 읽기 완료 확인 필요' }], weekly: null, deliveryEnabled: false };
   const cancellation = cancellationChecks(data, range);
+  // Minimum-stock checks use direct recorded stock; they do not require a consumption forecast.
+  for(const stock of currentStocks(data))if(number(stock.qty)&&number(stock.minimum)&&stock.minimum>0&&stock.qty<stock.minimum&&!minimumSchedule(data,stock,today)){
+    candidates.push(issue('minimum',stock.itemId,stock.name+' 최소재고·발주 확인',{
+      ...stock,date:today,...(stockForecast(stock,data,today)||{}),hasSchedule:false,
+      note:'최소재고 미달이며 유효한 향후 입고 예정이 없습니다. 실재고·발주 여부를 확인해주세요.'
+    },{target:'schedule',severity:stock.qty<=0?'urgent':'attention'}));
+  }
   candidates.push(...cancellation.issues.map(integrityIssue));
   // Broken cancellation evidence must not be silently removed to manufacture statistics.
   // Keep existing issues held, but allow the independent integrity checks to be delivered.
@@ -256,6 +293,7 @@ export function evaluateStatsAutomation(data, { today, complete = false, policy 
       candidates.push(issue('registration', itemId, group.name + ' 입고예정 등록 확인',
         { itemId, lastDate: group.lastDate, meanInterval: group.interval.mean, samples: group.interval.count,
           suggestedDate: dueDate, pendingSources: pending.map(s => 'schedules/' + s.id),
+          receiptFacts: group.events.filter(e => e.date === group.lastDate).map(e => ({source:e.source,qty:e.qty,unit:e.unit})).sort((a,b)=>a.source.localeCompare(b.source)),
           note: '입고 기록일 간격에 따른 확인 권고. 실제 발주일·도착일·납품 지연 판단 아님.' }));
     }
   }
@@ -294,7 +332,8 @@ export function evaluateStatsAutomation(data, { today, complete = false, policy 
       held.push({ itemId: stock.itemId, name: stock.name, reason: '기존 최소재고 알림 담당 · 중복 전달 제외', daysLeft }); continue;
     }
     if (daysLeft <= policy.registrationBufferDays) candidates.push(issue('shortage', stock.itemId,
-      stock.name + ' 소진 위험 검토', { ...stock, calendarDailyMean: daily, estimatedDaysLeft: daysLeft,
+      stock.name + ' 소진 위험 검토', { ...stock, calendarDailyMean: daily, estimatedDaysLeft: daysLeft,shortageDate:addDays(today,Math.floor(daysLeft)),
+        usageFacts: events.filter(e => e.date === lastDate).map(e => ({source:e.source,date:e.date,qty:e.qty,unit:e.unit})).sort((a,b)=>a.source.localeCompare(b.source)),
         note: '최근 90일 기록상 순사용 추정. 수동 보충 여유 2일 기준 · 납품 소요일 아님.' }, { severity: 'urgent' }));
   }
   held.push({ reason: '원육 단계별 재고·영양제 환산 단위의 사용량 대응 검증 전: 소진 예측 보류' });
@@ -320,6 +359,9 @@ export function workingDaysBetween(start, end, holidays) {
 export function reconcileIssues(previous, evaluation, { today, holidays = [], calendarComplete = false } = {}) {
   if ((!evaluation.weekly && !evaluation.integrityComplete) || evaluation.mode !== 'shadow') return previous;
   const next = structuredClone(previous), active = new Set();
+  for(const [key,row]of Object.entries(next))if(row.kind==='minimum'&&row.resolution?.type==='normal'
+    &&!row.recoveredAt&&evaluation.resolvedKeys?.includes(key))next[key]={...row,recoveredAt:today,
+      history:[...(row.history||[]),{type:'minimumRecovered',at:today}]};
   for (const candidate of evaluation.candidates) {
     // Reuse an already delivered quantity issue for the very same source; do not
     // create another personal confirm just because a stronger integrity rule now applies.
@@ -328,25 +370,29 @@ export function reconcileIssues(previous, evaluation, { today, holidays = [], ca
     const item = reused ? { ...candidate, key: reused.key } : candidate;
     active.add(item.key);
     const old = next[item.key];
-    if (old?.state === 'resolved' && old.resolution?.type === 'normal'
+    if (old?.state === 'resolved' && old.resolution?.type === 'normal' && !old.recoveredAt
       && old.resolution.fingerprint === normalIssueFingerprint(item)) continue;
     const episode = old?.state === 'open' ? old.episode : (old?.episode || 0) + 1;
     const started = old?.state === 'open' ? old.firstSeen : today;
+    let deferral=old?.state==='open'?old.deferral||null:null,reminder=old?.state==='open'?old.reminder||0:0;
+    if(deferral&&deferralBreaks(item,deferral,today)){deferral=null;reminder++;}
     const escalated = item.kind === 'registration' && calendarComplete
       && workingDaysBetween(started, today, holidays) >= DEFAULT_POLICY.escalationWorkingDays;
     const level = item.kind === 'quantity' ? Math.min(6, Math.floor(Math.log10(Math.max(item.evidence.ratio, 1 / item.evidence.ratio))))
-      : item.kind === 'shortage' ? item.evidence.estimatedDaysLeft <= 0.5 ? 2 : item.evidence.estimatedDaysLeft <= 1 ? 1 : 0 : 0;
+      : item.kind === 'shortage' ? item.evidence.estimatedDaysLeft <= 0.5 ? 2 : item.evidence.estimatedDaysLeft <= 1 ? 1 : 0
+      : item.kind==='minimum'&&item.evidence.qty<=0?1:0;
     next[item.key] = { ...item, episode, state: 'open', firstSeen: started, lastSeen: today,
+      ...(old?.lastDeferral?{lastDeferral:old.lastDeferral}:{}),...(old?.deferral||old?.reminder?{deferral,reminder}:{}),
       // Aging is a single escalation, not a daily notification revision.
       escalation: escalated || (old?.state === 'open' && old.escalation === 1) ? 1 : 0,
       notificationLevel: Math.max(level, old?.state === 'open' ? old.notificationLevel || 0 : 0),
       recipientRoles: escalated || (old?.state === 'open' && old.escalation === 1) ? ['office', 'owner'] : item.recipientRoles,
       acknowledgements: old?.state === 'open' ? old.acknowledgements || {} : {},
-      history: old?.history || [] };
+      history: old?.deferral&&!deferral&&old.state==='open'?[...(old.history||[]),{type:'deferralEnded',at:today,until:old.deferral.until}]:old?.history || [] };
   }
   // Source resolution must be explicitly proven, not inferred from a new hold or missing baseline.
   for (const [key, row] of Object.entries(next)) if (row.state === 'open' && !active.has(key)) {
-    if (evaluation.resolvedKeys?.includes(key)) next[key] = { ...row, state: 'resolved', resolvedAt: today,
+    if (evaluation.resolvedKeys?.includes(key)) next[key] = { ...row,...(row.deferral?{deferral:null}:{}), state: 'resolved', resolvedAt: today,
       history: [...row.history, { episode: row.episode, firstSeen: row.firstSeen, resolvedAt: today }] };
     else next[key] = { ...row, evaluationState: 'held', lastEvaluated: today };
   }
@@ -356,6 +402,10 @@ export function reconcileIssues(previous, evaluation, { today, holidays = [], ca
 // Compare source facts, not rolling medians, elapsed days or appended stock context.
 // A new source/counterpart/quantity must be reviewed again; unchanged facts stay closed.
 export function normalIssueFingerprint(item) {
+  const facts = item?.evidence || {};
+  if(item?.kind==='minimum')return JSON.stringify(['minimum',facts.itemId,facts.minimum,facts.qty<=0]);
+  if (item?.kind === 'registration') return JSON.stringify(['registration',facts.itemId,facts.lastDate,facts.receiptFacts || [],[...(facts.pendingSources || [])].sort()]);
+  if (item?.kind === 'shortage') return JSON.stringify(['shortage',facts.itemId,facts.qty,facts.unit,facts.usageFacts || []]);
   if (!['quantity', 'duplicateReceipt', 'cancellation'].includes(item?.kind)) return null;
   const e = item.evidence || {};
   return JSON.stringify([item.kind, ...['source', 'originalSource', 'itemId', 'date', 'originalDate',
@@ -379,7 +429,8 @@ export function normalResolutionReason(item, input, request) {
 }
 
 export function deliveryIdentity(item, recipientUid) {
-  return JSON.stringify([AUTOMATION_VERSION, item.key, item.episode || 1, item.escalation || 0, item.notificationLevel || 0, recipientUid]);
+  const parts=[AUTOMATION_VERSION, item.key, item.episode || 1, item.escalation || 0, item.notificationLevel || 0, recipientUid];
+  return JSON.stringify(item.reminder>0?[...parts,item.reminder]:parts);
 }
 export function confirmPayload(item, recipient, today, requestId) {
   const system = { uid: 'system:production-stats', name: '생산 통계 알림' };
@@ -397,13 +448,14 @@ export function confirmPayload(item, recipient, today, requestId) {
     ...(integrity ? { statsIntegrityContextText: integrity } : {}),
     linkUrl: 'https://green-cloud-workroom.github.io/fant/#' + (['schedule', 'meat', 'stats'].includes(item.target) ? item.target : 'stats'),
     statsSource: { version: AUTOMATION_VERSION, key: item.key, episode: item.episode || 1,
-      escalation: item.escalation || 0, notificationLevel: item.notificationLevel || 0 },
+      escalation: item.escalation || 0, notificationLevel: item.notificationLevel || 0,...(item.reminder>0?{reminder:item.reminder}:{}) },
     boardPublic: false, status: '대기', answer: '', replies: [], lastActorUid: system.uid,
     answerSeen: true, contentRevision: 1, creationCommandId: requestId };
 }
 
 function evidenceText(item) {
   const e = item.evidence, fmt = v => number(v) ? v.toLocaleString('ko-KR', { maximumFractionDigits: 3 }) : '확인 불가';
+  if(item.kind==='minimum')return `현재 재고: ${fmt(e.qty)}${e.unit}\n최소재고: ${fmt(e.minimum)}${e.unit}\n입고 예정: 없음\n${e.shortageDate?'소진 예상일: '+e.shortageDate+'\n':''}재고와 발주 여부를 확인해주세요. 남은 재고로 운영 가능하면 다시 확인할 날짜를 선택할 수 있습니다.`;
   if (item.kind === 'registration') return `최근 입고 기록: ${e.lastDate}\n평균 입고 간격: ${fmt(e.meanInterval)}일 (간격 표본 ${e.samples}개)\n확인 권고 시점: ${e.suggestedDate}\n입고예정관리에서 등록 여부와 일정을 확인해주세요.\n${e.note}`;
   if (item.kind === 'quantity') return `기록일: ${e.date}\n수량: ${fmt(e.qty)}${e.unit}\n이전 수량 중앙값: ${fmt(e.baseline)}${e.unit} (표본 ${e.samples}건)\n입력 수량과 단위를 확인해주세요. 오류로 확정한 알림은 아닙니다.\n원본: ${e.source}`;
   if (item.kind === 'duplicateReceipt') return `먼저 기록된 입고: ${e.originalDate} · ${fmt(e.originalQty)}${e.unit}\n확인이 필요한 입고: ${e.date} · ${fmt(e.qty)}${e.unit}\n판단 근거: ${e.basis}\n${e.scheduleIds.length ? '입고예정: ' + e.scheduleIds.join(', ') + '\n' : ''}실제로 각각 입고됐는지 확인해주세요. 오류 확정이나 자동 재고 조정은 아닙니다.\n비교 원본: ${e.originalSource}\n확인 원본: ${e.source}`;
@@ -417,6 +469,7 @@ function evidenceText(item) {
 export function planStatsDeliveries(issues, weekly, { today, activationDate }) {
   if (!validDate(activationDate) || activationDate > today) return [];
   const rows = Object.values(issues).filter(row => row.state === 'open' && row.evaluationState !== 'held'
+    &&!row.deferral
     && (!datedKinds.includes(row.kind) || row.evidence.date >= activationDate));
   if (new Date(today).getUTCDay() === 1 && weekly && weekly.endDate >= activationDate
     && !weekly.unknown?.supply && !weekly.unknown?.usage) rows.push({
@@ -428,12 +481,17 @@ export function planStatsDeliveries(issues, weekly, { today, activationDate }) {
 export function provenResolutions(previous, data, today) {
   const range = automationRange(today), cancellation = cancellationChecks(data, range);
   const invalid = new Set(cancellation.invalid);
+  const minimumResolved=Object.values(previous).filter(row=>row.kind==='minimum').filter(row=>{
+    const stock=currentStocks(data).find(s=>s.itemId===row.evidence.itemId);
+    return stock&&number(stock.qty)&&number(stock.minimum)&&(stock.minimum<=0||stock.qty>=stock.minimum||minimumSchedule(data,stock,today))
+      ||row.evidence.itemId?.startsWith('bagLogs:')&&(data.bagTypes||[]).some(b=>'bagLogs:'+b.id===row.evidence.itemId&&b.active===false);
+  }).map(row=>row.key);
   const cancellationResolved = Object.values(previous).filter(row => row.state === 'open' && row.kind === 'cancellation'
     && !invalid.has(row.evidence.source) && data[row.evidence.source.split('/')[0]]?.some(r =>
       r.id === row.evidence.source.split('/')[1] && r.manualMovement?.kind === 'cancel')).map(row => row.key);
-  if (invalid.size) return cancellationResolved;
+  if (invalid.size) return [...cancellationResolved,...minimumResolved];
   const supply = supplyEvents(data, range), usage = usageEvents(data, range);
-  return Object.values(previous).filter(row => {
+  return [...minimumResolved,...Object.values(previous).filter(row => {
     if (row.state !== 'open') return false;
     if (row.kind === 'cancellation') return cancellationResolved.includes(row.key);
     if (row.kind === 'duplicateReceipt') return [row.evidence.source, row.evidence.originalSource]
@@ -464,5 +522,5 @@ export function provenResolutions(previous, data, today) {
         && stock.qty / (total / DEFAULT_POLICY.lookbackDays) > DEFAULT_POLICY.registrationBufferDays;
     }
     return false;
-  }).map(row => row.key);
+  }).map(row => row.key)];
 }

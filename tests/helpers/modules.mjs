@@ -13,7 +13,7 @@ export async function environment(options = {}) {
     constructor(...args) { super(...(args.length ? args : ['2026-09-14T01:00:00Z'])); }
     static now() { return Date.parse('2026-09-14T01:00:00Z'); }
   }
-  const context=vm.createContext({console, setTimeout,clearTimeout, Map,Set,Date:TestDate,Promise,
+  const context=vm.createContext({console, setTimeout,clearTimeout, Map,Set,Date:TestDate,Promise,crypto:globalThis.crypto,
     document:{getElementById:id=>nodes[id]||null},
     window:{}, sessionStorage:{getItem:()=>null,setItem:()=>{}},localStorage:{getItem:()=>null,setItem:()=>{}},
   });
@@ -36,7 +36,8 @@ export async function environment(options = {}) {
   if(!options.realRouter)synthetic(resolve('src/router.js'),legacyRouterStub);
   async function getModule(id) {
     if(cache.has(id))return cache.get(id);
-    let source=readFileSync(id,'utf8');
+    const relative=id.slice(root.length+1).replaceAll('\\','/');
+    let source=readFileSync(options.sourceFiles?.[relative] || id,'utf8');
     if(options.baselineRef && id.startsWith(resolve('src'))) {
       const key=options.baselineRef+':'+id.slice(root.length+1).replaceAll('\\','/');
       if(!baselineSources.has(key))baselineSources.set(key,execFileSync('git',['show',key],{encoding:'utf8'}));

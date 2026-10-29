@@ -6,12 +6,21 @@ const setupReceipt=async()=>{
  for(const [id,value]of Object.entries({m_qty:4,m_date:e.today,m_expiry:'2027-09-14',m_staff:'검증 담당자'}))e.fill('#'+id,value);
  return e;
 };
-test('receipt acknowledgement loss stops the multi-step operation and another click cannot repeat deduction',async()=>{
+test('receipt acknowledgement loss preserves one atomic receipt and another click cannot repeat deduction',async()=>{
  const e=await setupReceipt();try{
   e.state.failNextCommit='after';await e.fire('#btnSaveIncoming');const writes=e.state.writes.length;
   assert.equal(e.state.rows.bagTypes[0].currentQty,96);assert.equal(e.state.commits.length,1);
   assert.equal(e.document.querySelector('#m_qty').value,'4');await e.fire('#btnSaveIncoming');
-  assert.equal(e.state.writes.length,writes);assert.equal(e.state.rows.frozenLogs?.length||0,0);
+  assert.equal(e.state.writes.length,writes);assert.equal(e.state.rows.frozenLogs.length,1);
+  assert.equal(e.state.rows.bagLogs.length,1);assert.equal(e.state.rows.stockLedger.length,1);
+  assert.equal(e.state.rows.productTransferRequests.length,1);assert.equal(e.state.rows.activityLogs.length,1);
+  const receipt=e.state.rows.frozenLogs[0],ledger=e.state.rows.stockLedger[0],request=e.state.rows.productTransferRequests[0];
+  assert.equal(receipt.qty,4);assert.equal(receipt.ledgerId,ledger.id);assert.equal(ledger.actionId,receipt.id);
+  assert.equal(ledger.items[0].bagLogId,e.state.rows.bagLogs[0].id);
+  assert.equal(request.sourceId,receipt.id);assert.equal(request.quantity,4);
+  assert.equal(request.id,`frozenLogs:${receipt.id}:1`);
+  assert.equal(e.state.rows.activityLogs[0].details.frozenLogId,receipt.id);
+  assert.equal(e.state.commits[0].length,6,'stock, bag log, receipt, ledger, outbox and activity remain atomic');
  }finally{await e.cleanup();}
 });
 test('changed product and a closed date stop a receipt before any write',async()=>{

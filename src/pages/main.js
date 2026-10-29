@@ -1,3 +1,4 @@
+import { escapeHtml, recipeColor } from '../utils/html.js';
 import { inventoryHandoffButton, bindInventoryHandoff } from '../services/inventoryHandoff.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { createReadScope } from '../services/readScope.js';
@@ -7,6 +8,7 @@ import { createAutoLogCoordinator } from '../services/autoLogCoordinator.js';
 import { loadSummary,summaryEnabled,summaryStillCurrent } from '../services/mainViewSource.js';
 import { openAction, fingerprint } from '../services/actionGateway.js';
 import { saveProductReceipt } from '../services/productReceipt.js';
+import { newProductionWriteToken } from '../utils/productionWriteToken.js';
 import { sessionStore } from '../state/sessionStore.js';
 import { createDisplayScope, displayPool } from '../state/displayReads.js';
 import { useSessionReads } from '../config/performanceFlags.js';
@@ -176,9 +178,9 @@ function isTenderFreezeDryProduction(item) {
 }
 
 function renderFreezeDryProductionMeta(item) {
-  const parts = [`<span>${item.freezeDryBagQty || 0}봉</span>`];
-  if (!isTenderFreezeDryProduction(item)) parts.push(`<span>${item.breadPanQty || 0}빵판</span>`);
-  parts.push(`<span>${item.freezePanQty || 0}동결판</span>`);
+  const parts = [`<span>${escapeHtml(item.freezeDryBagQty || 0)}봉</span>`];
+  if (!isTenderFreezeDryProduction(item)) parts.push(`<span>${escapeHtml(item.breadPanQty || 0)}빵판</span>`);
+  parts.push(`<span>${escapeHtml(item.freezePanQty || 0)}동결판</span>`);
   return parts.join('');
 }
 
@@ -783,13 +785,13 @@ function showDateModal(date) {
   const eventsHtml = events.length === 0
     ? '<div class="cal-modal-empty">등록된 이벤트 없음</div>'
     : events.map(e => `
-        <div class="cal-modal-list-item cal-event-item" data-event-id="${e.id}">
+        <div class="cal-modal-list-item cal-event-item" data-event-id="${escapeHtml(e.id)}">
           <div class="cal-event-row">
             <span class="cal-event-title">📌 ${escapeHtmlMain(e.title || '')}</span>
             ${canEditCalendar ? `
               <span class="cal-event-actions">
-                <button class="cal-event-btn" data-event-act="edit" data-event-id="${e.id}">수정</button>
-                <button class="cal-event-btn cal-event-btn-danger" data-event-act="delete" data-event-id="${e.id}">삭제</button>
+                <button class="cal-event-btn" data-event-act="edit" data-event-id="${escapeHtml(e.id)}">수정</button>
+                <button class="cal-event-btn cal-event-btn-danger" data-event-act="delete" data-event-id="${escapeHtml(e.id)}">삭제</button>
               </span>
             ` : ''}
           </div>
@@ -804,8 +806,8 @@ function showDateModal(date) {
   const productionsHtml = productions.length === 0
     ? '<div class="cal-modal-empty">생산 없음</div>'
     : productions.map(p => {
-        const badge = p.batchNo ? ` <span style="color:#888;">(${p.batchNo}차)</span>`
-                    : (p.round > 1 ? ` <span style="color:#888;">(${p.round}회차)</span>` : '');
+        const badge = p.batchNo ? ` <span style="color:#888;">(${escapeHtml(p.batchNo)}차)</span>`
+                    : (p.round > 1 ? ` <span style="color:#888;">(${escapeHtml(p.round)}회차)</span>` : '');
         return `<div class="cal-modal-list-item">🏭 ${escapeHtmlMain(p.recipeName || '')}${badge}</div>`;
       }).join('');
 
@@ -1159,8 +1161,8 @@ function renderBlockerArea(data = blockingData) {
   (data.items || []).forEach(it => {
     cards.push(`
       <div class="alert-card alert-card-blocker">
-        <span class="alert-card-label">⛔ ${it.reason || it.label}</span>
-        <button class="alert-card-jump" data-jump="${it.jumpMenu}">처리하러 가기 →</button>
+        <span class="alert-card-label">⛔ ${escapeHtml(it.reason || it.label)}</span>
+        <button class="alert-card-jump" data-jump="${escapeHtml(it.jumpMenu)}">처리하러 가기 →</button>
       </div>
     `);
   });
@@ -1252,8 +1254,8 @@ function renderLogRow(log) {
   ].filter(Boolean).join(' ');
 
   const ackBtn = isUnack
-    ? `<button class="log-ack-btn" data-log-act="ack" data-log-id="${log.id}">확인</button>`
-    : `<span class="log-ack-done" title="${log.acknowledgedBy || ''} 확인">✓</span>`;
+    ? `<button class="log-ack-btn" data-log-act="ack" data-log-id="${escapeHtml(log.id)}">확인</button>`
+    : `<span class="log-ack-done" title="${escapeHtml(log.acknowledgedBy || '')} 확인">✓</span>`;
 
   const criticalBadge = isCritical && isUnack ? '<span class="log-critical-badge">⚠️</span>' : '';
   const message = getDisplayLogMessage(log);
@@ -1831,8 +1833,8 @@ function renderModalLogRow(log) {
   ].filter(Boolean).join(' ');
 
   const ackBtn = isUnack
-    ? `<button class="log-ack-btn" data-modal-log-act="ack" data-log-id="${log.id}">확인</button>`
-    : `<span class="log-ack-done" title="${log.acknowledgedBy || ''} 확인">✓ ${escapeHtmlMain(log.acknowledgedBy || '')}</span>`;
+    ? `<button class="log-ack-btn" data-modal-log-act="ack" data-log-id="${escapeHtml(log.id)}">확인</button>`
+    : `<span class="log-ack-done" title="${escapeHtml(log.acknowledgedBy || '')} 확인">✓ ${escapeHtmlMain(log.acknowledgedBy || '')}</span>`;
 
   const criticalBadge = isCritical && isUnack ? '<span class="log-critical-badge">⚠️</span>' : '';
   const message = getDisplayLogMessage(log);
@@ -2071,14 +2073,14 @@ function renderProductionTableCard(p, recipeRows = recipes, canReceive = true) {
 
   // [묶음 4A] batchNo 우선 → 없으면 round → 둘 다 없거나 round==1이면 표시 없음
   const roundBadge = p.batchNo
-    ? ` <span>${p.batchNo}차</span>`
-    : (p.round > 1 ? ` <span>${p.round}회차</span>` : '');
+    ? ` <span>${escapeHtml(p.batchNo)}차</span>`
+    : (p.round > 1 ? ` <span>${escapeHtml(p.round)}회차</span>` : '');
 
   return `
-    <div class="main-production-card${canReceive && (p.category === 'raw' || p.category === 'freezeDry') ? ' receivable' : ''}${p.received ? ' received' : ''}" data-id="${p.id}" style="--recipe-color:${p.color || '#ef7bd0'}">
+    <div class="main-production-card${canReceive && (p.category === 'raw' || p.category === 'freezeDry') ? ' receivable' : ''}${p.received ? ' received' : ''}" data-id="${escapeHtml(p.id)}" style="--recipe-color:${recipeColor(p.color, '#ef7bd0')}">
       ${p.received ? '<div class="main-received-stamp">입고완료</div>' : ''}
       <div class="main-production-card-title">
-        ${p.recipeName}${roundBadge}
+        ${escapeHtml(p.recipeName)}${roundBadge}
       </div>
       <table class="main-ingredient-table">
         <thead>
@@ -2090,21 +2092,21 @@ function renderProductionTableCard(p, recipeRows = recipes, canReceive = true) {
         </thead>
         <tbody>
           <tr class="unit-row">
-            <td>${unitRowName}</td>
+            <td>${escapeHtml(unitRowName)}</td>
             <td>${formatQty(p.productionUnitQty)}</td>
-            <td>${getProductionUnitDisplayUnit(p, recipeRows)}</td>
+            <td>${escapeHtml(getProductionUnitDisplayUnit(p, recipeRows))}</td>
           </tr>
           ${ingredients.map(ing => `
             <tr>
-              <td>${ing.name}</td>
-              <td>${formatIngredientQty(p, ing, recipeRows)}</td>
-              <td>${getIngredientUnit(p, ing, recipeRows)}</td>
+              <td>${escapeHtml(ing.name)}</td>
+              <td>${escapeHtml(formatIngredientQty(p, ing, recipeRows))}</td>
+              <td>${escapeHtml(getIngredientUnit(p, ing, recipeRows))}</td>
             </tr>
           `).join('')}
         </tbody>
       </table>
       <div class="main-production-meta">
-        ${p.category === 'raw' ? `<span>${p.rawBoxQty || 0}박스</span>` : ''}
+        ${p.category === 'raw' ? `<span>${escapeHtml(p.rawBoxQty || 0)}박스</span>` : ''}
         ${p.category === 'freezeDry' ? renderFreezeDryProductionMeta(p) : ''}
         ${p.received ? renderReceivedBadge(p) : ''}
       </div>
@@ -2115,10 +2117,10 @@ function renderProductionTableCard(p, recipeRows = recipes, canReceive = true) {
 function renderReceivedBadge(p) {
   if (p.category === 'freezeDry') {
     const unit = p.receivedFreezeType === 'breadPan' ? '빵판' : '동결판';
-    return `<span class="main-received-badge">✅ 입고완료 ${p.receivedFreezeQty || 0}${unit}</span>`;
+    return `<span class="main-received-badge">✅ 입고완료 ${escapeHtml(p.receivedFreezeQty || 0)}${unit}</span>`;
   }
   const handoff = p.receivedRevision ? inventoryHandoffButton(`productions:${p.id}:${p.receivedRevision}`) : '';
-  return `<span class="main-received-badge">✅ 입고완료 ${p.receivedBox || 0}박스${p.receivedRemainder ? ` +${p.receivedRemainder}낱개` : ''}</span>${handoff}`;
+  return `<span class="main-received-badge">✅ 입고완료 ${escapeHtml(p.receivedBox || 0)}박스${p.receivedRemainder ? ` +${escapeHtml(p.receivedRemainder)}낱개` : ''}</span>${handoff}`;
 }
 
 function showReceiptSummaryModal(targetProductions, dateStr) {
@@ -2153,7 +2155,7 @@ function showReceiptSummaryModal(targetProductions, dateStr) {
       }
       return `
         <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #eee;">
-          <span>${p.recipeName || p.id || '생산'}</span>
+          <span>${escapeHtml(p.recipeName || p.id || '생산')}</span>
           <span style="font-weight:600;">${summary}</span>
         </div>
       `;
@@ -2231,7 +2233,9 @@ async function gateClosedReceiptEdit(dateStr) {
   }
   const reason = await showPromptModal({
     title: '마감된 입고 수량 긴급 수정',
-    message: `${dateStr}는 마감된 날짜입니다. 마감 해제 없이 입고 수량만 고칩니다.<br>재고 스냅샷에는 영향이 없고, 사무 로그에 긴급 수정으로 남습니다.<br>재고앱에 이미 입고 완료된 건이면 재고앱에서 기존 입고와의 차이만 정정 처리해야 합니다.`,
+    message: `${dateStr}는 마감된 날짜입니다. 마감 해제 없이 입고 수량만 고칩니다.
+재고 스냅샷에는 영향이 없고, 사무 로그에 긴급 수정으로 남습니다.
+재고앱에 이미 입고 완료된 건이면 재고앱에서 기존 입고와의 차이만 정정 처리해야 합니다.`,
     label: '사유',
     placeholder: '예: 판수 오입력 정정',
     required: true,
@@ -2295,14 +2299,14 @@ async function openProductReceiptModal(productionId) {
     ? recipe.productionMethods.filter(m => m && m.methodKey && m.active !== false)
     : [];
   const methodOptions = methods.length > 0
-    ? methods.map(m => `<option value="${m.methodKey}" ${p.receivedMethod === m.methodKey ? 'selected' : ''}>${m.label || m.methodKey}</option>`).join('')
+    ? methods.map(m => `<option value="${escapeHtml(m.methodKey)}" ${p.receivedMethod === m.methodKey ? 'selected' : ''}>${escapeHtml(m.label || m.methodKey)}</option>`).join('')
     : '<option value="">방식 없음</option>';
 
   document.getElementById('productReceiptModal')?.remove();
   document.body.insertAdjacentHTML('beforeend', `
     <div class="modal-overlay" id="productReceiptModal">
       <div class="modal-box" style="width:420px;">
-        <h3 class="modal-title">제품 입고 — ${p.recipeName}</h3>
+        <h3 class="modal-title">제품 입고 — ${escapeHtml(p.recipeName)}</h3>
         <p style="font-size:12px;color:#888;margin:0 0 12px;">판당 팩수 ${packsPerPlate}팩/판${hasOverride ? ' (레시피 지정)' : ''} · 1박스 = 20팩</p>
         <div class="form-group" style="margin-bottom:10px;">
           <label style="display:block;font-size:12px;color:#555;margin-bottom:4px;">생산방식 (기록용)</label>
@@ -2311,11 +2315,11 @@ async function openProductReceiptModal(productionId) {
         <div style="display:flex;gap:8px;margin-bottom:10px;">
           <div class="form-group" style="flex:1;">
             <label style="display:block;font-size:12px;color:#555;margin-bottom:4px;">판수 *</label>
-            <input type="number" id="pr_plates" min="0" step="1" value="${p.receivedPlates ?? ''}" placeholder="판수" style="width:100%;padding:8px;border:1px solid #d0d0d0;border-radius:4px;box-sizing:border-box;" />
+            <input type="number" id="pr_plates" min="0" step="1" value="${escapeHtml(p.receivedPlates ?? '')}" placeholder="판수" style="width:100%;padding:8px;border:1px solid #d0d0d0;border-radius:4px;box-sizing:border-box;" />
           </div>
           <div class="form-group" style="flex:1;">
             <label style="display:block;font-size:12px;color:#555;margin-bottom:4px;">낱개(자투리 팩)</label>
-            <input type="number" id="pr_loose" min="0" step="1" value="${p.receivedLoosePacks ?? 0}" style="width:100%;padding:8px;border:1px solid #d0d0d0;border-radius:4px;box-sizing:border-box;" />
+            <input type="number" id="pr_loose" min="0" step="1" value="${escapeHtml(p.receivedLoosePacks ?? 0)}" style="width:100%;padding:8px;border:1px solid #d0d0d0;border-radius:4px;box-sizing:border-box;" />
           </div>
         </div>
         <div id="pr_result" style="font-size:13px;color:#1a1a1a;background:#f5f7f5;border-radius:6px;padding:10px;margin-bottom:14px;">판수를 입력하세요.</div>
@@ -2382,7 +2386,7 @@ async function loadReceiptStaffOptions(groups = ['senior', 'office']) {
     const snap = await getDoc(doc(db, 'staffGroups', key));
     if (!snap.exists()) continue;
     (snap.data().members || []).forEach(member => {
-      if (member?.name) options.push(`<option value="${member.name}">${member.name}</option>`);
+      if (member?.name) options.push(`<option value="${escapeHtml(member.name)}">${escapeHtml(member.name)}</option>`);
     });
   }
   return options.join('');
@@ -2427,7 +2431,7 @@ async function openFreezeDryReceiptModal(productionId) {
   document.body.insertAdjacentHTML('beforeend', `
     <div class="modal-overlay" id="freezeDryReceiptModal">
       <div class="modal-box" style="width:420px;">
-        <h3 class="modal-title">동결건조 입고 — ${productName}</h3>
+        <h3 class="modal-title">동결건조 입고 — ${escapeHtml(productName)}</h3>
         <p style="font-size:12px;color:#888;margin:0 0 12px;">${isTender ? '분리작업 불필요 → 동결판 재고 입고' : '분리작업 필요 → 빵판 재고 입고'}</p>
         <div class="form-group" style="margin-bottom:10px;">
           <label style="display:block;font-size:12px;color:#555;margin-bottom:4px;">${unitLabel} 수량 *</label>
@@ -2559,6 +2563,7 @@ async function adjustExistingFreezeDryReceipt({ p, productName, qty, staffName, 
 
   batch.update(doc(db, 'productions', p.id), {
     receivedFreezeQty: qty,
+    mutationToken: newProductionWriteToken(),
     receivedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -2609,6 +2614,7 @@ async function saveBreadPanFreezeDryReceipt({ p, productName, qty, staffName }) 
   batch.update(doc(db, 'productions', p.id), {
     received: true,
     receivedFreezeType: 'breadPan',
+    mutationToken: newProductionWriteToken(),
     receivedFreezeQty: qty,
     receivedLotId: lotRef.id,
     receivedAt: serverTimestamp(),
@@ -2678,6 +2684,7 @@ async function saveTenderFreezeDryReceipt({ p, productName, qty, staffName }) {
   batch.update(doc(db, 'productions', p.id), {
     received: true,
     receivedFreezeType: 'frozenPan',
+    mutationToken: newProductionWriteToken(),
     receivedFreezeQty: qty,
     receivedLotId: lotRef.id,
     receivedAt: serverTimestamp(),
@@ -2773,8 +2780,8 @@ function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
     const qty = formatIngredientQtyValue(grp.totalG, grp.unit);
     return `
     <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #f5f5f5;">
-      <span>${grp.name}</span>
-      <span style="font-weight:600;">${qty} ${grp.unit}</span>
+      <span>${escapeHtml(grp.name)}</span>
+      <span style="font-weight:600;">${qty} ${escapeHtml(grp.unit)}</span>
     </div>
   `;
   }).join('');
@@ -2850,8 +2857,8 @@ function renderQuickInfo(isCompleted) {
   blockingData.items.forEach(it => {
     cards.push(`
       <div class="alert-card alert-card-blocker">
-        <span class="alert-card-label">⛔ ${it.reason || it.label}</span>
-        <button class="alert-card-jump" data-jump="${it.jumpMenu}">처리하러 가기 →</button>
+        <span class="alert-card-label">⛔ ${escapeHtml(it.reason || it.label)}</span>
+        <button class="alert-card-jump" data-jump="${escapeHtml(it.jumpMenu)}">처리하러 가기 →</button>
       </div>
     `);
   });
@@ -2923,7 +2930,7 @@ async function handleTomorrowLoad(runDate) {
       <label>담당자 *</label>
       <select id="m_staff">
         <option value="">선택</option>
-        ${members.map(m => `<option value="${m.name}">${m.name}</option>`).join('')}
+        ${members.map(m => `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`).join('')}
       </select>
     </div>
     <div class="modal-actions">
@@ -3097,7 +3104,7 @@ function showTomorrowLoadBlockersModal(blockers) {
       <div class="tload-blocker-row">
         <span class="tload-blocker-num">${number}</span>
         <span class="tload-blocker-text">${escapeHtmlMain(b.text)}</span>
-        <button class="tload-blocker-jump" data-jump="${b.jumpMenu}">처리하러 →</button>
+        <button class="tload-blocker-jump" data-jump="${escapeHtml(b.jumpMenu)}">처리하러 →</button>
       </div>
     `;
   }).join('');
@@ -3267,7 +3274,7 @@ async function handleRefreshCompletion() {
         <label>담당자 *</label>
         <select id="m_refresh_staff">
           <option value="">선택</option>
-          ${members.map(m => `<option value="${m.name}">${m.name}</option>`).join('')}
+          ${members.map(m => `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`).join('')}
         </select>
       </div>
       <div class="modal-actions">

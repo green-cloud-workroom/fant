@@ -8,9 +8,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:performance": "node --experimental-vm-modules --test tests/performance.test.mjs",
+    "test:security-output": "node --experimental-vm-modules --test tests/xssOutput.test.mjs tests/settingsBagXss.test.mjs tests/meatXss.test.mjs tests/eggXss.test.mjs tests/frozenProductXss.test.mjs tests/frozenPanXss.test.mjs tests/panSummaryKeys.test.mjs tests/closingSnapshot.test.mjs",
     "test:stats": "node --experimental-vm-modules --test --test-isolation=none tests/statsCorrections.test.mjs tests/statsLogic.test.mjs tests/statsPage.test.mjs tests/statsReadpath.test.mjs",
+    "test:stats-automation": "node --experimental-vm-modules --test --test-isolation=none tests/statsAutomation.test.mjs tests/statsAutomationPreview.test.mjs tests/statsAutomationBackend.test.mjs",
     "preview:performance": "node scripts/previewPerformance.mjs",
-    "test:readpath": "node --experimental-vm-modules --test tests/readpath.test.mjs tests/performance.test.mjs tests/perfMetrics.test.mjs tests/readpathRelease.test.mjs tests/summaryContract.test.mjs tests/pageResources.test.mjs tests/recipeCommands.test.mjs tests/statsReadpath.test.mjs tests/supplementCommands.test.mjs tests/eggCommands.test.mjs tests/eggHistory.test.mjs tests/bagHistory.test.mjs tests/stockMenuCommands.test.mjs tests/formDraft.test.mjs tests/remainingMenus.test.mjs tests/menuGolden.test.mjs tests/menuFailure.test.mjs tests/instantPages.test.mjs tests/meatHistory.test.mjs tests/scheduleButtons.test.mjs tests/mainReceipt.test.mjs tests/receiptBoundary.test.mjs tests/receiptRulesPatch.test.mjs",
+    "test:readpath": "node --experimental-vm-modules --test tests/readpath.test.mjs tests/performance.test.mjs tests/perfMetrics.test.mjs tests/readpathRelease.test.mjs tests/summaryContract.test.mjs tests/pageResources.test.mjs tests/recipeCommands.test.mjs tests/statsReadpath.test.mjs tests/supplementCommands.test.mjs tests/eggCommands.test.mjs tests/eggHistory.test.mjs tests/bagHistory.test.mjs tests/stockMenuCommands.test.mjs tests/formDraft.test.mjs tests/remainingMenus.test.mjs tests/menuGolden.test.mjs tests/menuFailure.test.mjs tests/instantPages.test.mjs tests/meatHistory.test.mjs tests/scheduleButtons.test.mjs tests/mainReceipt.test.mjs tests/receiptRulesPatch.test.mjs",
     "perf:measure": "node --experimental-vm-modules scripts/measureReadpath.mjs",
     "test:readpath:integration": "node scripts/runReadpathEmulator.mjs",
     "release:prepare": "node scripts/deployReadpathRelease.mjs --prepare",
@@ -18,13 +20,9 @@
     "deploy": "node scripts/deployReadpathRelease.mjs",
     "backup:prewipe": "node scripts/backupFirestorePreWipe.mjs",
     "wipe:dry-run": "node scripts/wipeFirestoreOperationalData.mjs --dry-run",
-    "wipe:execute": "node scripts/wipeFirestoreOperationalData.mjs --execute",
     "wipe:dry-run:admin": "node scripts/wipeFirestoreOperationalDataAdmin.mjs --dry-run",
-    "wipe:execute:admin": "node scripts/wipeFirestoreOperationalDataAdmin.mjs --execute",
     "seed-cleanup:dry": "node scripts/seedCleanup.mjs",
-    "seed-cleanup:execute": "node scripts/seedCleanup.mjs --execute",
     "seed-data-input:dry": "node scripts/seedDataInput.mjs",
-    "seed-data-input:execute": "node scripts/seedDataInput.mjs --execute",
     "claims:dry-run": "node scripts/setCustomClaims.mjs",
     "claims:execute": "node scripts/setCustomClaims.mjs --execute",
     "claims:backup": "node scripts/claimsBackupRestore.mjs --backup",
@@ -34,7 +32,8 @@
     "fix:supplement-names:dry": "node scripts/fixSupplementNames.mjs",
     "fix:supplement-names:execute": "node scripts/fixSupplementNames.mjs --execute",
     "perf:menus": "node --experimental-vm-modules scripts/measureMenus.mjs",
-    "test:stats-automation": "node --experimental-vm-modules --test --test-isolation=none tests/statsAutomation.test.mjs tests/statsAutomationPreview.test.mjs tests/statsAutomationBackend.test.mjs"
+    "test:maintenance-safety": "node --experimental-vm-modules --test tests/legacyMaintenanceSafety.test.mjs",
+    "test:release-safety": "node --test tests/verifiedPagesPublisher.test.mjs"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.2",
@@ -47,6 +46,6 @@
     "chart.js": "^4.5.1",
     "firebase": "^12.12.1",
     "sortablejs": "^1.15.7",
-    "xlsx": "^0.18.5"
+    "xlsx": "file:vendor/xlsx-0.20.3.tgz"
   }
 }

@@ -1,3 +1,4 @@
+import { escapeHtml } from '../utils/html.js';
 import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
 import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
@@ -71,7 +72,7 @@ function renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPan
   rows = rows.filter(r => r.type !== 'work');
 
   // 동결판 제품별 lot 집계 (source 포함)
-  const lotSummary = {};
+  const lotSummary = Object.create(null);
   lots.forEach(l => {
     if (!lotSummary[l.productName]) lotSummary[l.productName] = [];
     lotSummary[l.productName].push({
@@ -82,7 +83,7 @@ function renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPan
   });
 
   // 빵판 제품별 lot 집계
-  const breadLotSummary = {};
+  const breadLotSummary = Object.create(null);
   breadPanLots.forEach(l => {
     if (!breadLotSummary[l.productName]) breadLotSummary[l.productName] = [];
     breadLotSummary[l.productName].push({ date: l.date, remaining: l.remaining });
@@ -195,10 +196,10 @@ function renderBreadPanTab(breadLotSummary, breadPanLogs) {
         <div class="stat-row">
           ${lotEntries.map(([name, lotList]) => `
             <div class="stat-item">
-              <span class="stat-label">${name}</span>
+              <span class="stat-label">${escapeHtml(name)}</span>
               <div>
                 ${lotList.sort((a,b) => a.date.localeCompare(b.date)).map(l => `
-                  <div style="font-size:12px;color:#555">${round2(l.remaining)}개 <span style="color:#aaa">(${l.date})</span></div>
+                  <div style="font-size:12px;color:#555">${round2(l.remaining)}개 <span style="color:#aaa">(${escapeHtml(l.date)})</span></div>
                 `).join('')}
               </div>
             </div>
@@ -260,17 +261,17 @@ function renderBreadPanLogRow(log) {
 
   // 제품명 옆에 차감/조정 대상 lot 입고일 표시 (입고 자기 자신은 제외)
   const lotDateLabel = (log.lotDate && log.type !== 'incoming')
-    ? `<span style="font-size:11px;color:#999;margin-left:4px;">(입고 ${log.lotDate})</span>`
+    ? `<span style="font-size:11px;color:#999;margin-left:4px;">(입고 ${escapeHtml(log.lotDate)})</span>`
     : '';
 
   return `
     <tr>
-      <td>${log.date || '-'}</td>
-      <td><span class="tag ${typeColor}" style="${log.type === 'preprocess' ? 'background:#f0f0f0;color:#666' : ''}">${typeLabel}</span></td>
-      <td>${log.productName || '-'}${lotDateLabel}</td>
-      <td style="color:${qtyColor};font-weight:500;">${qtySign}${log.qty || 0}개</td>
-      <td>${log.staffName || '-'}</td>
-      <td style="font-size:12px;color:#666;">${noteText}</td>
+      <td>${escapeHtml(log.date || '-')}</td>
+      <td><span class="tag ${typeColor}" style="${log.type === 'preprocess' ? 'background:#f0f0f0;color:#666' : ''}">${escapeHtml(typeLabel)}</span></td>
+      <td>${escapeHtml(log.productName || '-')}${lotDateLabel}</td>
+      <td style="color:${qtyColor};font-weight:500;">${qtySign}${escapeHtml(log.qty || 0)}개</td>
+      <td>${escapeHtml(log.staffName || '-')}</td>
+      <td style="font-size:12px;color:#666;">${escapeHtml(noteText)}</td>
     </tr>
   `;
 }
@@ -292,10 +293,10 @@ function renderFrozenPanTab(rows, lotSummary, frozenPanLogs) {
         <div class="stat-row">
           ${lotEntries.map(([name, lotList]) => `
             <div class="stat-item">
-              <span class="stat-label">${name}</span>
+              <span class="stat-label">${escapeHtml(name)}</span>
               <div>
                 ${lotList.sort((a,b) => a.date.localeCompare(b.date)).map(l => `
-                  <div style="font-size:12px;color:#555">${l.remaining}판 <span style="color:#aaa">(${l.date})</span>${getSourceBadge(l.source)}</div>
+                  <div style="font-size:12px;color:#555">${escapeHtml(l.remaining)}판 <span style="color:#aaa">(${escapeHtml(l.date)})</span>${getSourceBadge(l.source)}</div>
                 `).join('')}
               </div>
             </div>
@@ -378,12 +379,12 @@ function renderFrozenPanLogRow(log) {
 
   return `
     <tr>
-      <td>${log.date || '-'}</td>
-      <td><span class="tag ${typeColor}" style="${log.type === 'orderDeduct' ? 'background:#f0f0f0;color:#666' : ''}">${typeLabel}</span></td>
-      <td>${log.productName || '-'}</td>
-      <td style="color:${qtyColor};font-weight:500;">${qtySign}${log.qty || 0}판</td>
-      <td>${log.staffName || '-'}</td>
-      <td style="font-size:12px;color:#666;">${noteText}</td>
+      <td>${escapeHtml(log.date || '-')}</td>
+      <td><span class="tag ${typeColor}" style="${log.type === 'orderDeduct' ? 'background:#f0f0f0;color:#666' : ''}">${escapeHtml(typeLabel)}</span></td>
+      <td>${escapeHtml(log.productName || '-')}</td>
+      <td style="color:${qtyColor};font-weight:500;">${qtySign}${escapeHtml(log.qty || 0)}판</td>
+      <td>${escapeHtml(log.staffName || '-')}</td>
+      <td style="font-size:12px;color:#666;">${escapeHtml(noteText)}</td>
     </tr>
   `;
 }
@@ -475,7 +476,7 @@ function showTenderInModal() {
         <label>제품 *</label>
         <select id="m_recipe">
           <option value="">선택</option>
-          ${tenderRecipes.map(r => `<option value="${r.displayName}">${r.displayName}</option>`).join('')}
+          ${tenderRecipes.map(r => `<option value="${escapeHtml(r.displayName)}">${escapeHtml(r.displayName)}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">
@@ -615,7 +616,7 @@ function showBreadPanIncomingModal() {
         <label>레시피 *</label>
         <select id="m_recipe">
           <option value="">선택</option>
-          ${breadPanRecipes.map(r => `<option value="${r.displayName}">${r.displayName}</option>`).join('')}
+          ${breadPanRecipes.map(r => `<option value="${escapeHtml(r.displayName)}">${escapeHtml(r.displayName)}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">
@@ -698,7 +699,7 @@ async function showBreadPanAdjustModal() {
       if (nameDiff !== 0) return nameDiff;
       return a.date.localeCompare(b.date);
     })
-    .map(l => `<option value="${l.id}">${l.productName} / ${l.date} / 잔량 ${l.remaining}개</option>`)
+    .map(l => `<option value="${escapeHtml(l.id)}">${escapeHtml(l.productName)} / ${escapeHtml(l.date)} / 잔량 ${escapeHtml(l.remaining)}개</option>`)
     .join('');
 
   showModal(`
@@ -807,7 +808,7 @@ async function showFrozenPanAdjustModal() {
       if (nameDiff !== 0) return nameDiff;
       return a.date.localeCompare(b.date);
     })
-    .map(l => `<option value="${l.id}">${l.productName} / ${l.date} / 잔량 ${l.remaining}개</option>`)
+    .map(l => `<option value="${escapeHtml(l.id)}">${escapeHtml(l.productName)} / ${escapeHtml(l.date)} / 잔량 ${escapeHtml(l.remaining)}개</option>`)
     .join('');
 
   showModal(`
@@ -905,27 +906,27 @@ function renderPanRow(r) {
   const total = (r.items || []).reduce((sum, i) => sum + (i.orderPanQty || 0), 0);
   const color = total === 45 ? '#2d7a3a' : total > 45 ? '#e53e3e' : '#e67e22';
   const contentHtml = `
-    ${(r.items || []).map(i => `<span style="font-size:11px;margin-right:8px">${i.productName}: ${i.orderPanQty}판</span>`).join('')}
-    <span style="font-weight:600;color:${color}">총 ${total}판</span>
+    ${(r.items || []).map(i => `<span style="font-size:11px;margin-right:8px">${escapeHtml(i.productName)}: ${escapeHtml(i.orderPanQty)}판</span>`).join('')}
+    <span style="font-weight:600;color:${color}">총 ${escapeHtml(total)}판</span>
   `;
 
   let actionHtml = '';
   if (!isConfirmed) {
     actionHtml = `
-      <button class="btn-primary btn-order-confirm" data-id="${r.id}" style="font-size:11px;padding:3px 10px;">발주 확인</button>
-      <button class="btn-del-row btn-order-delete" data-id="${r.id}">삭제</button>
+      <button class="btn-primary btn-order-confirm" data-id="${escapeHtml(r.id)}" style="font-size:11px;padding:3px 10px;">발주 확인</button>
+      <button class="btn-del-row btn-order-delete" data-id="${escapeHtml(r.id)}">삭제</button>
     `;
   } else {
     actionHtml = canCancelOrder
-      ? `<button class="btn-secondary btn-order-cancel" data-id="${r.id}" style="font-size:11px;padding:3px 10px;">발주 취소</button>`
+      ? `<button class="btn-secondary btn-order-cancel" data-id="${escapeHtml(r.id)}" style="font-size:11px;padding:3px 10px;">발주 취소</button>`
       : '';
   }
 
   return `
     <tr style="background:#fffdf0">
-      <td>${r.date}</td>
+      <td>${escapeHtml(r.date)}</td>
       <td><span class="tag tag-cat">발주</span></td>
-      <td>${r.staffName || '-'}</td>
+      <td>${escapeHtml(r.staffName || '-')}</td>
       <td>${contentHtml}</td>
       <td>
         ${isConfirmed ? '<span style="color:#2d7a3a;font-size:12px">✅ 확인완료</span>' :
@@ -949,7 +950,7 @@ async function showWorkRowModal(rows, lots) {
   }
 
   // 제품별 잔량 합계 + 가장 오래된 lot의 잔량 (default 채울 용)
-  const productSummary = {};
+  const productSummary = Object.create(null);
   breadPanRecipes.forEach(r => {
     const productLots = allBreadLots
       .filter(l => l.productName === r.displayName && l.remaining > 0.005)
@@ -1211,7 +1212,7 @@ async function handleWorkRowSave() {
 
 function renderWorkItemRow(breadPanRecipes, productSummary) {
   const recipeOptions = breadPanRecipes
-    .map(r => `<option value="${r.displayName}">${r.displayName}</option>`)
+    .map(r => `<option value="${escapeHtml(r.displayName)}">${escapeHtml(r.displayName)}</option>`)
     .join('');
 
   return `
@@ -1578,8 +1579,8 @@ async function showStaffPickerModal({ title, message, groups, requireReason=fals
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="modal-box" style="max-width:400px;padding:24px;">
-        <h3 style="margin:0 0 12px 0;font-size:18px;font-weight:600;">${title}</h3>
-        <p style="font-size:13px;color:#666;margin:0 0 20px 0;">${message}</p>
+        <h3 style="margin:0 0 12px 0;font-size:18px;font-weight:600;">${escapeHtml(title)}</h3>
+        <p style="font-size:13px;color:#666;margin:0 0 20px 0;">${escapeHtml(message)}</p>
         <div style="margin-bottom:20px;">
           <label style="display:block;font-size:13px;font-weight:500;color:#333;margin-bottom:8px;">담당자 *</label>
           <select id="sp_staff" style="width:100%;padding:8px 10px;border:1px solid #e0e0e0;border-radius:6px;font-size:14px;">
@@ -1626,7 +1627,7 @@ function getStaffOptions(groups) {
   for (const g of groups) {
     const members = staffCache[g] || [];
     members.forEach(m => {
-      options += `<option value="${m.name}">${m.name}</option>`;
+      options += `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
     });
   }
   return options;

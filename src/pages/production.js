@@ -1,3 +1,4 @@
+import { escapeHtml, recipeColor } from '../utils/html.js';
 import {showStatus} from '../utils/statusToast.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
@@ -8,13 +9,17 @@ import { getTodayKST as getToday, getHolidayInfo, getHolidayInfoCache } from '..
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUser, currentUserRole } from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
-import { makeSupplementId } from '../utils/supplement.js';
 import { formatIngredientQtyValue, round2 } from '../utils/number.js';
 import { buildChickenOrderText } from '../utils/orderCopy.js';
 import Sortable from '../utils/sortable.js';
 import {pageResource} from '../state/pageResources.js';
 import {withReadWorkflow} from '../services/readCommand.js';
 import {commandWrites} from '../services/commandWrites.js';
+import {fingerprint} from '../services/actionGateway.js';
+import {newProductionWriteToken} from '../utils/productionWriteToken.js';
+import {runProductionOrderTransaction,productionOrderView,anchorRevision} from '../services/productionOrderTransaction.js';
+import {refundEvidenceFingerprint} from '../utils/refundEvidence.js';
+import {readSupplementReservation} from '../services/productionSupplementReservation.js';
 import {pageRefresh} from '../utils/pageRefresh.js';
 import {getPageContext,registerPageCleanup} from '../utils/pageLifecycle.js';
 import {canLeavePage,markFieldsSaved} from '../utils/formDraft.js';
@@ -144,46 +149,80 @@ function getSupplementSaveErrorMessage(code, supplementName) {
   if (code === 'STOCK_INSUFFICIENT') {
     return `${supplementName || '영양제'} 재고가 부족합니다. 영양제 재고를 먼저 입고해주세요.`;
   }
+  if (code === 'STOCK_INVALID') {
+    return `${supplementName || '영양제'} 재고 수량이 비정상입니다. 관리자에게 확인해주세요.`;
+  }
   return '저장 중 오류가 발생했습니다. 다시 시도해주세요.';
 }
 
-function getSupplementTypeError(code, supplementName) {
-  const err = new Error(code);
-  if (supplementName) err.supplementName = supplementName;
-  return err;
+function productionValidationError(message) {
+  const error = new Error(message);
+  error.code = 'production-validation';
+  return error;
 }
 
-async function calculateSupplementRefunds(productionId,scope={getDocs}) {
-  const {getDocs}=scope;
-  const logQuery = query(
-    collection(db, 'supplementLogs'),
-    where('relatedProductionId', '==', productionId)
-  );
-  const snap = await getDocs(logQuery);
-  const skuNet = new Map();
+// Recheck the source inside every SDK attempt. Preflight checks outside the
+// transaction cannot protect a retry from refunding or overwriting it twice.
+async function assertProductionUnchanged(transaction, baseline, recipe = null) {
+  if (!baseline?.id || !/^\d{4}-\d{2}-\d{2}$/.test(baseline.date || '')) {
+    throw productionValidationError('생산 원본을 확인할 수 없습니다. 최신 자료를 다시 불러와주세요.');
+  }
+  const source = await transaction.get(doc(db, 'productions', baseline.id));
+  if (!source.exists() || ['deleted', 'cancelled'].includes(source.data().status)
+    || fingerprint({ id: source.id, ...source.data() }) !== fingerprint(baseline)) {
+    throw productionValidationError('다른 작업으로 생산 원본이 변경되었습니다. 입력을 보존한 뒤 최신 자료를 다시 불러와주세요.');
+  }
+  const closing = await transaction.get(doc(db, 'closings', baseline.date));
+  if (closing.exists() && closing.data().status === 'closed') {
+    throw productionValidationError(`${baseline.date}는 이미 마감된 날짜입니다. 수정하려면 마감해제하세요.`);
+  }
+  if (recipe) {
+    const current = await transaction.get(doc(db, 'recipes', recipe.id));
+    if (!current.exists() || fingerprint({ id: current.id, ...current.data() }) !== fingerprint(recipe)) {
+      throw productionValidationError('레시피가 변경되었습니다. 입력을 보존한 뒤 최신 자료를 다시 불러와주세요.');
+    }
+  }
+  return newProductionWriteToken();
+}
 
-  snap.docs.forEach(logDoc => {
-    const data = logDoc.data();
+function calculateSupplementRefundsFromRows(rows) {
+  const skuNet = new Map();
+  rows.forEach(({data}) => {
     if (data.type !== 'autoDeduct') return;
     const supplementTypeId = data.supplementTypeId;
-    if (!supplementTypeId) return;
-    const nextQty = (skuNet.get(supplementTypeId) || 0) + Number(data.qty || 0);
+    const quantity = data.qty;
+    if (!supplementTypeId || !Number.isSafeInteger(quantity)) throw new Error('INVALID_SUPPLEMENT_LOG_STATE');
+    const nextQty = (skuNet.get(supplementTypeId) || 0) + quantity;
+    if (!Number.isSafeInteger(nextQty)) throw new Error('INVALID_SUPPLEMENT_LOG_STATE');
     skuNet.set(supplementTypeId, nextQty);
   });
 
   const refunds = [];
   for (const [supplementTypeId, netQty] of skuNet.entries()) {
-    if (netQty > 0) {
-      const err = new Error('INVALID_SUPPLEMENT_LOG_STATE');
-      err.supplementTypeId = supplementTypeId;
-      err.netQty = netQty;
-      throw err;
-    }
-    if (netQty < 0) {
-      refunds.push({ supplementTypeId, qty: -netQty });
-    }
+    if (netQty > 0) throw new Error('INVALID_SUPPLEMENT_LOG_STATE');
+    if (netQty < 0) refunds.push({supplementTypeId,qty:-netQty});
   }
-  return refunds;
+  return refunds.sort((a,b)=>a.supplementTypeId.localeCompare(b.supplementTypeId));
+}
+
+async function captureSupplementRefunds(productionId,date,scope={getDocs,getDoc}) {
+  const anchorRef=doc(db,'productionOrderDays',date);
+  const before=await scope.getDoc(anchorRef);
+  const expectedRevision=anchorRevision(before,date);
+  const logQuery = query(
+    collection(db, 'supplementLogs'),
+    where('relatedProductionId', '==', productionId)
+  );
+  const snap = await scope.getDocs(logQuery);
+  const after=await scope.getDoc(anchorRef);
+  if(before.exists()!==after.exists() || anchorRevision(after,date)!==expectedRevision) {
+    throw productionValidationError('영양제 환급 근거가 변경되었습니다. 최신 자료를 다시 불러와주세요.');
+  }
+  if (snap.docs.length > 200) throw new Error('INVALID_SUPPLEMENT_LOG_STATE');
+  const rows=snap.docs.map(logDoc=>({id:logDoc.id,data:logDoc.data()}));
+  if(new Set(rows.map(row=>row.id)).size!==rows.length)throw new Error('INVALID_SUPPLEMENT_LOG_STATE');
+  return {expectedRevision,evidence:rows.map(row=>({id:row.id,fingerprint:refundEvidenceFingerprint(row.id,row.data)})),
+    previewRefunds:calculateSupplementRefundsFromRows(rows)};
 }
 
 export async function renderProduction({force=false}={}) {
@@ -204,6 +243,15 @@ async function loadRecipes(scope={getDocs}) {
   return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.active !== false);
 }
 
+function compareProductionOrder(a, b) {
+  const rank = value => value === null ? 0 : typeof value === 'number' && Number.isFinite(value) ? 1 : 2;
+  const leftRank = rank(a.sortOrder), rightRank = rank(b.sortOrder);
+  if (leftRank !== rightRank) return leftRank - rightRank;
+  if (leftRank === 1 && a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+  const left = String(a.id ?? ''), right = String(b.id ?? '');
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 async function loadProductions(date,scope={getDocs}) {
   // Date equality needs no new composite index. Keep the former orderBy's
   // exclusion of missing sortOrder fields and sort only this day's cards.
@@ -212,19 +260,14 @@ async function loadProductions(date,scope={getDocs}) {
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .filter(p => p.status !== 'deleted' && p.sortOrder !== undefined)
-    .sort((a, b) => {
-      if (a.sortOrder === b.sortOrder) return 0;
-      if (a.sortOrder === null) return -1;
-      if (b.sortOrder === null) return 1;
-      return a.sortOrder - b.sortOrder;
-    });
+    .sort(compareProductionOrder);
 }
 
 // [묶음 4A] 회차/차수 재계산 (B안: round + batchNo 둘 다 DB 저장)
 // - round: 같은 레시피의 sortOrder 순 등록 순번 (1부터)
 // - batchNo: 동일 레시피 + 동일 productionUnitQty 묶음의 순번 (2건 이상일 때만 부여, 아니면 null)
 function recalcRoundsAndBatches(list) {
-  const sorted = [...list].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  const sorted = [...list].sort(compareProductionOrder);
   const byRecipe = {};
   sorted.forEach(p => {
     if (!byRecipe[p.recipeId]) byRecipe[p.recipeId] = [];
@@ -249,22 +292,11 @@ function recalcRoundsAndBatches(list) {
   return updates;
 }
 
-async function applyRoundsAndBatches(date,command) {
-  let rows=await loadProductions(date,command);
-  const updates=recalcRoundsAndBatches(rows);
-  if(updates.length){
-    const batch=commandWrites(command).writeBatch(db);
-    updates.forEach(u=>batch.update(doc(db,'productions',u.id),{round:u.round,batchNo:u.batchNo}));
-    await batch.commit();rows=await loadProductions(date,command);
-  }
-  if(command.isCurrent()&&date===selectedDate)productions=rows;
-}
-
 // [묶음 4A] 회차/차수 표시 헬퍼
 // - batchNo 있으면 "1차" / 없고 round>1이면 "1회차" / round==1 + batchNo null이면 표시 없음
 function getRoundBadgeHtml(p) {
-  if (p.batchNo) return ` <span style="font-size:10px;color:#aaa">${p.batchNo}차</span>`;
-  if (p.round > 1) return ` <span style="font-size:10px;color:#aaa">${p.round}회차</span>`;
+  if (p.batchNo) return ` <span style="font-size:10px;color:#aaa">${escapeHtml(p.batchNo)}차</span>`;
+  if (p.round > 1) return ` <span style="font-size:10px;color:#aaa">${escapeHtml(p.round)}회차</span>`;
   return '';
 }
 
@@ -276,7 +308,7 @@ function renderProductionLayout() {
       <!-- 왼쪽 3/4 -->
       <div class="production-left">
         <div class="production-date-bar">
-          <input type="date" id="productionDate" value="${selectedDate}" />
+          <input type="date" id="productionDate" value="${escapeHtml(selectedDate)}" />
           <span id="holidayBadge">${renderHolidayBadge(selectedDate)}</span>
           <span id="holidayMonthList">${renderHolidaysOfMonth(selectedDate)}</span>
           <button class="btn-secondary" id="btnBigView" style="margin-left:auto;">크게보기</button>
@@ -332,7 +364,7 @@ function handleCopyOrder() {
 
   showModal(`
     <h3 class="modal-title">발주 복사</h3>
-    <textarea id="orderSheetText" style="width:100%;height:100px;font-size:13px;padding:12px;border:1px solid #e0e0e0;border-radius:6px;font-family:'Noto Sans KR',sans-serif;resize:none;">${sheet}</textarea>
+    <textarea id="orderSheetText" style="width:100%;height:100px;font-size:13px;padding:12px;border:1px solid #e0e0e0;border-radius:6px;font-family:'Noto Sans KR',sans-serif;resize:none;">${escapeHtml(sheet)}</textarea>
     <div class="form-group" style="margin-top:10px;">
       <label style="font-size:12px;color:#555;display:block;margin-bottom:4px;">비고</label>
       <input type="text" id="orderSheetNote" placeholder="입력 시 끝줄에 자동 추가됩니다 (비어 있으면 생략)"
@@ -404,14 +436,14 @@ function renderProductionCards() {
   }
   return productions.map(p => `
     <div class="production-card ${selectedProductionId === p.id ? 'active' : ''}"
-         data-id="${p.id}"
-         style="border-left:4px solid ${p.color || '#4A7C59'}">
+         data-id="${escapeHtml(p.id)}"
+         style="border-left:4px solid ${recipeColor(p.color)}">
       ${canManageProduction ? '<span class="drag-handle production-card-drag-handle">≡</span>' : ''}
-      <div class="card-title">${p.recipeName}${getRoundBadgeHtml(p)}</div>
-      <div class="card-info">${p.productionUnitQty} ${getProductionCardUnitName(p)}</div>
-      ${p.category === 'raw' ? `<div class="card-sub">${p.rawBoxQty || 0}박스</div>` : ''}
-      ${p.category === 'freezeDry' ? `<div class="card-sub">${renderFreezeDryQtyLine(p)}</div>` : ''}
-      ${canManageProduction ? `<button class="card-del" data-id="${p.id}">✕</button>` : ''}
+      <div class="card-title">${escapeHtml(p.recipeName)}${getRoundBadgeHtml(p)}</div>
+      <div class="card-info">${escapeHtml(p.productionUnitQty)} ${escapeHtml(getProductionCardUnitName(p))}</div>
+      ${p.category === 'raw' ? `<div class="card-sub">${escapeHtml(p.rawBoxQty || 0)}박스</div>` : ''}
+      ${p.category === 'freezeDry' ? `<div class="card-sub">${escapeHtml(renderFreezeDryQtyLine(p))}</div>` : ''}
+      ${canManageProduction ? `<button class="card-del" data-id="${escapeHtml(p.id)}">✕</button>` : ''}
     </div>
   `).join('');
 }
@@ -446,7 +478,6 @@ function bindCardEvents() {
   document.querySelectorAll('.card-del').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();return runProductionCommand(async command=>{
-      const {runTransaction}=commandWrites(command);
       if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
         alert('생산 카드 삭제는 대표/사무실 계정만 가능합니다.');
         return;
@@ -455,9 +486,9 @@ function bindCardEvents() {
       if (await blockIfClosed(selectedDate,command)) return;
       const deletedId = btn.dataset.id;
       const targetProduction = productions.find(p => p.id === deletedId);
-      let refunds = [];
+      let refundEvidence;
       try {
-        refunds = await calculateSupplementRefunds(deletedId,command);
+        refundEvidence = await captureSupplementRefunds(deletedId,selectedDate,command);
       } catch (err) {
         if (err.message === 'INVALID_SUPPLEMENT_LOG_STATE') {
           console.error('[production] invalid supplement log state:', err);
@@ -467,43 +498,21 @@ function bindCardEvents() {
         throw err;
       }
 
-      await runTransaction(db, async (transaction) => {
-        const stocks=await Promise.all(refunds.map(refund=>transaction.get(doc(db,'supplementStock',refund.supplementTypeId))));
-        for (const [index,refund] of refunds.entries()) {
-          const stockRef = doc(db, 'supplementStock', refund.supplementTypeId);
-          const stockSnap = stocks[index];
-          if (!stockSnap.exists()) {
-            console.warn('[production] supplement stock missing during delete refund:', refund.supplementTypeId);
-            continue;
+      await runProductionOrderTransaction({db,date:selectedDate,command,actorUid:currentUser?.uid,expectedRevision:refundEvidence.expectedRevision,prepare:async ({transaction}) => {
+        const mutationToken = await assertProductionUnchanged(transaction, targetProduction);
+        const logSnaps=await Promise.all(refundEvidence.evidence.map(item=>transaction.get(doc(db,'supplementLogs',item.id))));
+        const logRows=logSnaps.map((snapshot,index)=>{
+          const expected=refundEvidence.evidence[index];
+          if(!snapshot.exists()||snapshot.id!==expected.id||refundEvidenceFingerprint(snapshot.id,snapshot.data())!==expected.fingerprint){
+            throw productionValidationError('영양제 환급 로그가 변경되었습니다. 최신 자료를 다시 불러와주세요.');
           }
-
-          const before = Number(stockSnap.data().currentQty || 0);
-          const after = before + refund.qty;
-          transaction.update(stockRef, {
-            currentQty: after,
-            updatedAt: serverTimestamp(),
-          });
-          transaction.set(doc(collection(db, 'supplementLogs')), {
-            date: selectedDate,
-            timestamp: serverTimestamp(),
-            supplementTypeId: refund.supplementTypeId,
-            type: 'autoDeduct',
-            qty: refund.qty,
-            before,
-            after,
-            staffName: targetProduction?.staffName || 'system',
-            reason: 'production deleted',
-            relatedProductionId: deletedId,
-          });
-        }
-
-        transaction.update(doc(db, 'productions', deletedId), {
-          status: 'deleted',
-          updatedAt: serverTimestamp(),
+          return {id:snapshot.id,data:snapshot.data()};
         });
-      });
-      // [묶음 4A] 삭제 후 회차/차수 재정렬
-      await applyRoundsAndBatches(selectedDate,command);
+        const refunds=calculateSupplementRefundsFromRows(logRows);
+        const reserved=readSupplementReservation(targetProduction);
+        if(refunds.length!==reserved.quantity || reserved.quantity===1 && (refunds[0].supplementTypeId!==reserved.skuId || refunds[0].qty!==1))throw productionValidationError('영양제 예약과 차감 이력이 일치하지 않습니다. 관리자에게 문의해주세요.');
+        return {changes:[{id:deletedId,kind:'update',data:{status:'deleted',mutationToken,updatedAt:serverTimestamp()}}]};
+      }});
       if(!command.isCurrent())return;
       refreshProductionCardsView();
       if (selectedProductionId === deletedId) {
@@ -540,34 +549,26 @@ function initProductionCardsSortable() {
 
 async function persistProductionCardOrder() {return runProductionCommand(command=>persistProductionCardOrderWithCommand(command));}
 async function persistProductionCardOrderWithCommand(command) {
-  const {writeBatch}=commandWrites(command);
   if(await blockIfClosed(selectedDate,command))return;
   const containerEl = document.getElementById('productionCards');
   if (!containerEl) return;
 
   const items = Array.from(containerEl.querySelectorAll('.production-card'));
-  const currentSortOrders = items
-    .map(item => productions.find(p => p.id === item.dataset.id)?.sortOrder)
-    .filter(v => v !== undefined && v !== null)
-    .sort((a, b) => a - b);
-
-  if (items.length !== currentSortOrders.length) {
-    if(!command.isCurrent())return;
-    refreshProductionCardsView();
-    return;
-  }
-
-  const batch = writeBatch(db);
-  items.forEach((item, idx) => {
-    batch.update(doc(db, 'productions', item.dataset.id), {
-      sortOrder: currentSortOrders[idx],
-      updatedAt: serverTimestamp(),
-    });
-  });
+  const orderedIds=items.map(item=>item.dataset.id);
+  const expectedOrder=productionOrderView(productions);
 
   try {
-    await batch.commit();
-    await applyRoundsAndBatches(selectedDate,command);
+    await runProductionOrderTransaction({db,date:selectedDate,command,expectedOrder,prepare:async ({rows})=>{
+      const active=rows.filter(row=>row.status!=='deleted');
+      const ids=new Set(active.map(row=>row.id));
+      if(orderedIds.length!==ids.size||new Set(orderedIds).size!==ids.size||orderedIds.some(id=>!ids.has(id))) {
+        throw productionValidationError('생산 카드 목록이 변경되었습니다. 최신 자료를 다시 불러와주세요.');
+      }
+      const pool=active.map(row=>row.sortOrder).sort((a,b)=>a-b);
+      return {changes:orderedIds.map((id,index)=>({id,kind:'update',data:{
+        sortOrder:pool[index],mutationToken:newProductionWriteToken(),updatedAt:serverTimestamp(),
+      }}))};
+    }});
     if(!command.isCurrent())return;
     refreshProductionCardsView();
   } catch (err) {
@@ -593,12 +594,12 @@ async function showProductionForm(production, draft=null) {
         <select id="pf_recipe" ${!isNew ? 'disabled' : ''}>
           <option value="">선택</option>
           ${recipes.map(r => `
-            <option value="${r.id}"
-              data-name="${getRecipeDisplayName(r)}"
-              data-category="${r.category}"
-              data-color="${r.color || '#4A7C59'}"
+            <option value="${escapeHtml(r.id)}"
+              data-name="${escapeHtml(getRecipeDisplayName(r))}"
+              data-category="${escapeHtml(r.category)}"
+              data-color="${recipeColor(r.color)}"
               ${(production?.recipeId||draft?.recipeId) === r.id ? 'selected' : ''}>
-              ${getRecipeDisplayName(r)}
+              ${escapeHtml(getRecipeDisplayName(r))}
             </option>
           `).join('')}
         </select>
@@ -610,7 +611,7 @@ async function showProductionForm(production, draft=null) {
             <option value="">레시피 선택</option>
           </select>
           <input type="number" id="pf_qty_direct" value="" placeholder="직접 입력" style="display:none;" />
-          <span id="pf_unitName" style="font-size:12px;color:#888;min-width:30px;">${production?.productionUnitName || ''}</span>
+          <span id="pf_unitName" style="font-size:12px;color:#888;min-width:30px;">${escapeHtml(production?.productionUnitName || '')}</span>
         </div>
         <div class="production-unit-message" id="pf_qty_message" style="display:none;"></div>
       </div>
@@ -692,7 +693,7 @@ async function showProductionForm(production, draft=null) {
       return;
     }
 
-    const options = presets.map(unit => `<option value="${unit}">${unit}</option>`).join('');
+    const options = presets.map(unit => `<option value="${escapeHtml(unit)}">${escapeHtml(unit)}</option>`).join('');
     qtySelect.innerHTML = `${options}<option value="custom">직접 입력...</option>`;
     qtySelect.disabled = false;
     unitBlocked = false;
@@ -838,8 +839,8 @@ async function showProductionForm(production, draft=null) {
         displayText = `${formatIngredientQtyValue(totalG, 'g')} g`;
       }
       return `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #f5f5f5;">
-        <span>${ing.name}</span>
-        <span style="color:#333;font-weight:500">${displayText}</span>
+        <span>${escapeHtml(ing.name)}</span>
+        <span style="color:#333;font-weight:500">${escapeHtml(displayText)}</span>
       </div>`;
     }).join('');
     document.getElementById('pf_ingredients').innerHTML = ingHtml;
@@ -879,7 +880,6 @@ async function showProductionForm(production, draft=null) {
   markFieldsSaved(form);
 
   document.getElementById('btnSaveProduction')?.addEventListener('click', () => runProductionCommand(async command => {
-    const {runTransaction,updateDoc}=commandWrites(command);
     if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
       alert('생산 입력은 대표/사무실 계정만 가능합니다.');
       return;
@@ -922,8 +922,7 @@ async function showProductionForm(production, draft=null) {
       const __c = await showConfirmModal({ title:'재고 부족 경고', message:`재고가 부족합니다:\n${msg}\n\n그래도 저장하시겠습니까?`, confirmText:'저장', danger:true }); if (!__c) return;
     }
 
-    // [묶음 4A] 회차/차수는 임시값으로 저장 후 applyRoundsAndBatches에서 일괄 재계산
-    // 신규는 임시 round (sameRecipe.length+1), 수정은 기존값 유지
+    // 단일 순서 거래에서 서버 날짜 집합을 기준으로 최종 회차/차수를 계산한다.
     const sameRecipe = productions.filter(p => p.recipeId === recipeId);
     const round = isNew ? sameRecipe.length + 1 : (production.round || 1);
     const batchNo = isNew ? null : (production.batchNo ?? null);
@@ -975,212 +974,37 @@ async function showProductionForm(production, draft=null) {
 
     if (isNew) {
       data.createdAt = new Date();
-      if (recipe.usesSupplement === false) {
-        const productionRef = doc(collection(db, 'productions'));
-        const activityLogRef = doc(collection(db, 'activityLogs'));
-        try {
-          await runTransaction(db, async (transaction) => {
-            transaction.set(productionRef, data);
-            transaction.set(activityLogRef, {
-              action: 'production',
-              subAction: 'create',
-              date: selectedDate,
-              staff,
-              uid: currentUser?.uid || null,
-              timestamp: serverTimestamp(),
-              message: `생산 추가 — ${displayName} ${qty}${unitName} / 담당: ${staff}`,
-              details: {
-                productionId: productionRef.id,
-                recipeId,
-                recipeName: displayName,
-                category: recipe.category,
-                target: recipe.target,
-                productionUnitQty: qty,
-                productionUnitName: unitName,
-              },
-              read: false,
-              acknowledged: false,
-              acknowledgedAt: null,
-              acknowledgedBy: null,
-              acknowledgedByUid: null,
-            });
-          });
-        } catch (err) {
-          console.error('[production] save (no supplement) failed:', err);
-          alert('생산 저장 중 오류가 발생했습니다.');
-          return;
-        }
-      } else {
-      const supplementTypeId = makeSupplementId(recipeId, qty);
+      data.mutationToken = newProductionWriteToken();
       const productionRef = doc(collection(db, 'productions'));
-      const supplementTypeRef = doc(db, 'supplementTypes', supplementTypeId);
-      const supplementStockRef = doc(db, 'supplementStock', supplementTypeId);
-      const supplementLogRef = doc(collection(db, 'supplementLogs'));
       const activityLogRef = doc(collection(db, 'activityLogs'));
-
       try {
-        await runTransaction(db, async (transaction) => {
-          const supplementTypeSnap = await transaction.get(supplementTypeRef);
-          const supplementStockSnap = await transaction.get(supplementStockRef);
-
-          if (!supplementTypeSnap.exists()) {
-            throw new Error('SKU_NOT_FOUND');
-          }
-
-          const supplementType = supplementTypeSnap.data();
-          if (supplementType.active === false) {
-            throw new Error('SKU_INACTIVE');
-          }
-
-          if (!supplementStockSnap.exists()) {
-            const err = new Error('STOCK_INSUFFICIENT');
-            err.supplementName = supplementType.name;
-            throw err;
-          }
-
-          const before = Number(supplementStockSnap.data().currentQty || 0);
-          if (before < 1) {
-            const err = new Error('STOCK_INSUFFICIENT');
-            err.supplementName = supplementType.name;
-            throw err;
-          }
-
-          const after = before - 1;
-          transaction.set(productionRef, data);
-          transaction.update(supplementStockRef, {
-            currentQty: after,
-            updatedAt: serverTimestamp(),
-          });
-          transaction.set(supplementLogRef, {
-            date: selectedDate,
-            timestamp: serverTimestamp(),
-            supplementTypeId,
-            type: 'autoDeduct',
-            qty: -1,
-            before,
-            after,
-            staffName: staff,
-            relatedProductionId: productionRef.id,
-          });
-
-          // [묶음 6C-2] 생산 추가 발행 — 추가만 발행, 수정/삭제는 단위 9 검토.
-          transaction.set(activityLogRef, {
-            action: 'production',
-            subAction: 'create',
-            date: selectedDate,
-            staff,
-            uid: currentUser?.uid || null,
-            timestamp: serverTimestamp(),
-            message: `생산 추가 — ${displayName} ${qty}${unitName} / 담당: ${staff}`,
-            details: {
-              productionId: productionRef.id,
-              recipeId,
-              recipeName: displayName,
-              category: recipe.category,
-              target: recipe.target,
-              productionUnitQty: qty,
-              productionUnitName: unitName,
-            },
-            read: false,
-            acknowledged: false,
-            acknowledgedAt: null,
-            acknowledgedBy: null,
-            acknowledgedByUid: null,
-          });
-        });
-      } catch (err) {
-        console.error('[production] save with supplement deduct failed:', err);
-        alert(getSupplementSaveErrorMessage(err.message, err.supplementName));
-        return;
-      }
+        await runProductionOrderTransaction({db,date:selectedDate,command,actorUid:currentUser?.uid,prepare:async ({rows})=>({
+          changes:[{id:productionRef.id,kind:'create',data:{...data,
+            sortOrder:Math.max(-1,...rows.filter(row=>row.status!=='deleted').map(row=>row.sortOrder))+1,
+          }}],
+          businessWrites:[{kind:'set',ref:activityLogRef,data:{
+            action:'production',subAction:'create',date:selectedDate,staff,uid:currentUser?.uid||null,
+            timestamp:serverTimestamp(),message:`생산 추가 — ${displayName} ${qty}${unitName} / 담당: ${staff}`,
+            details:{productionId:productionRef.id,recipeId,recipeName:displayName,category:recipe.category,
+              target:recipe.target,productionUnitQty:qty,productionUnitName:unitName},
+            read:false,acknowledged:false,acknowledgedAt:null,acknowledgedBy:null,acknowledgedByUid:null,
+          }}],
+        })});
+      } catch(err) {
+        if(['permission-denied','production-order-conflict','production-validation','outcome-unknown'].includes(err.code))throw err;
+        console.error('[production] save failed:',err);
+        alert(getSupplementSaveErrorMessage(err.message,err.supplementName));return;
       }
     } else {
-      const prevSupplementTypeId = makeSupplementId(production.recipeId, production.productionUnitQty);
-      const nextSupplementTypeId = makeSupplementId(recipeId, qty);
-      const productionRef = doc(db, 'productions', production.id);
-
-      if (recipe.usesSupplement === false || prevSupplementTypeId === nextSupplementTypeId) {
-        await updateDoc(productionRef, data);
-      } else {
-        const prevStockRef = doc(db, 'supplementStock', prevSupplementTypeId);
-        const nextTypeRef = doc(db, 'supplementTypes', nextSupplementTypeId);
-        const nextStockRef = doc(db, 'supplementStock', nextSupplementTypeId);
-
-        try {
-          await runTransaction(db, async (transaction) => {
-            const nextTypeSnap = await transaction.get(nextTypeRef);
-            const nextStockSnap = await transaction.get(nextStockRef);
-            const prevStockSnap = await transaction.get(prevStockRef);
-
-            if (!nextTypeSnap.exists()) {
-              throw new Error('SKU_NOT_FOUND');
-            }
-
-            const nextType = nextTypeSnap.data();
-            if (nextType.active === false) {
-              throw new Error('SKU_INACTIVE');
-            }
-
-            if (!nextStockSnap.exists()) {
-              throw getSupplementTypeError('STOCK_INSUFFICIENT', nextType.name);
-            }
-
-            const nextBefore = Number(nextStockSnap.data().currentQty || 0);
-            if (nextBefore < 1) {
-              throw getSupplementTypeError('STOCK_INSUFFICIENT', nextType.name);
-            }
-
-            if (prevStockSnap.exists()) {
-              const prevBefore = Number(prevStockSnap.data().currentQty || 0);
-              transaction.update(prevStockRef, {
-                currentQty: prevBefore + 1,
-                updatedAt: serverTimestamp(),
-              });
-              transaction.set(doc(collection(db, 'supplementLogs')), {
-                date: selectedDate,
-                timestamp: serverTimestamp(),
-                supplementTypeId: prevSupplementTypeId,
-                type: 'autoDeduct',
-                qty: 1,
-                before: prevBefore,
-                after: prevBefore + 1,
-                staffName: staff,
-                reason: 'production edited',
-                relatedProductionId: production.id,
-              });
-            } else {
-              console.warn('[production] previous supplement stock missing during edit refund:', prevSupplementTypeId);
-            }
-
-            transaction.update(nextStockRef, {
-              currentQty: nextBefore - 1,
-              updatedAt: serverTimestamp(),
-            });
-            transaction.set(doc(collection(db, 'supplementLogs')), {
-              date: selectedDate,
-              timestamp: serverTimestamp(),
-              supplementTypeId: nextSupplementTypeId,
-              type: 'autoDeduct',
-              qty: -1,
-              before: nextBefore,
-              after: nextBefore - 1,
-              staffName: staff,
-              relatedProductionId: production.id,
-            });
-
-            transaction.update(productionRef, data);
-          });
-        } catch (err) {
-          console.error('[production] edit with supplement refund/rededuct failed:', err);
-          alert(getSupplementSaveErrorMessage(err.message, err.supplementName));
-          return;
-        }
-      }
+      await runProductionOrderTransaction({db,date:selectedDate,command,actorUid:currentUser?.uid,prepare:async ({transaction,rows})=>{
+        const mutationToken=await assertProductionUnchanged(transaction,production,recipe);
+        const current=rows.find(row=>row.id===production.id);
+        if(!current)throw productionValidationError('생산 원본을 찾을 수 없습니다. 최신 자료를 다시 불러와주세요.');
+        return {changes:[{id:production.id,kind:'update',data:{...data,sortOrder:current.sortOrder,mutationToken}}]};
+      }});
     }
 
-    // [묶음 4A] 저장 후 같은 날 productions의 round/batchNo 일괄 재계산
-    // 수량 수정으로 동일 수량 묶음이 새로 생기거나 깨지는 경우도 자동 반영
-    await applyRoundsAndBatches(selectedDate,command);
+    // 날짜 순서와 회차/차수는 위 단일 거래에서 함께 확정한다.
     if(!command.isCurrent())return;
     refreshProductionCardsView();
     showStatus(isNew ? '저장 완료!' : '수정 완료!');
@@ -1227,7 +1051,7 @@ async function showCopySheetModal() {
   const copySheetOrder = await loadCopySheetOrder();
 
   // [묶음 4B] sortOrder 순으로 정렬하여 묶음 첫 등장 순서 보장
-  const sorted = [...productions].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  const sorted = [...productions].sort(compareProductionOrder);
 
   const rawCat = sorted.filter(p => p.category === 'raw' && p.target === 'cat');
   const rawDog = sorted.filter(p => p.category === 'raw' && p.target === 'dog');
@@ -1304,7 +1128,7 @@ async function showCopySheetModal() {
 
   showModal(`
     <h3 class="modal-title">생산지시서 복사</h3>
-    <textarea id="sheetText" style="width:100%;height:140px;font-size:13px;padding:12px;border:1px solid #e0e0e0;border-radius:6px;font-family:'Noto Sans KR',sans-serif;resize:none;">${sheet}</textarea>
+    <textarea id="sheetText" style="width:100%;height:140px;font-size:13px;padding:12px;border:1px solid #e0e0e0;border-radius:6px;font-family:'Noto Sans KR',sans-serif;resize:none;">${escapeHtml(sheet)}</textarea>
     <!-- [묶음 4C] 비고 입력 UI: textarea와 분리. 복사 시 끝줄에 합성. 비어있으면 줄 생략 -->
     <div class="form-group" style="margin-top:10px;">
       <label style="font-size:12px;color:#555;display:block;margin-bottom:4px;">비고</label>
@@ -1333,15 +1157,15 @@ async function showCopySheetModal() {
 
 function showBigViewModal() {
   showModal(`
-    <h3 class="modal-title">${selectedDate} 생산 현황</h3>
+    <h3 class="modal-title">${escapeHtml(selectedDate)} 생산 현황</h3>
     <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;">
       ${productions.length === 0 ? '<p style="color:#aaa">생산 없음</p>' :
         productions.map(p => `
-          <div style="border:1px solid #e8e8e8;border-radius:8px;padding:16px;min-width:160px;border-left:4px solid ${p.color || '#4A7C59'}">
-            <div style="font-size:13px;font-weight:600;margin-bottom:6px;">${p.recipeName}${getRoundBadgeHtml(p)}</div>
-            <div style="font-size:12px;color:#555;">${p.productionUnitQty} ${getProductionCardUnitName(p)}</div>
-            ${p.category === 'raw' ? `<div style="font-size:11px;color:#888;">${p.rawBoxQty || 0}박스</div>` : ''}
-            ${p.category === 'freezeDry' ? `<div style="font-size:11px;color:#888;">${renderFreezeDryQtyLine(p)}</div>` : ''}
+          <div style="border:1px solid #e8e8e8;border-radius:8px;padding:16px;min-width:160px;border-left:4px solid ${recipeColor(p.color)}">
+            <div style="font-size:13px;font-weight:600;margin-bottom:6px;">${escapeHtml(p.recipeName)}${getRoundBadgeHtml(p)}</div>
+            <div style="font-size:12px;color:#555;">${escapeHtml(p.productionUnitQty)} ${escapeHtml(getProductionCardUnitName(p))}</div>
+            ${p.category === 'raw' ? `<div style="font-size:11px;color:#888;">${escapeHtml(p.rawBoxQty || 0)}박스</div>` : ''}
+            ${p.category === 'freezeDry' ? `<div style="font-size:11px;color:#888;">${escapeHtml(renderFreezeDryQtyLine(p))}</div>` : ''}
           </div>
         `).join('')}
     </div>
@@ -1360,7 +1184,7 @@ function getStaffOptions(groups) {
   for (const g of groups) {
     const members = staffCache[g] || [];
     members.forEach(m => {
-      options += `<option value="${m.name}">${m.name}</option>`;
+      options += `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
     });
   }
   return options;

@@ -1,0 +1,16 @@
+{
+  "capturedAt": "2026-10-27T12:27:27.141Z",
+  "purpose": "Synthetic VM positive controls only. files digests normalize CRLF to LF; originalFiles records original byte digests.",
+  "files": {
+    "wipeFirestoreOperationalData": "2e54f4dbddb8f252d4667ab946b15ae5217b5e956d7a1c2aa0c7df82cfc5de0d",
+    "wipeFirestoreOperationalDataAdmin": "318312752d3e095f85e31bc4815a7b4db16f307b08fc19a4d33c50dd7e8c1e2a",
+    "seedCleanup": "7ac6bf02843ebebc5c1f6acacc77aec68016aec8ee1c7656f5d737dd53ccbae4",
+    "seedDataInput": "032ca8efc5d0acfcfd1b916d5040cc0befc184c9b54f83c2623426304549917c"
+  },
+  "originalFiles": {
+    "wipeFirestoreOperationalData": "2e54f4dbddb8f252d4667ab946b15ae5217b5e956d7a1c2aa0c7df82cfc5de0d",
+    "wipeFirestoreOperationalDataAdmin": "318312752d3e095f85e31bc4815a7b4db16f307b08fc19a4d33c50dd7e8c1e2a",
+    "seedCleanup": "f2927e65486db66569b6ac63191d2c89efdd9b72434c3168a9f5d3861d10502d",
+    "seedDataInput": "0336c429e11c0f469e3b5f14ba5b2ec00ca72cda6a8b8018ede2ea44305dfbb7"
+  }
+}

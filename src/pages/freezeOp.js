@@ -6,6 +6,7 @@ import {
 import { getTodayKST as getToday } from '../utils/date.js';
 import * as appState from '../app.js';
 import { showConfirmModal } from '../utils/modal.js';
+import { cancelFreezeOrderTransaction } from '../services/freezeOrderCancel.js';
 import {pageResource} from '../state/pageResources.js';
 import {pageRefresh} from '../utils/pageRefresh.js';
 import {getPageContext,registerPageCleanup} from '../utils/pageLifecycle.js';
@@ -24,7 +25,7 @@ const COLS = 3;
 let _slots = new Array(TOTAL_SLOTS).fill(null);
 let _activeProduct = null;
 let _builderOrder = null;
-let _colorMap = {};
+let _colorMap = Object.create(null);
 
 // Tab mode flag — true when rendered inside frozenPan tab
 let _tabMode = false;
@@ -73,7 +74,7 @@ export async function renderFreezeOpInTab({force=false}={}) {
 
 async function loadFreezeOrders(scope={getDocs}) {
   const snap = await scope.getDocs(query(collection(db, 'freezeOrders'), orderBy('date', 'desc')));
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs.map(d => ({ ...d.data(), id: d.id }));
 }
 
 async function loadFrozenPanLots(scope={getDocs}) {
@@ -84,7 +85,7 @@ async function loadFrozenPanLots(scope={getDocs}) {
 }
 
 function buildStockMap(lots) {
-  const map = {};
+  const map = Object.create(null);
   lots.forEach(l => {
     map[l.productName] = (map[l.productName] || 0) + Number(l.remaining || 0);
   });
@@ -92,13 +93,13 @@ function buildStockMap(lots) {
 }
 
 async function loadFreezeOpModel({force=false}={}) {
-  registerPageCleanup(()=>{_slots=new Array(TOTAL_SLOTS).fill(null);_builderOrder=null;_activeProduct=null;_colorMap={};});
+  registerPageCleanup(()=>{_slots=new Array(TOTAL_SLOTS).fill(null);_builderOrder=null;_activeProduct=null;_colorMap=Object.create(null);});
   return freezeOpResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(freezeOpResource,options=>_tabMode?renderFreezeOpInTab(options):renderFreezeOp(options))});
 }
 
 export function disposeFreezeOpTab() {
   freezeOpResource.active=false;freezeOpResource.disconnect();
-  _builderOrder=null;_slots=new Array(TOTAL_SLOTS).fill(null);_activeProduct=null;_colorMap={};
+  _builderOrder=null;_slots=new Array(TOTAL_SLOTS).fill(null);_activeProduct=null;_colorMap=Object.create(null);
 }
 
 async function reload({force=false}={}) {
@@ -180,7 +181,8 @@ function renderPage(orders, lots, options = {}) {
         });
         if (!ok) return;
         try {
-          await cancelOrder(o);
+          const cancelled = await cancelOrder(o);
+          if (!cancelled) return;
           await reload();
           alert('발주서가 취소되었습니다.');
         } catch (err) {
@@ -203,7 +205,7 @@ function orderCardHtml(order, isAdmin) {
   const hasLayout = !!order.layout;
   const total = (order.items || []).reduce((s, i) => s + Number(i.panCount || 0), 0);
   const summary = (order.items || [])
-    .map(i => `${esc(i.productName)} ${i.panCount}판${i.isVirtual ? ' <span style="color:#e67e22;font-size:10px;">[가상]</span>' : ''}`)
+    .map(i => `${esc(i.productName)} ${esc(i.panCount)}판${i.isVirtual ? ' <span style="color:#e67e22;font-size:10px;">[가상]</span>' : ''}`)
     .join(' · ');
 
   const statusBadge = isCancelled
@@ -219,9 +221,9 @@ function orderCardHtml(order, isAdmin) {
       <div style="min-width:55px;text-align:right;font-size:12px;color:#888;">총 ${total}판</div>
       <div style="min-width:75px;text-align:right;font-size:12px;">${statusBadge}</div>
       <div style="display:flex;gap:6px;white-space:nowrap;">
-        <button class="btn-secondary btn-view-order" data-id="${order.id}" style="font-size:11px;padding:3px 10px;">발주서</button>
-        ${!isCancelled && isAdmin ? `<button class="btn-primary btn-build-layout" data-id="${order.id}" style="font-size:11px;padding:3px 10px;">${hasLayout ? '배치판' : '배치판 생성'}</button>` : ''}
-        ${!isCancelled && isAdmin ? `<button class="btn-secondary btn-cancel-order" data-id="${order.id}" style="font-size:11px;padding:3px 10px;color:#e53e3e;">취소</button>` : ''}
+        <button class="btn-secondary btn-view-order" data-id="${esc(order.id)}" style="font-size:11px;padding:3px 10px;">발주서</button>
+        ${!isCancelled && isAdmin ? `<button class="btn-primary btn-build-layout" data-id="${esc(order.id)}" style="font-size:11px;padding:3px 10px;">${hasLayout ? '배치판' : '배치판 생성'}</button>` : ''}
+        ${!isCancelled && isAdmin ? `<button class="btn-secondary btn-cancel-order" data-id="${esc(order.id)}" style="font-size:11px;padding:3px 10px;color:#e53e3e;">취소</button>` : ''}
       </div>
     </div>
   `;
@@ -384,7 +386,7 @@ function showDetailModal(order, isAdmin) {
     <tr>
       <td>${esc(i.productName)}</td>
       <td>${i.isVirtual ? '<span style="color:#e67e22;font-size:11px;">가상 재고</span>' : '실 재고'}</td>
-      <td style="text-align:right;font-weight:600;">${i.panCount}판</td>
+      <td style="text-align:right;font-weight:600;">${esc(i.panCount)}판</td>
     </tr>
   `).join('');
 
@@ -429,7 +431,7 @@ function showDetailModal(order, isAdmin) {
 // ─── Layout Grid HTML (read-only) ────────────────────────────────
 
 function buildColorMapFromItems(items) {
-  const map = {};
+  const map = Object.create(null);
   (items || []).forEach((item, idx) => {
     map[item.productName] = SLOT_COLORS[idx % SLOT_COLORS.length];
   });
@@ -447,7 +449,7 @@ function buildLayoutGridHtml(slots, items) {
         return `<div style="display:flex;align-items:center;gap:4px;font-size:12px;">
           <div style="width:12px;height:12px;border-radius:3px;background:${color};flex-shrink:0;"></div>
           <span>${esc(item.productName)}</span>
-          <span style="color:#888;">${assigned}/${item.panCount}판</span>
+          <span style="color:#888;">${assigned}/${esc(item.panCount)}판</span>
         </div>`;
       }).join('')}
     </div>
@@ -574,7 +576,7 @@ function renderBuilderProducts() {
           <div style="width:10px;height:10px;border-radius:2px;background:${color};flex-shrink:0;"></div>
           <span style="font-size:12px;font-weight:600;">${esc(item.productName)}</span>
         </div>
-        <div style="font-size:11px;color:#888;">${assigned}/${item.panCount}판</div>
+        <div style="font-size:11px;color:#888;">${assigned}/${esc(item.panCount)}판</div>
         ${remaining > 0
           ? `<div style="font-size:10px;color:${color};font-weight:600;">${remaining}판 남음</div>`
           : `<div style="font-size:10px;color:#2d7a3a;font-weight:600;">✓ 완료</div>`}
@@ -688,7 +690,7 @@ window.closeModal = function () {
 function calcDeductions(items, lots) {
   // lots: current frozenPanLots (remaining > 0), sorted FIFO per product
   const deductions = [];
-  const lotPool = {}; // productName -> sorted lot list with working remaining
+  const lotPool = Object.create(null); // productName -> sorted lot list with working remaining
 
   lots.forEach(l => {
     if (!lotPool[l.productName]) lotPool[l.productName] = [];
@@ -724,22 +726,9 @@ function calcDeductions(items, lots) {
 
 async function cancelOrder(order) {
  return runPageCommand(freezeOpResource,async command=>{
-  const {writeBatch}=commandWrites(command);
-
-  const batch = writeBatch(db);
-  (order.deductions || []).forEach(d => {
-    batch.update(doc(db, 'frozenPanLots', d.lotId), {
-      remaining: increment(d.amount),
-      closed: false,
-      updatedAt: new Date(),
-    });
-  });
-  batch.update(doc(db, 'freezeOrders', order.id), {
-    status: 'cancelled',
-    cancelledAt: new Date(),
-    cancelledBy: getCurrentProductionRole() || '',
-  });
-  await batch.commit();
+  const {runTransaction}=commandWrites(command);
+  await runTransaction(db,tx=>cancelFreezeOrderTransaction(tx,db,order.id,getCurrentProductionRole()||''));
+  return true;
 
  },{roles:['admin','office']});
 }
@@ -767,7 +756,7 @@ function printLayout(order, slots, colorMap) {
     return `<div class="legend-item">
       <div class="legend-dot" style="background:${color};"></div>
       <span>${esc(item.productName)}</span>
-      <span class="legend-count">${cnt}/${item.panCount}판${item.isVirtual ? ' [가상]' : ''}</span>
+      <span class="legend-count">${cnt}/${esc(item.panCount)}판${item.isVirtual ? ' [가상]' : ''}</span>
     </div>`;
   }).join('');
 

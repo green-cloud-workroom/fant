@@ -1,6 +1,7 @@
 import { registerModalDismiss } from './modalManager.js';
 let dismissCurrent = null;
 // 공통 모달 유틸 (묶음 1B)
+// All option strings are plain text, never HTML. Use \n for message line breaks.
 //
 // 브라우저 기본 prompt() / confirm() 대체용.
 // 디자인 통일 + Promise 기반 비동기 호출.
@@ -53,19 +54,19 @@ export function showPromptModal(opts = {}) {
     if (existing) existing.remove();
 
     const inputHtml = multiline
-      ? `<textarea id="commonPromptInput" rows="3" style="width:100%;padding:8px;font-size:13px;font-family:inherit;box-sizing:border-box;border:1px solid #d0d0d0;border-radius:4px;resize:vertical;outline:none;" placeholder="${placeholder}">${defaultValue}</textarea>`
-      : `<input type="text" id="commonPromptInput" style="width:100%;padding:8px;font-size:13px;box-sizing:border-box;border:1px solid #d0d0d0;border-radius:4px;outline:none;" placeholder="${placeholder}" value="${defaultValue}" />`;
+      ? `<textarea id="commonPromptInput" rows="3" style="width:100%;padding:8px;font-size:13px;font-family:inherit;box-sizing:border-box;border:1px solid #d0d0d0;border-radius:4px;resize:vertical;outline:none;"></textarea>`
+      : `<input type="text" id="commonPromptInput" style="width:100%;padding:8px;font-size:13px;box-sizing:border-box;border:1px solid #d0d0d0;border-radius:4px;outline:none;" />`;
 
     const html = `
       <div class="modal-overlay" id="${OVERLAY_ID}">
         <div class="modal-box" style="width:420px;">
-          <h3 class="modal-title">${title}</h3>
-          ${message ? `<p style="font-size:13px;color:#555;margin:0 0 16px;line-height:1.6;">${message}</p>` : ''}
-          ${label ? `<label style="display:block;font-size:12px;color:#555;margin-bottom:6px;font-weight:500;">${label}${required ? ' *' : ''}</label>` : ''}
+          <h3 class="modal-title"></h3>
+          ${message ? '<p data-prompt-message style="font-size:13px;color:#555;margin:0 0 16px;line-height:1.6;white-space:pre-wrap;"></p>' : ''}
+          ${label ? '<label data-prompt-label style="display:block;font-size:12px;color:#555;margin-bottom:6px;font-weight:500;"></label>' : ''}
           ${inputHtml}
           <div class="modal-actions">
-            <button class="btn-secondary" id="commonPromptCancel">${cancelText}</button>
-            <button class="btn-primary" id="commonPromptConfirm">${confirmText}</button>
+            <button class="btn-secondary" id="commonPromptCancel"></button>
+            <button class="btn-primary" id="commonPromptConfirm"></button>
           </div>
         </div>
       </div>
@@ -77,6 +78,16 @@ export function showPromptModal(opts = {}) {
     const input = document.getElementById('commonPromptInput');
     const btnCancel = document.getElementById('commonPromptCancel');
     const btnConfirm = document.getElementById('commonPromptConfirm');
+
+    overlay.querySelector('.modal-title').textContent = title;
+    const messageEl = overlay.querySelector('[data-prompt-message]');
+    if (messageEl) messageEl.textContent = message;
+    const labelEl = overlay.querySelector('[data-prompt-label]');
+    if (labelEl) labelEl.textContent = label + (required ? ' *' : '');
+    input.placeholder = placeholder;
+    input.value = defaultValue;
+    btnCancel.textContent = cancelText;
+    btnConfirm.textContent = confirmText;
 
     // 입력 필드 자동 포커스
     setTimeout(() => input.focus(), 50);
@@ -151,11 +162,11 @@ export function showConfirmModal(opts = {}) {
     const html = `
       <div class="modal-overlay" id="${OVERLAY_ID}">
         <div class="modal-box" style="width:420px;">
-          <h3 class="modal-title">${title}</h3>
-          <p style="font-size:13px;color:#333;margin:0 0 16px;line-height:1.6;white-space:pre-wrap;">${message}</p>
+          <h3 class="modal-title"></h3>
+          <p data-prompt-message style="font-size:13px;color:#333;margin:0 0 16px;line-height:1.6;white-space:pre-wrap;"></p>
           <div class="modal-actions">
-            <button class="btn-secondary" id="commonPromptCancel">${cancelText}</button>
-            <button class="${confirmBtnClass}" id="commonPromptConfirm">${confirmText}</button>
+            <button class="btn-secondary" id="commonPromptCancel"></button>
+            <button class="${confirmBtnClass}" id="commonPromptConfirm"></button>
           </div>
         </div>
       </div>
@@ -166,6 +177,11 @@ export function showConfirmModal(opts = {}) {
     const overlay = document.getElementById(OVERLAY_ID);
     const btnCancel = document.getElementById('commonPromptCancel');
     const btnConfirm = document.getElementById('commonPromptConfirm');
+
+    overlay.querySelector('.modal-title').textContent = title;
+    overlay.querySelector('[data-prompt-message]').textContent = message;
+    btnCancel.textContent = cancelText;
+    btnConfirm.textContent = confirmText;
 
     setTimeout(() => btnConfirm.focus(), 50);
 

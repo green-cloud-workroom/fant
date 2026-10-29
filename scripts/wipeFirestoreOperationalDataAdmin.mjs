@@ -1,15 +1,15 @@
+// 2026-10-27: initialization complete; inspection-only. Historical notes below are not execution/backup approval.
+import { readLegacyMaintenanceTarget, assertLegacyProjectBinding, legacyMaintenanceUsage } from './legacyMaintenanceReadOnly.mjs';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import {
   PRESERVE_COLLECTIONS,
   WIPE_COLLECTIONS,
-  parseArgs,
 } from './firestoreConfig.mjs';
 
 const ADMIN_WIPE_COLLECTIONS = WIPE_COLLECTIONS;
 
 const DATABASE = '(default)';
-const BATCH_LIMIT = 450;
 const FIRESTORE_SCOPE = 'https://www.googleapis.com/auth/datastore';
 
 function base64Url(input) {
@@ -18,17 +18,6 @@ function base64Url(input) {
     .replaceAll('+', '-')
     .replaceAll('/', '_')
     .replaceAll('=', '');
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function countdown(seconds) {
-  for (let remaining = seconds; remaining > 0; remaining -= 1) {
-    console.log(`[admin-wipe] execute starts in ${remaining}s... Ctrl+C to cancel`);
-    await sleep(1000);
-  }
 }
 
 async function loadServiceAccount(args) {
@@ -101,7 +90,6 @@ async function listCollectionDocs(projectId, collectionName, token) {
     });
     const payload = await response.json();
     if (!response.ok) {
-      if (response.status === 404) return docs;
       throw new Error(`List ${collectionName} failed: ${response.status} ${JSON.stringify(payload)}`);
     }
     docs.push(...(payload.documents || []));
@@ -110,79 +98,29 @@ async function listCollectionDocs(projectId, collectionName, token) {
   return docs;
 }
 
-async function batchDelete(projectId, collectionName, docs, token) {
-  let deleted = 0;
-  for (let i = 0; i < docs.length; i += BATCH_LIMIT) {
-    const slice = docs.slice(i, i + BATCH_LIMIT);
-    const response = await fetch(
-      `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${DATABASE}/documents:batchWrite`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json; charset=utf-8',
-        },
-        body: JSON.stringify({
-          writes: slice.map((doc) => ({ delete: doc.name })),
-        }),
-      },
-    );
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(`Delete ${collectionName} failed: ${response.status} ${JSON.stringify(payload)}`);
-    }
-    deleted += slice.length;
-    console.log(`[admin-wipe] ${collectionName}: deleted ${deleted}/${docs.length}`);
-  }
-}
-
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  const execute = args.has('execute');
-  const serviceAccount = await loadServiceAccount(args);
-  const projectId = serviceAccount.project_id;
-  const token = await getAccessToken(serviceAccount);
+  const parsed = readLegacyMaintenanceTarget(process.argv.slice(2), 'wipeFirestoreOperationalDataAdmin');
+  if (parsed.help) { console.log(legacyMaintenanceUsage('wipeFirestoreOperationalDataAdmin')); return; }
+  const { args, target } = parsed;
 
-  console.log(`[admin-wipe] mode: ${execute ? 'execute' : 'dry-run'}`);
-  console.log(`[admin-wipe] project: ${projectId}`);
-  console.log('[admin-wipe] preserve allowlist:');
+  const serviceAccount = await loadServiceAccount(args);
+  assertLegacyProjectBinding(target, serviceAccount.project_id);
+  const projectId = target.projectId;
+  const token = await getAccessToken(serviceAccount);
+  console.log('[admin-wipe] mode: dry-run (retired initialization tool)');
+  console.log('[admin-wipe] target:', projectId, target.databaseId);
   for (const collectionName of PRESERVE_COLLECTIONS) {
     const docs = await listCollectionDocs(projectId, collectionName, token);
-    console.log(`  - ${collectionName}: preserved (${docs.length})`);
+    console.log('  -', collectionName, ': preserved', docs.length);
   }
-
-  console.log('[admin-wipe] delete whitelist:');
-  const targets = [];
+  let total = 0;
   for (const collectionName of ADMIN_WIPE_COLLECTIONS) {
     const docs = await listCollectionDocs(projectId, collectionName, token);
-    targets.push({ collectionName, docs });
-    console.log(`  - ${collectionName}: ${docs.length}`);
+    total += docs.length;
+    console.log('  -', collectionName, ': inspection target', docs.length);
   }
-
-  const total = targets.reduce((sum, target) => sum + target.docs.length, 0);
-  console.log(`[admin-wipe] total delete target: ${total}`);
-
-  if (!execute) {
-    console.log('[admin-wipe] dry-run only. No documents deleted.');
-    console.log('[admin-wipe] run with --execute only after count review.');
-    return;
-  }
-
-  console.log('[admin-wipe] EXECUTE requested. These collections will be deleted:');
-  for (const target of targets) {
-    console.log(`  - ${target.collectionName}: ${target.docs.length}`);
-  }
-  await countdown(5);
-
-  for (const target of targets) {
-    if (target.docs.length === 0) {
-      console.log(`[admin-wipe] ${target.collectionName}: empty`);
-      continue;
-    }
-    await batchDelete(projectId, target.collectionName, target.docs, token);
-  }
-
-  console.log('[admin-wipe] done');
+  console.log('[admin-wipe] total inspection targets:', total);
+  console.log('[admin-wipe] read-only inspection complete. Execution is retired.');
 }
 
 main()

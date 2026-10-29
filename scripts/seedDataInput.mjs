@@ -1,3 +1,5 @@
+// 2026-10-27: initialization complete; inspection-only. Historical notes below are not execution/backup approval.
+import { readLegacyMaintenanceTarget, assertLegacyProjectBinding, legacyMaintenanceUsage } from './legacyMaintenanceReadOnly.mjs';
 // 시드 #3 마스터 데이터 입력. 호두 2026-05-20 확정값:
 //   고양이 치킨(yEhV7xTxX8giuDtSnFmQ): unitPresets [60,100] 유지, productionMethods label rotary→로터리/manual→수동
 //   치킨텐더 / 고양이 주식치킨캣 / 고양이 주식 덕캣: unitPresets [1] 설정
@@ -9,9 +11,7 @@ import fs from 'node:fs/promises';
 import process from 'node:process';
 import { applicationDefault, cert, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
-import { parseArgs } from './firestoreConfig.mjs';
 
-const DEFAULT_PROJECT_ID = 'fant-e5ae5';
 
 const RAW_RECIPE_ID = 'yEhV7xTxX8giuDtSnFmQ';
 const RAW_RECIPE_UNIT_PRESETS = [60, 100];
@@ -37,16 +37,6 @@ async function loadServiceAccount(args) {
     if (!key[field]) throw new Error(`Service account key is missing ${field}.`);
   }
   return key;
-}
-
-function resolveProjectId(args, serviceAccount) {
-  return (
-    args.get('project') ||
-    process.env.GOOGLE_CLOUD_PROJECT ||
-    process.env.GCLOUD_PROJECT ||
-    serviceAccount?.project_id ||
-    DEFAULT_PROJECT_ID
-  );
 }
 
 function arraysEqual(left, right) {
@@ -303,50 +293,23 @@ async function collectPlan(db) {
   return plan;
 }
 
-async function executePlan(plan) {
-  let actualWrites = 0;
-  for (const item of plan) {
-    if (item.type === 'update') {
-      await item.ref.update(item.data);
-    } else if (item.type === 'set') {
-      await item.ref.set(item.data);
-    } else {
-      throw new Error(`Unknown plan item type: ${item.type}`);
-    }
-    actualWrites += 1;
-    console.log(`[seed-data] wrote: ${item.path}`);
-  }
-  return actualWrites;
-}
-
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  const execute = args.has('execute');
+  const parsed = readLegacyMaintenanceTarget(process.argv.slice(2), 'seedDataInput');
+  if (parsed.help) { console.log(legacyMaintenanceUsage('seedDataInput')); return; }
+  const { args, target } = parsed;
+
   const serviceAccount = await loadServiceAccount(args);
-  const projectId = resolveProjectId(args, serviceAccount);
-
-  initializeApp({
+  if (serviceAccount) assertLegacyProjectBinding(target, serviceAccount.project_id);
+  const app = initializeApp({
     credential: serviceAccount ? cert(serviceAccount) : applicationDefault(),
-    projectId,
+    projectId: target.projectId,
   });
-
-  const db = getFirestore();
-
-  console.log(`[seed-data] mode: ${execute ? 'execute' : 'dry-run'}`);
-  console.log(`[seed-data] project: ${projectId}`);
-  console.log(`[seed-data] credential: ${serviceAccount ? 'service-account-key' : 'application-default'}`);
-
+  const db = getFirestore(app);
+  console.log('[seed-data] mode: dry-run (retired initialization tool)');
+  console.log('[seed-data] target:', target.projectId, target.databaseId);
   const plan = await collectPlan(db);
-  console.log(`[seed-data] total intended write ops: ${plan.length}`);
-
-  if (!execute) {
-    console.log('[seed-data] dry-run only. No documents written.');
-    return;
-  }
-
-  const totalWritten = await executePlan(plan);
-  console.log(`[seed-data] total actual write ops: ${totalWritten}`);
-  console.log('[seed-data] backup reminder: no pre-seed value backup; post-cleanup state is the natural fallback.');
+  console.log('[seed-data] total inspection write suggestions:', plan.length);
+  console.log('[seed-data] read-only inspection complete. Execution is retired.');
 }
 
 main()

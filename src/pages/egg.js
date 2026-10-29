@@ -128,7 +128,7 @@ function renderEggLayout(eggStock, logs) {
               ${recentLogs.length === 0 ? `<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
                 recentLogs.map(l => `
                   <tr>
-                    <td>${l.date || '-'}</td>
+                    <td>${escapeHtml(l.date || '-')}</td>
                     <td>
                       <span class="tag ${l.type === 'in' ? 'tag-raw' : l.type === 'out' ? 'tag-cat' : ''}"
                             style="${l.type === 'adjust' ? 'background:#fff0e8;color:#8a4a2d' : ''}">
@@ -136,12 +136,12 @@ function renderEggLayout(eggStock, logs) {
                       </span>
                     </td>
                     <td style="color:${l.qty > 0 ? '#2d7a3a' : '#e53e3e'};font-weight:600">
-                      ${l.qty > 0 ? '+' : ''}${l.qty}
+                      ${l.qty > 0 ? '+' : ''}${escapeHtml(l.qty)}
                     </td>
-                    <td>${l.before ?? '-'}</td>
-                    <td>${l.after ?? '-'}</td>
-                    <td>${l.staffName || '-'}</td>
-                    <td>${l.note || l.reason || '-'}</td>
+                    <td>${escapeHtml(l.before ?? '-')}</td>
+                    <td>${escapeHtml(l.after ?? '-')}</td>
+                    <td>${escapeHtml(l.staffName || '-')}</td>
+                    <td>${escapeHtml(l.note || l.reason || '-')}</td>
                   </tr>
                 `).join('')}
             </tbody>
@@ -438,7 +438,7 @@ function showEggAdjustModal(eggStock) {
   showModal(`
     <h3 class="modal-title">수동 재고 조정</h3>
     ${movementFields({reasonField:false})}
-    <p style="font-size:12px;color:#888;margin-bottom:16px;">현재 재고: ${eggStock.currentQty}개</p>
+    <p style="font-size:12px;color:#888;margin-bottom:16px;">현재 재고: ${escapeHtml(eggStock.currentQty)}개</p>
     <div class="form-row">
       <div class="form-group">
         <label>조정 유형</label>
@@ -536,7 +536,7 @@ function showSetMinModal(eggStock) {
     <h3 class="modal-title">최소재고 설정</h3>
     <div class="form-group">
       <label>최소재고(개) *</label>
-      <input type="number" id="m_minQty" value="${eggStock.minimumQty || 0}" />
+      <input type="number" id="m_minQty" value="${escapeHtml(eggStock.minimumQty || 0)}" />
     </div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">취소</button>
@@ -569,7 +569,7 @@ function getStaffOptions(groups) {
   for (const g of groups) {
     const members = staffCache[g] || [];
     members.forEach(m => {
-      options += `<option value="${m.name}">${m.name}</option>`;
+      options += `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
     });
   }
   return options;

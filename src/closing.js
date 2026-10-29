@@ -10,17 +10,15 @@
 //   - closeDate(dateStr, staff)           : 마감 처리 + 스냅샷 SUM + activityLog
 //   - releaseClosing(dateStr, staff, reason) : 마감 해제 + activityLog
 //
-// 권한 체크는 호출 측에서 처리 (UI 레이어 책임).
+// 권한과 스냅샷·마감·로그 원자성은 서버 명령에서 강제한다.
 
 import { db } from './firebase.js';
 import {
-  doc, getDocFromServer as getDoc, setDoc, updateDoc,
+  doc, getDocFromServer as getDoc,
   collection, getDocsFromServer as getDocs, query, orderBy, limit, where,
-  serverTimestamp,
 } from 'firebase/firestore';
-import { currentUser } from './app.js';
-import { getTodayKST, getNextBusinessDayByType, formatKstDate } from './utils/date.js';
-import { recordActivity } from './services/activityLogs.js';
+import { getTodayKST, getNextBusinessDayByType } from './utils/date.js';
+import { prepareProductionClosing } from './services/productionClosingCommand.js';
 
 // ===== 상태 판정 =====
 
@@ -90,188 +88,16 @@ export async function getEarliestUnclosedWorkday(holidays = [], scope) {
   return candidate;
 }
 
-// ===== 스냅샷 SUM =====
+// ===== 서버 원자 마감 =====
 
-/**
- * 마감 시점 잔량 스냅샷을 모든 stock에서 모은다.
- * 호출 시점의 Firestore 상태를 그대로 캡처.
- *
- * @returns {Promise<object>} closings 문서의 snapshots 필드 그대로
- */
-async function buildSnapshots() {
-  const snapshots = {
-    egg: { currentQty: 0 },
-    bags: {},
-    meatByStage: { frozen: {}, processed: {}, repacked: {} },
-    frozenPan: {},
-    frozenSep: {},
-  };
-
-  // 1. 계란
-  const eggSnap = await getDoc(doc(db, 'eggStock', 'global'));
-  if (eggSnap.exists()) {
-    snapshots.egg.currentQty = eggSnap.data().currentQty || 0;
-  }
-
-  // 2. 봉투
-  const bagSnap = await getDocs(collection(db, 'bagTypes'));
-  bagSnap.docs.forEach(d => {
-    const data = d.data();
-    snapshots.bags[d.id] = data.currentQty || 0;
-  });
-
-  // 3. 원육 (stage별)
-  const meatSnap = await getDocs(collection(db, 'meatStocks'));
-  meatSnap.docs.forEach(d => {
-    const data = d.data();
-    if (data.closed) return; // 소진된 lot 제외
-    const stage = data.stage; // 'frozen' | 'processed' | 'repacked'
-    const meatId = data.meatTypeId;
-    const remaining = data.remaining || 0;
-    if (!stage || !meatId || remaining <= 0) return;
-    if (!snapshots.meatByStage[stage]) return;
-    snapshots.meatByStage[stage][meatId] =
-      (snapshots.meatByStage[stage][meatId] || 0) + remaining;
-  });
-
-  // 4. 동결판 (factory별)
-  const fpLotsSnap = await getDocs(collection(db, 'frozenPanLots'));
-  fpLotsSnap.docs.forEach(d => {
-    const data = d.data();
-    const remaining = data.remaining || 0;
-    if (remaining <= 0) return;
-    const factory = data.factory || '미지정';
-    snapshots.frozenPan[factory] =
-      (snapshots.frozenPan[factory] || 0) + remaining;
-  });
-
-  // 5. 동결 분리작업 (productName + separationType별)
-  const fsSnap = await getDocs(collection(db, 'frozenSeparation'));
-  fsSnap.docs.forEach(d => {
-    const data = d.data();
-    const remaining = data.remaining || 0;
-    if (remaining <= 0) return;
-    const product = data.productName || '미지정';
-    const sepType = data.separationType || '미지정';
-    if (!snapshots.frozenSep[product]) snapshots.frozenSep[product] = {};
-    snapshots.frozenSep[product][sepType] =
-      (snapshots.frozenSep[product][sepType] || 0) + remaining;
-  });
-
-  return snapshots;
+// The modal may pass its prepared command to preserve the version captured
+// before confirmation. Other callers still go through the same server owner.
+export async function closeDate(dateStr, staffName, preparedCommand) {
+  const command = preparedCommand || await prepareProductionClosing(dateStr, 'close');
+  return command.submit(staffName);
 }
 
-// ===== 마감 처리 =====
-
-/**
- * 해당 날짜를 마감 처리한다.
- *
- * 동작:
- * 1. 이미 마감된 날짜면 에러
- * 2. 미래 날짜는 마감 불가
- * 3. 스냅샷 SUM 후 closings/{date} 문서 생성
- * 4. activityLogs 한 줄 기록
- *
- * @param {string} dateStr - YYYY-MM-DD
- * @param {string} staffName - 담당자 표시명
- * @returns {Promise<void>}
- */
-export async function closeDate(dateStr, staffName) {
-  if (!dateStr) throw new Error('closeDate: dateStr 필수');
-  if (!staffName) throw new Error('closeDate: staffName 필수');
-
-  const today = getTodayKST();
-  if (dateStr > today) {
-    throw new Error(`미래 날짜는 마감 불가: ${dateStr}`);
-  }
-
-  // 이미 마감된 날짜인지 체크 (released 상태에서 재마감은 허용)
-  const existing = await getDoc(doc(db, 'closings', dateStr));
-  if (existing.exists() && existing.data().status === 'closed') {
-    throw new Error(`이미 마감된 날짜: ${dateStr}`);
-  }
-
-  // 스냅샷 SUM
-  const snapshots = await buildSnapshots();
-
-  // closings 문서 작성
-  const uid = currentUser?.uid || null;
-  await setDoc(doc(db, 'closings', dateStr), {
-    status: 'closed',
-    closed: true,
-    closedAt: serverTimestamp(),
-    closedBy: staffName,
-    closedByUid: uid,
-    releasedAt: null,
-    releasedBy: null,
-    releasedByUid: null,
-    releaseReason: null,
-    snapshots,
-  });
-
-  // activityLogs 기록
-  const now = new Date();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  const hh = String(now.getHours()).padStart(2, '0');
-  const mi = String(now.getMinutes()).padStart(2, '0');
-  await recordActivity({
-    action: 'closing',
-    subAction: 'close',
-    date: dateStr,
-    staff: staffName,
-    message: `${mm}/${dd} ${hh}:${mi} 마감 / 담당: ${staffName}`,
-    details: {},
-  });
-}
-
-/**
- * 마감을 해제한다.
- *
- * 동작:
- * 1. 마감 안 된 날짜면 에러
- * 2. status를 released로 변경, 사유와 담당자 기록
- * 3. 스냅샷은 그대로 유지 (재마감 시 덮어씀)
- * 4. activityLogs 한 줄 기록
- *
- * @param {string} dateStr - YYYY-MM-DD
- * @param {string} staffName - 해제 담당자 표시명
- * @param {string} reason - 사유 (필수)
- * @returns {Promise<void>}
- */
-export async function releaseClosing(dateStr, staffName, reason) {
-  if (!dateStr) throw new Error('releaseClosing: dateStr 필수');
-  if (!staffName) throw new Error('releaseClosing: staffName 필수');
-  if (!reason || !reason.trim()) {
-    throw new Error('releaseClosing: 사유 필수');
-  }
-
-  const ref = doc(db, 'closings', dateStr);
-  const snap = await getDoc(ref);
-  if (!snap.exists() || snap.data().status !== 'closed') {
-    throw new Error(`마감되지 않은 날짜는 해제 불가: ${dateStr}`);
-  }
-
-  const uid = currentUser?.uid || null;
-  await updateDoc(ref, {
-    status: 'released',
-    releasedAt: serverTimestamp(),
-    releasedBy: staffName,
-    releasedByUid: uid,
-    releaseReason: reason.trim(),
-  });
-
-  const now = new Date();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  const hh = String(now.getHours()).padStart(2, '0');
-  const mi = String(now.getMinutes()).padStart(2, '0');
-  await recordActivity({
-    action: 'closing',
-    subAction: 'release',
-    date: dateStr,
-    staff: staffName,
-    message: `${mm}/${dd} ${hh}:${mi} 마감해제 / 담당: ${staffName} / 사유: ${reason.trim()}`,
-    details: { reason: reason.trim() },
-  });
+export async function releaseClosing(dateStr, staffName, reason, preparedCommand) {
+  const command = preparedCommand || await prepareProductionClosing(dateStr, 'release');
+  return command.submit(staffName, reason);
 }

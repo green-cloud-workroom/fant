@@ -1,3 +1,4 @@
+import { escapeHtml } from '../utils/html.js';
 import {showStatus} from '../utils/statusToast.js';
 import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
 import {saveManualMovement} from '../services/manualMovements.js';
@@ -201,17 +202,17 @@ function renderScheduleRow(s, today, canManageSchedule = false) {
   const isOverdue = s.date < today;
   return `
     <tr style="background:${isOverdue ? '#fffdf0' : 'white'}">
-      <td style="color:${isOverdue ? '#e67e22' : '#1a1a1a'}">${s.date} ${isOverdue ? '⚠️' : ''}</td>
+      <td style="color:${isOverdue ? '#e67e22' : '#1a1a1a'}">${escapeHtml(s.date)} ${isOverdue ? '⚠️' : ''}</td>
       <td><span class="tag tag-raw">${getTypeLabel(s.type)}</span></td>
-      <td>${s.itemNameSnapshot}</td>
-      <td>${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)}</td>
-      <td>${s.orderStaffName || '-'}</td>
-      <td>${s.orderMemo || '-'}</td>
+      <td>${escapeHtml(s.itemNameSnapshot)}</td>
+      <td>${escapeHtml(formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams))}</td>
+      <td>${escapeHtml(s.orderStaffName || '-')}</td>
+      <td>${escapeHtml(s.orderMemo || '-')}</td>
       <td><span style="color:#e67e22;font-size:12px">⏳ 예정</span></td>
       <td style="white-space:nowrap">
-        ${canManageSchedule ? `<button class="btn-secondary btn-edit-schedule" data-id="${s.id}" style="font-size:11px;padding:3px 10px;margin-right:4px;">수정</button>` : ''}
-        <button class="btn-primary btn-complete" data-id="${s.id}" style="font-size:11px;padding:3px 10px;margin-right:4px;">완료</button>
-        ${canManageSchedule ? `<button class="btn-secondary btn-cancel-schedule" data-id="${s.id}" style="font-size:11px;padding:3px 10px;">취소</button>` : ''}
+        ${canManageSchedule ? `<button class="btn-secondary btn-edit-schedule" data-id="${escapeHtml(s.id)}" style="font-size:11px;padding:3px 10px;margin-right:4px;">수정</button>` : ''}
+        <button class="btn-primary btn-complete" data-id="${escapeHtml(s.id)}" style="font-size:11px;padding:3px 10px;margin-right:4px;">완료</button>
+        ${canManageSchedule ? `<button class="btn-secondary btn-cancel-schedule" data-id="${escapeHtml(s.id)}" style="font-size:11px;padding:3px 10px;">취소</button>` : ''}
       </td>
     </tr>
   `;
@@ -221,19 +222,19 @@ function renderDoneRow(s) {
   const isComplete = s.status === 'completed';
   return `
     <tr style="opacity:0.8">
-      <td>${s.date}</td>
+      <td>${escapeHtml(s.date)}</td>
       <td><span class="tag tag-raw">${getTypeLabel(s.type)}</span></td>
-      <td>${s.itemNameSnapshot}</td>
-      <td>${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)}</td>
-      <td>${s.actualQty ? formatScheduleQty(s.actualQty, s.actualUnit || s.orderedUnit, s.orderedUnitGrams) : '-'}</td>
+      <td>${escapeHtml(s.itemNameSnapshot)}</td>
+      <td>${escapeHtml(formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams))}</td>
+      <td>${escapeHtml(s.actualQty ? formatScheduleQty(s.actualQty, s.actualUnit || s.orderedUnit, s.orderedUnitGrams) : '-')}</td>
       <td>${isComplete ? (validDate(s.receiptDate) ? s.receiptDate : kstDate(s.completedAt) || '-') : '-'}</td>
-      <td>${s.incomingStaffName || '-'}</td>
+      <td>${escapeHtml(s.incomingStaffName || '-')}</td>
       <td>
         <span style="color:${isComplete ? '#2d7a3a' : '#e53e3e'};font-size:12px">
           ${isComplete ? '✅ 완료' : '❌ 취소'}
         </span>
       </td>
-      <td>${s.completeMemo || s.cancelReason || '-'}</td>
+      <td>${escapeHtml(s.completeMemo || s.cancelReason || '-')}</td>
     </tr>
   `;
 }
@@ -268,7 +269,7 @@ async function showScheduleModal(editingSchedule = null, draft = null) {
     <h3 class="modal-title">입고 예정 ${isEdit ? '수정' : '등록'}</h3>
     <div class="form-group">
       <label>예정일 *</label>
-      <input type="date" id="m_date" value="${editingSchedule?.date || draft?.date || getToday()}" />
+      <input type="date" id="m_date" value="${escapeHtml(editingSchedule?.date || draft?.date || getToday())}" />
     </div>
     <div class="form-group">
       <label>구분 *</label>
@@ -289,7 +290,7 @@ async function showScheduleModal(editingSchedule = null, draft = null) {
     <div class="form-row">
       <div class="form-group">
         <label>발주수량 *</label>
-        <input type="number" id="m_qty" placeholder="수량" value="${editingSchedule?.orderedQty ?? ''}" />
+        <input type="number" id="m_qty" placeholder="수량" value="${escapeHtml(editingSchedule?.orderedQty ?? '')}" />
       </div>
       <div class="form-group">
         <label>단위</label>
@@ -301,7 +302,7 @@ async function showScheduleModal(editingSchedule = null, draft = null) {
     </div>
     <div class="form-group" id="unitGramsWrap" style="display:none;">
       <label>1마리당 g *</label>
-      <input type="number" id="m_unit_grams" placeholder="예: 1500" min="0" step="1" value="${editingSchedule?.orderedUnitGrams ?? ''}" />
+      <input type="number" id="m_unit_grams" placeholder="예: 1500" min="0" step="1" value="${escapeHtml(editingSchedule?.orderedUnitGrams ?? '')}" />
     </div>
     <div class="form-group">
       <label>발주 담당자 *</label>
@@ -312,7 +313,7 @@ async function showScheduleModal(editingSchedule = null, draft = null) {
     </div>
     <div class="form-group">
       <label>입고메모</label>
-      <input type="text" id="m_memo" placeholder="메모" value="${escapeAttr(editingSchedule?.orderMemo || '')}" />
+      <input type="text" id="m_memo" placeholder="메모" value="${escapeHtml(editingSchedule?.orderMemo || '')}" />
     </div>
     ${!isEdit ? '<label style="display:block;margin:12px 0;"><input type="checkbox" id="m_continue" /> 저장 후 다음 품목 계속 입력 (예정일·구분·단위·담당자 유지)</label>' : ''}
     <div class="modal-actions">
@@ -357,7 +358,7 @@ async function showScheduleModal(editingSchedule = null, draft = null) {
     const allItems = type === 'meat' ? meatTypes : bagTypes;
     const items = allItems.filter(item => item.active !== false || (isEdit && editingSchedule?.itemId === item.id));
     items.forEach(item => {
-      select.innerHTML += `<option value="${item.id}" data-name="${item.name}">${item.name}</option>`;
+      select.innerHTML += `<option value="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>`;
     });
     updateUnitGramsVisibility();
   };
@@ -570,8 +571,8 @@ async function runScheduleEntry(callback) {
 
 function showCancelScheduleModal(s) {
   showModal(`
-    <h3 class="modal-title">입고예정 취소 — ${s.itemNameSnapshot}</h3>
-    <p style="font-size:12px;color:#888;margin-bottom:16px;">발주수량: ${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)}</p>
+    <h3 class="modal-title">입고예정 취소 — ${escapeHtml(s.itemNameSnapshot)}</h3>
+    <p style="font-size:12px;color:#888;margin-bottom:16px;">발주수량: ${escapeHtml(formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams))}</p>
     <div class="form-group">
       <label>취소 사유 *</label>
       <input type="text" id="m_reason" placeholder="사유 입력" />
@@ -639,9 +640,9 @@ function showCompleteModal(s) {
   const isCountMeatOrder = s.type === 'meat' && isCountIncomingUnit(s.orderedUnit);
   const actualUnits = s.type === 'meat' ? (isCountMeatOrder ? ['마리','kg','g'] : ['kg','g']) : s.type === 'bag' ? ['박스','장'] : ['개','판'];
   showModal(`
-    <h3 class="modal-title">입고 완료 처리 — ${s.itemNameSnapshot}</h3>
+    <h3 class="modal-title">입고 완료 처리 — ${escapeHtml(s.itemNameSnapshot)}</h3>
     ${movementFields({incoming:true,reasonField:false})}
-    <p style="font-size:12px;color:#888;margin-bottom:16px;">발주수량: ${formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams)}</p>
+    <p style="font-size:12px;color:#888;margin-bottom:16px;">발주수량: ${escapeHtml(formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams))}</p>
     <div class="form-group">
       <label>실제 입고일 *</label>
       <input type="date" id="m_receipt_date" value="${getToday()}" max="${getToday()}" />
@@ -761,13 +762,6 @@ function showCompleteModal(s) {
 
 // 유틸
 
-function escapeAttr(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
 
 let staffCache = {};
 
@@ -776,7 +770,7 @@ function getStaffOptions(groups) {
   for (const g of groups) {
     const members = staffCache[g] || [];
     members.forEach(m => {
-      options += `<option value="${m.name}">${m.name}</option>`;
+      options += `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
     });
   }
   return options;

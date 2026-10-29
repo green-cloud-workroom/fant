@@ -3,15 +3,15 @@ import {resolve} from 'node:path';
 import {environment} from './modules.mjs';
 import {makeEditableFirestore} from '../fixtures/editableFirestore.mjs';
 
-export async function pageEnvironment(route,{baselineRef,instrument='',role='office',latencyMs=0,retained=true,instantRoutes=[]}={}) {
- const fake=makeEditableFirestore({latencyMs,alertCount:0});
+export async function pageEnvironment(route,{baselineRef,sourceFiles,instrument='',role='office',latencyMs=0,retained=true,instantRoutes=[],retryTransactionCallbackOnce=false}={}) {
+ const fake=makeEditableFirestore({latencyMs,alertCount:0,retryTransactionCallbackOnce});
  Object.assign(fake.state.rows,{
   productions:[],activityLogs:[],
   recipes:[{id:'r1',name:'검증 레시피',category:'raw',target:'cat',active:true,sortOrder:0,unitPresets:[1,2],packWeightG:100,
    ingredients:[{name:'닭',isProductionUnit:true,unitName:'kg',weightDisplayUnit:'kg',baseWeightG:1000,meatTypeId:'m1'}],productionMethods:[]},
    {id:'fd1',name:'검증 큐브',category:'freezeDry',target:'cat',active:true,sortOrder:1,unitPresets:[1],requiresSeparation:true,ingredients:[]}],
-  supplementTypes:[{id:'r1_1',active:true,name:'영양제 1',sortOrder:0},{id:'r1_2',active:true,name:'영양제 2',sortOrder:1}],
-  supplementStock:[{id:'r1_1',currentQty:20},{id:'r1_2',currentQty:20}],
+  supplementTypes:[{id:'r1_1',recipeId:'r1',unit:1,active:true,name:'영양제 1',sortOrder:0},{id:'r1_2',recipeId:'r1',unit:2,active:true,name:'영양제 2',sortOrder:1}],
+  supplementStock:[{id:'r1_1',supplementTypeId:'r1_1',currentQty:20},{id:'r1_2',supplementTypeId:'r1_2',currentQty:20}],
   meatTypes:[{id:'m1',name:'닭',category:'meat',sortOrder:0,active:true,defaultUnitWeightG:1000}],
   meatStocks:[{id:'ms1',meatTypeId:'m1',meatNameSnapshot:'닭',stage:'frozen',incomingDate:fake.today,remaining:10000,initialQtyG:10000,closed:false}],
   bagTypes:[{id:'b1',name:'검증 봉투',category:'freezeDry',sortOrder:0,active:true,currentQty:100,piecesPerBox:10}],
@@ -20,7 +20,7 @@ export async function pageEnvironment(route,{baselineRef,instrument='',role='off
   frozenPanStock:[{id:'order1',date:fake.today,status:'pending',items:[{productName:'고양이 검증 큐브',orderPanQty:3}]}],
   breadPanLots:[],frozenSeparation:[],frozenSeparationLogs:[],freezeOrders:[],
  });
- const e=await environment({session:true,firestore:fake,baselineRef,instantRoutes,instrument:{[`src/pages/${route}.js`]:instrument}});
+ const e=await environment({session:true,firestore:fake,baselineRef,sourceFiles,instantRoutes,instrument:{[`src/pages/${route}.js`]:instrument}});
  const {document}=parseHTML('<html><body><div id="mainContent"></div></body></html>');
  const events=new WeakMap(),decorated=new WeakSet(),alerts=[];
  // Intercept registration only in this document, so tests can await actual

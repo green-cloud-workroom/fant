@@ -1,4 +1,5 @@
 import {showStatus} from '../utils/statusToast.js';
+import {escapeHtml} from '../utils/html.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { db } from '../firebase.js';
 import {
@@ -27,17 +28,17 @@ export async function renderFrozenSep({force=false}={}) {
 async function loadFrozenSepStocks(scope={getDocs,getDoc}) {
   const q = query(collection(db, 'frozenSeparation'), orderBy('date', 'desc'));
   const snap = await scope.getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.closed);
+  return snap.docs.map(d => ({ ...d.data(), id: d.id })).filter(s => !s.closed);
 }
 
 async function loadFrozenSepLogs(scope={getDocs,getDoc}) {
   const q = query(collection(db, 'frozenSeparationLogs'), orderBy('timestamp', 'desc'));
   const snap = await scope.getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs.map(d => ({ ...d.data(), id: d.id }));
 }
 
 function getSummary(stocks) {
-  const summary = {};
+  const summary = Object.create(null);
   stocks.forEach(s => {
     if (!summary[s.productName]) {
       summary[s.productName] = { notSeparated: 0, separated: 0, noSplit: 0 };
@@ -320,7 +321,7 @@ function renderDailyMatrix(stocks, logs, productNames) {
 
   // 제품별로 등장하는 재고 종류 수집 (분리O → 분리X → 소분X 순)
   const TYPE_ORDER = ['separated', 'notSeparated', 'noSplit'];
-  const productTypes = {};
+  const productTypes = Object.create(null);
   productNames.forEach(p => { productTypes[p] = new Set(); });
   stocks.forEach(s => productTypes[s.productName]?.add(s.stockType));
   logs.forEach(l => {
@@ -340,7 +341,7 @@ function renderDailyMatrix(stocks, logs, productNames) {
   const canDrag = canDeleteFrozenSepStock();
   const productHeaderCells = productNames.map((p, i) => {
     const span = TYPE_ORDER.filter(t => productTypes[p].has(t)).length || 1;
-    return `<th colspan="${span}" class="sep-col-th" data-product="${p}" style="background:${PRODUCT_HEADER_BG[i % PRODUCT_HEADER_BG.length]};font-size:12px;padding:8px 6px;border:1px solid #e0e0e0;text-align:center;min-width:${span * 58}px;${canDrag ? 'cursor:grab;' : ''}" ${canDrag ? 'title="드래그로 순서 변경"' : ''}>${p}</th>`;
+    return `<th colspan="${span}" class="sep-col-th" data-product="${escapeHtml(p)}" style="background:${PRODUCT_HEADER_BG[i % PRODUCT_HEADER_BG.length]};font-size:12px;padding:8px 6px;border:1px solid #e0e0e0;text-align:center;min-width:${span * 58}px;${canDrag ? 'cursor:grab;' : ''}" ${canDrag ? 'title="드래그로 순서 변경"' : ''}>${escapeHtml(p)}</th>`;
   }).join('');
 
   const typeHeaderCells = columns.map(c => {
@@ -356,8 +357,8 @@ function renderDailyMatrix(stocks, logs, productNames) {
     }).join('');
     return `
       <tr>
-        <td style="border:1px solid #eee;text-align:center;padding:8px 6px;font-size:12px;font-weight:600;color:#555;white-space:nowrap;">${d.slice(5).replace('-', '/')}</td>
-        <td style="border:1px solid #eee;text-align:center;padding:8px 6px;font-size:12px;color:#888;white-space:nowrap;">${staffByDate[d] || '-'}</td>
+        <td style="border:1px solid #eee;text-align:center;padding:8px 6px;font-size:12px;font-weight:600;color:#555;white-space:nowrap;">${escapeHtml(d.slice(5).replace('-', '/'))}</td>
+        <td style="border:1px solid #eee;text-align:center;padding:8px 6px;font-size:12px;color:#888;white-space:nowrap;">${escapeHtml(staffByDate[d] || '-')}</td>
         ${cells}
       </tr>
     `;
@@ -460,11 +461,11 @@ function renderProductCard(name, stocks, logs, balances, canDelete) {
 
     return `
       <tr style="border-top:1px solid #f0f0f0;">
-        <td style="padding:7px 0;color:#999;font-size:12px;width:76px;">${(log.date || '').slice(5) || '-'}</td>
-        <td style="width:48px;"><span style="color:${getLogTypeColor(log.type)};font-weight:600;font-size:12px;">${getLogTypeLabel(log.type)}</span></td>
+        <td style="padding:7px 0;color:#999;font-size:12px;width:76px;">${escapeHtml((log.date || '').slice(5) || '-')}</td>
+        <td style="width:48px;"><span style="color:${getLogTypeColor(log.type)};font-weight:600;font-size:12px;">${escapeHtml(getLogTypeLabel(log.type))}</span></td>
         <td style="font-size:12.5px;">${desc}</td>
         <td style="text-align:right;color:#888;font-size:12px;">${flowText}</td>
-        <td style="text-align:right;color:#999;font-size:12px;width:64px;">${log.staffName || '-'}</td>
+        <td style="text-align:right;color:#999;font-size:12px;width:64px;">${escapeHtml(log.staffName || '-')}</td>
       </tr>
     `;
   }).join('');
@@ -472,20 +473,20 @@ function renderProductCard(name, stocks, logs, balances, canDelete) {
   // 현재 lot 상세 (삭제 버튼 포함)
   const lotRows = myStocks.map(s => `
     <tr style="border-top:1px solid #f0f0f0;">
-      <td style="padding:6px 0;color:#999;font-size:12px;width:90px;">${s.date}</td>
+      <td style="padding:6px 0;color:#999;font-size:12px;width:90px;">${escapeHtml(s.date)}</td>
       <td style="width:60px;"><span class="tag ${getStockTypeTagClass(s.stockType)}" style="font-size:10px;">${getStockTypeLabel(s.stockType)}</span></td>
       <td style="font-size:12.5px;font-weight:600;">${formatQty(s.remaining)}개 <span style="font-weight:400;font-size:11px;color:#999;">/ 최초 ${formatQty(s.initialQty)}개</span></td>
-      <td style="color:#999;font-size:12px;">${s.staffName || '-'}</td>
-      <td style="color:#999;font-size:12px;">${s.note || '-'}</td>
-      ${canDelete ? `<td style="text-align:right;width:52px;"><button class="btn-del-row btnDeleteFrozenSep" data-id="${s.id}">삭제</button></td>` : ''}
+      <td style="color:#999;font-size:12px;">${escapeHtml(s.staffName || '-')}</td>
+      <td style="color:#999;font-size:12px;">${escapeHtml(s.note || '-')}</td>
+      ${canDelete ? `<td style="text-align:right;width:52px;"><button class="btn-del-row btnDeleteFrozenSep" data-id="${escapeHtml(s.id)}">삭제</button></td>` : ''}
     </tr>
   `).join('');
 
   return `
     <div style="background:white;border:1px solid #e8e8e8;border-radius:12px;overflow:hidden;">
-      <div class="sep-card-header" data-product="${name}" style="padding:14px 18px;display:flex;align-items:center;gap:14px;cursor:pointer;user-select:none;">
+      <div class="sep-card-header" data-product="${escapeHtml(name)}" style="padding:14px 18px;display:flex;align-items:center;gap:14px;cursor:pointer;user-select:none;">
         <span style="font-size:13px;color:#bbb;transform:rotate(${expanded ? '90deg' : '0deg'});transition:transform 0.15s;">▶</span>
-        <span style="font-size:15px;font-weight:600;min-width:150px;">${name}</span>
+        <span style="font-size:15px;font-weight:600;min-width:150px;">${escapeHtml(name)}</span>
         <span style="font-size:12px;color:#888;">${cumParts.join(' · ')}</span>
         <span style="margin-left:auto;display:flex;gap:6px;">${badges || '<span style="font-size:11px;color:#ccc;">재고 없음</span>'}</span>
       </div>
@@ -743,7 +744,7 @@ function showSeparateModal(stocks, draft=null) {
           const total = notSepStocks
             .filter(s => s.productName === p)
             .reduce((sum, s) => sum + Number(s.remaining || 0), 0);
-          return `<option value="${p}">${p} (분리X: ${formatQty(total)}개)</option>`;
+          return `<option value="${escapeHtml(p)}">${escapeHtml(p)} (분리X: ${formatQty(total)}개)</option>`;
         }).join('')}
       </select>
     </div>
@@ -861,7 +862,7 @@ function showOutModal(stocks, draft=null) {
       <label>제품 *</label>
       <select id="m_product" onchange="updateOutType()">
         <option value="">선택</option>
-        ${products.map(p => `<option value="${p}">${p}</option>`).join('')}
+        ${products.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('')}
       </select>
     </div>
     <!-- [묶음 5C] 재고 종류 운영자 입력 제거 → 레시피 설정으로 자동 결정 + 재고 안내 -->
@@ -1020,7 +1021,7 @@ function showAdjustModal(stocks) {
       <label>제품 *</label>
       <select id="m_product">
         <option value="">선택</option>
-        ${products.map(p => `<option value="${p}">${p}</option>`).join('')}
+        ${products.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('')}
       </select>
     </div>
     <div class="form-group">
@@ -1184,7 +1185,7 @@ function getStaffOptions(groups) {
   for (const g of groups) {
     const members = staffCache[g] || [];
     members.forEach(m => {
-      options += `<option value="${m.name}">${m.name}</option>`;
+      options += `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
     });
   }
   return options;

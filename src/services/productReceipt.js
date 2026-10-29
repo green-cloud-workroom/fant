@@ -3,6 +3,7 @@ import { doc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { fingerprint, openAction } from './actionGateway.js';
 import { recordActivity } from './activityLogs.js';
 import { getTodayKST } from '../utils/date.js';
+import { newProductionWriteToken } from '../utils/productionWriteToken.js';
 
 // The transaction rechecks the same documents used to open the form. A retry
 // cannot silently save a newer production or create a second inventory receipt.
@@ -39,6 +40,7 @@ export async function saveProductReceipt({ action, refs, p, target, result, meth
       const requestRef = doc(db, 'productTransferRequests', idempotencyKey);
       if ((await transaction.get(requestRef)).exists()) throw new Error('이미 전송된 입고입니다. 저장 결과를 다시 확인해주세요.');
       transaction.update(doc(db, 'productions', p.id), {
+        mutationToken: newProductionWriteToken(),
         received: true, receivedMethod: method, receivedPlates: result.plates,
         receivedLoosePacks: result.loose, receivedTotalPacks: result.totalPacks,
         receivedBox: result.boxes, receivedRemainder: result.remainder,

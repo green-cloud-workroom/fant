@@ -1,3 +1,4 @@
+import { escapeHtml } from './html.js';
 // 레시피 관련 공통 유틸
 // 사용처: 동결판 재고, 분리작업 등 productName 드롭다운
 
@@ -44,7 +45,7 @@ export async function getActiveFreezeDryRecipes(scope={getDocs}) {
 export function getRecipeOptionsHtml(recipes, selected = '') {
   const placeholder = `<option value="">선택</option>`;
   const opts = recipes.map(r =>
-    `<option value="${r.displayName}" ${r.displayName === selected ? 'selected' : ''}>${r.displayName}</option>`
+    `<option value="${escapeHtml(r.displayName)}" ${r.displayName === selected ? 'selected' : ''}>${escapeHtml(r.displayName)}</option>`
   ).join('');
   return placeholder + opts;
 }

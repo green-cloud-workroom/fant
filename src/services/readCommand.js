@@ -46,7 +46,7 @@ export async function withReadCommand(resource, callback, {
           return await this.commit({ commit: () => runTransaction(db, async transaction => {
             try { return await callback(transaction); }
             catch (error) { validationError = error; throw error; }
-          }) }, { targets });
+          }) }, { targets, atomic: true });
         } catch (error) {
           // A callback exception aborts the SDK transaction before publication.
           if (validationError && error.cause === validationError) {
@@ -56,7 +56,7 @@ export async function withReadCommand(resource, callback, {
           throw error;
         }
       },
-      async commit(batch, { targets = [] } = {}) {
+      async commit(batch, { targets = [], atomic = false } = {}) {
         if (dispatching) throw new Error('이미 처리 중입니다.');
         if (failure) throw failure;
         if (attempted && completed >= maxCommits) throw new Error('이 저장 요청은 이미 전송되었습니다.');
@@ -74,6 +74,15 @@ export async function withReadCommand(resource, callback, {
               timer = setTimeout(() => reject(new Error('write-timeout')), timeoutMs);
             })]);
           } catch (error) {
+            // Only native atomic SDK boundaries guarantee zero writes on a
+            // Rules rejection. Arbitrary publication callbacks remain unknown.
+            if (atomic && error.code === 'permission-denied') {
+              resource.blocked = completed > 0;
+              resource.invalidate();
+              failure = new Error('서버가 저장을 거부했습니다. 권한과 앱 버전을 확인하고 최신 자료를 다시 불러와주세요.', { cause: error });
+              failure.code = 'permission-denied';
+              throw failure;
+            }
             resource.blocked = true;
             resource.invalidate();
             // Diagnostic read-back cannot trigger another dispatch.

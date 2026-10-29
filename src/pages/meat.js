@@ -418,7 +418,7 @@ function renderStockSummaryCell(g) {
     return dateA.localeCompare(dateB);
   });
   return `
-    <div class="stock-summary-cell" data-meat-type-id="${g.meatTypeId || ''}" data-summary-id="${escapeHtml(summaryId)}" style="min-width:0;border:1px solid #e8e8e8;border-radius:5px;padding:0;background:#fff;overflow:hidden;">
+    <div class="stock-summary-cell" data-meat-type-id="${escapeHtml(g.meatTypeId || '')}" data-summary-id="${escapeHtml(summaryId)}" style="min-width:0;border:1px solid #e8e8e8;border-radius:5px;padding:0;background:#fff;overflow:hidden;">
       <div class="stock-summary-main" style="display:flex;align-items:center;gap:4px;min-width:0;padding:3px 5px;cursor:pointer;">
         ${canDrag ? '<span class="stock-summary-drag-handle" style="cursor:grab;color:#bbb;font-size:11px;flex-shrink:0;">::</span>' : ''}
         <span style="color:#888;font-size:11px;flex-shrink:0;width:10px;text-align:center;">${expanded ? '-' : '+'}</span>
@@ -435,7 +435,7 @@ function renderStockSummaryCell(g) {
                 <div style="display:flex;align-items:center;gap:5px;">
                   <span style="color:#777;font-size:11px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(date)}</span>
                   <b style="color:${lotColor};font-size:11px;white-space:nowrap;">${(Number(lot.remaining || 0) / 1000).toFixed(2)}kg</b>
-                  <button class="btn-adjust" data-id="${lot.id}" data-name="${escapeHtml(lot.meatNameSnapshot || g.name || '')}" data-remaining="${lot.remaining}" style="padding:1px 6px;font-size:11px;">&#51312;&#51221;</button>
+                  <button class="btn-adjust" data-id="${escapeHtml(lot.id)}" data-name="${escapeHtml(lot.meatNameSnapshot || g.name || '')}" data-remaining="${escapeHtml(lot.remaining)}" style="padding:1px 6px;font-size:11px;">&#51312;&#51221;</button>
                 </div>
               </div>
             `;
@@ -459,14 +459,14 @@ function renderStockSummary(stocks) {
       </div>
       <div class="stock-summary-columns" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;">
         ${groups.map(group => `
-          <div class="stock-summary-category-column" data-category-id="${group.id}" data-virtual="${group.virtual ? 'true' : 'false'}"
+          <div class="stock-summary-category-column" data-category-id="${escapeHtml(group.id)}" data-virtual="${group.virtual ? 'true' : 'false'}"
                style="flex:0 0 calc((100% - 50px) / 6);flex-grow:0;flex-shrink:0;min-width:0;max-width:calc((100% - 50px) / 6);background:#fff;border:1px solid #e8e8e8;border-radius:6px;overflow:hidden;">
             <div class="stock-summary-category-header" style="display:flex;align-items:center;gap:6px;padding:5px 7px;background:#f1f3f5;border-bottom:1px solid #e8e8e8;font-weight:700;color:#444;font-size:12px;">
               ${canManage && !group.virtual ? '<span class="stock-summary-category-handle" style="cursor:grab;color:#aaa;">⠿</span>' : ''}
               <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${escapeHtml(group.name)}</span>
               <span style="font-size:11px;color:#888;">${group.items.length}</span>
             </div>
-            <div class="stock-summary-category-items" data-category-id="${group.id}" style="display:flex;flex-direction:column;gap:4px;min-height:28px;padding:5px;">
+            <div class="stock-summary-category-items" data-category-id="${escapeHtml(group.id)}" style="display:flex;flex-direction:column;gap:4px;min-height:28px;padding:5px;">
               ${group.items.length === 0
                 ? '<div class="stock-summary-empty" style="font-size:11px;color:#bbb;padding:3px 2px;">비어 있음</div>'
                 : group.items.map(renderStockSummaryCell).join('')}
@@ -1185,7 +1185,7 @@ function showAddFrozenModal(options = {}) {
       <label>${itemLabel} 종류 *</label>
       <select id="m_meatType">
         <option value="">선택</option>
-        ${activeMeatTypes.map(m => `<option value="${m.id}" data-weight="${m.defaultUnitWeightG}">${m.name}</option>`).join('')}
+        ${activeMeatTypes.map(m => `<option value="${escapeHtml(m.id)}" data-weight="${escapeHtml(m.defaultUnitWeightG)}">${escapeHtml(m.name)}</option>`).join('')}
       </select>
     </div>
     <div class="form-row">
@@ -1280,7 +1280,7 @@ function showAddProcessedModal() {
       <label>원육 종류 *</label>
       <select id="m_meatType">
         <option value="">선택</option>
-        ${getActiveMeatTypes().map(m => `<option value="${m.id}" data-weight="${m.defaultUnitWeightG}">${m.name}</option>`).join('')}
+        ${getActiveMeatTypes().map(m => `<option value="${escapeHtml(m.id)}" data-weight="${escapeHtml(m.defaultUnitWeightG)}">${escapeHtml(m.name)}</option>`).join('')}
       </select>
     </div>
     <div class="form-row">
@@ -1449,7 +1449,7 @@ function showAddRepackedModal() {
       <label>원육 종류 *</label>
       <select id="m_meatType">
         <option value="">선택</option>
-        ${getActiveMeatTypes().map(m => `<option value="${m.id}" data-weight="${m.defaultUnitWeightG}">${m.name}</option>`).join('')}
+        ${getActiveMeatTypes().map(m => `<option value="${escapeHtml(m.id)}" data-weight="${escapeHtml(m.defaultUnitWeightG)}">${escapeHtml(m.name)}</option>`).join('')}
       </select>
     </div>
     <div class="form-row">
@@ -1620,9 +1620,9 @@ function showAddRepackedModal() {
 // 수동 조정 모달
 function showAdjustModal(id, name, remaining) {
   showModal(`
-    <h3 class="modal-title">수동 재고 조정 — ${name}</h3>
+    <h3 class="modal-title">수동 재고 조정 — ${escapeHtml(name)}</h3>
     ${movementFields({reasonField:false})}
-    <p style="font-size:12px;color:#888;margin-bottom:16px;">기존 잔량: <strong>${(remaining/1000).toFixed(1)}kg</strong> (${remaining}g)</p>
+    <p style="font-size:12px;color:#888;margin-bottom:16px;">기존 잔량: <strong>${(remaining/1000).toFixed(1)}kg</strong> (${escapeHtml(remaining)}g)</p>
     <div class="form-group" id="m_usageGroup" hidden style="display:none">
       <label>사용량 (g) *</label>
       <input type="number" id="m_usageQty" min="0" step="any" placeholder="사용한 중량(g) 입력" />
@@ -1721,17 +1721,17 @@ function renderMeatStockCategoryRows() {
   return scopedCategories.map(group => {
     const count = meatTypes.filter(m => m.groupId === group.id).length;
     return `
-      <tr data-id="${group.id}">
+      <tr data-id="${escapeHtml(group.id)}">
         <td class="master-table-drag-cell">
           <span class="drag-handle" title="순서 변경" aria-label="순서 변경">⠿</span>
         </td>
         <td>
-          <input type="text" class="stock-category-name" data-id="${group.id}" value="${escapeHtml(group.name)}"
+          <input type="text" class="stock-category-name" data-id="${escapeHtml(group.id)}" value="${escapeHtml(group.name)}"
                  style="width:100%;padding:5px 6px;" />
         </td>
         <td style="text-align:right;color:#666;">${count}</td>
         <td>
-          <button type="button" class="btn-secondary btn-delete-stock-category" data-id="${group.id}">삭제</button>
+          <button type="button" class="btn-secondary btn-delete-stock-category" data-id="${escapeHtml(group.id)}">삭제</button>
         </td>
       </tr>
     `;
@@ -1912,27 +1912,27 @@ function showMeatTypesModal(options = {}) {
             const active = m.active !== false;
             const minQtyValue = isProduceModal ? (m.minimumQtyG || 0) : ((m.minimumQtyG || 0) / 1000).toFixed(1);
             return `
-              <tr class="${active ? '' : 'inactive-master'}" data-id="${m.id}">
+              <tr class="${active ? '' : 'inactive-master'}" data-id="${escapeHtml(m.id)}">
                 <td class="master-table-drag-cell">
                   ${canReorderMeatTypes ? '<span class="drag-handle" title="순서 변경" aria-label="순서 변경">≡</span>' : ''}
                 </td>
                 <td>
-                  ${m.name}
+                  ${escapeHtml(m.name)}
                   ${active ? '' : '<span class="tag tag-inactive" style="margin-left:6px;">\uBE44\uD65C\uC131</span>'}
                 </td>
                 <td>
-                  <input type="number" class="m-unit-weight" data-id="${m.id}"
-                         value="${m.defaultUnitWeightG}" min="1" step="any"
+                  <input type="number" class="m-unit-weight" data-id="${escapeHtml(m.id)}"
+                         value="${escapeHtml(m.defaultUnitWeightG)}" min="1" step="any"
                          style="width:70px;padding:3px 4px;text-align:right;" />
                 </td>
                 <td>
-                  <input type="number" class="m-min-qty" data-id="${m.id}"
-                         value="${minQtyValue}" min="0" step="any"
+                  <input type="number" class="m-min-qty" data-id="${escapeHtml(m.id)}"
+                         value="${escapeHtml(minQtyValue)}" min="0" step="any"
                          style="width:70px;padding:3px 4px;text-align:right;" />
                 </td>
                 <td>
                   <label class="toggle-switch" title="${active ? '\uD65C\uC131' : '\uBE44\uD65C\uC131'}">
-                    <input type="checkbox" class="m-active-toggle" data-id="${m.id}" ${active ? 'checked' : ''}>
+                    <input type="checkbox" class="m-active-toggle" data-id="${escapeHtml(m.id)}" ${active ? 'checked' : ''}>
                     <span class="toggle-slider"></span>
                   </label>
                 </td>
@@ -2195,7 +2195,7 @@ function getStaffOptions(groups) {
   for (const g of groups) {
     const members = staffCache[g] || [];
     members.forEach(m => {
-      options += `<option value="${m.name}">${m.name}</option>`;
+      options += `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
     });
   }
   return options;

@@ -1,3 +1,4 @@
+import { escapeHtml, recipeColor } from '../utils/html.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocsFromServer as getDocs, getDocFromServer as getDoc, doc, updateDoc, query, orderBy, where, writeBatch, serverTimestamp
@@ -111,17 +112,17 @@ function renderRecipeLayout() {
 function renderRecipeListItem(r) {
   const canReorder = currentUserRole === 'admin' || currentUserRole === 'office';
   return `
-    <div class="recipe-list-item ${selectedRecipeId === r.id ? 'active' : ''}" data-id="${r.id}" style="border-left-color: ${r.color || '#4A7C59'}">
+    <div class="recipe-list-item ${selectedRecipeId === r.id ? 'active' : ''}" data-id="${escapeHtml(r.id)}" style="border-left-color: ${recipeColor(r.color)}">
       ${canReorder ? '<span class="drag-handle" title="순서 변경" aria-label="순서 변경">≡</span>' : ''}
       <div class="recipe-list-info">
-        <span class="recipe-name">${getDisplayName(r)}</span>
+        <span class="recipe-name">${escapeHtml(getDisplayName(r))}</span>
         <div class="recipe-tags">
-          <span class="tag tag-${r.category}">${r.category === 'raw' ? '생식' : '동결'}</span>
-          <span class="tag tag-${r.target}">${getTargetLabel(r.target)}</span>
+          <span class="tag tag-${escapeHtml(r.category)}">${r.category === 'raw' ? '생식' : '동결'}</span>
+          <span class="tag tag-${escapeHtml(r.target)}">${getTargetLabel(r.target)}</span>
         </div>
       </div>
       <label class="toggle-switch">
-        <input type="checkbox" class="recipe-active-toggle" data-id="${r.id}" ${r.active ? 'checked' : ''} ${canReorder ? '' : 'disabled'}>
+        <input type="checkbox" class="recipe-active-toggle" data-id="${escapeHtml(r.id)}" ${r.active ? 'checked' : ''} ${canReorder ? '' : 'disabled'}>
         <span class="toggle-slider"></span>
       </label>
     </div>
@@ -224,10 +225,10 @@ function renderProductionMethodRows() {
       <span>활성</span>
     </div>
     ${currentProductionMethods.map(method => `
-      <div class="production-method-row" data-method-key="${method.methodKey}">
-        <div class="production-method-label">${method.label || getProductionMethodLabel(method.methodKey)}</div>
-        <input type="number" class="production-method-unit" value="${method.unitToBox || ''}" min="0.01" step="0.01" placeholder="0.83" />
-        <input type="date" class="production-method-date" value="${method.effectiveDate || getToday()}" />
+      <div class="production-method-row" data-method-key="${escapeHtml(method.methodKey)}">
+        <div class="production-method-label">${escapeHtml(method.label || getProductionMethodLabel(method.methodKey))}</div>
+        <input type="number" class="production-method-unit" value="${escapeHtml(method.unitToBox || '')}" min="0.01" step="0.01" placeholder="0.83" />
+        <input type="date" class="production-method-date" value="${escapeHtml(method.effectiveDate || getToday())}" />
         <label class="production-method-active">
           <input type="checkbox" class="production-method-active-input" ${method.active !== false ? 'checked' : ''} />
         </label>
@@ -360,7 +361,8 @@ function getSupplementBaseDoc(recipeId, recipeData, unit, unitIndex) {
 
 async function loadRecipeDeleteContext(recipe, scope={getDocs,getDoc}) {
   const {getDocs,getDoc}=scope;
-  const [productionSnap, scheduleSnap, supplementTypeSnap] = await Promise.all([
+  const [recipeSnap, productionSnap, scheduleSnap, supplementTypeSnap] = await Promise.all([
+    getDoc(doc(db, 'recipes', recipe.id)),
     getDocs(query(collection(db, 'productions'), where('recipeId', '==', recipe.id))),
     getDocs(query(collection(db, 'schedules'), where('recipeId', '==', recipe.id))),
     getDocs(query(collection(db, 'supplementTypes'), where('recipeId', '==', recipe.id))),
@@ -383,6 +385,7 @@ async function loadRecipeDeleteContext(recipe, scope={getDocs,getDoc}) {
   }
 
   return {
+    currentRecipe: recipeSnap.exists() ? recipeSnap.data() : null,
     productionCount: productionSnap.size,
     scheduleCount: scheduleSnap.size,
     supplementSummaries,
@@ -394,17 +397,22 @@ async function loadSupplementDeleteSummaries(recipe, removedUnits, scope={getDoc
   const summaries = [];
   for (const unit of removedUnits) {
     const supplementTypeId = makeSupplementId(recipe.id, unit);
-    const stockSnap = await getDoc(doc(db, 'supplementStock', supplementTypeId));
-    const logSnap = await getDocs(query(
+    const [typeSnap, stockSnap, logSnap] = await Promise.all([
+      getDoc(doc(db, 'supplementTypes', supplementTypeId)),
+      getDoc(doc(db, 'supplementStock', supplementTypeId)),
+      getDocs(query(
       collection(db, 'supplementLogs'),
       where('supplementTypeId', '==', supplementTypeId)
-    ));
-    const stockQty = Number(stockSnap.data()?.currentQty || 0);
+    )),
+    ]);
+    const stockQty = stockSnap.exists() ? stockSnap.data().currentQty : 0;
     summaries.push({
       unit,
       supplementTypeId,
       name: makeSupplementName(getDisplayName(recipe), unit),
       stockQty,
+      typeExists: typeSnap.exists(),
+      stockExists: stockSnap.exists(),
       logCount: logSnap.size,
       logDocs: logSnap.docs,
     });
@@ -415,7 +423,14 @@ async function loadSupplementDeleteSummaries(recipe, removedUnits, scope={getDoc
 async function confirmSupplementPresetDeletion(recipe, removedUnits, scope={getDocs,getDoc}) {
   if (removedUnits.length === 0) return true;
 
-  const summaries = await loadSupplementDeleteSummaries(recipe, removedUnits, scope);
+  const [summaries, productionSnap] = await Promise.all([
+    loadSupplementDeleteSummaries(recipe, removedUnits, scope),
+    scope.getDocs(query(collection(db, 'productions'), where('recipeId', '==', recipe.id))),
+  ]);
+  if (productionSnap.size > 0 || summaries.some(s => s.typeExists || s.stockExists || s.logCount > 0)) {
+    alert('생산 기록 또는 영양제 SKU·재고·이력이 연결되어 있어 생산단위를 삭제할 수 없습니다. 비활성화나 별도 정리 절차를 검토해주세요.');
+    return false;
+  }
   const hasStock = summaries.some(s => s.stockQty > 0);
 
   if (hasStock && typeof window.openBlockingModal === 'function') {
@@ -615,7 +630,7 @@ function showRecipeDetail(recipe) {
 
   detail.innerHTML = `
     <div class="detail-header">
-      <span class="detail-title">${isNew ? '새 레시피' : getDisplayName(recipe)}</span>
+      <span class="detail-title">${escapeHtml(isNew ? '새 레시피' : getDisplayName(recipe))}</span>
       <div class="detail-actions">
         ${canEdit ? '<button class="btn-primary" id="btnSaveRecipe">저장</button>' : ''}
         ${!isNew && canEdit ? '<button class="btn-danger" id="btnDeleteRecipe">삭제</button>' : ''}
@@ -628,7 +643,7 @@ function showRecipeDetail(recipe) {
         <div class="form-row">
           <div class="form-group">
             <label>레시피명 *</label>
-            <input type="text" id="recipeName" value="${recipe?.name || ''}" placeholder="레시피명 입력" />
+            <input type="text" id="recipeName" value="${escapeHtml(recipe?.name || '')}" placeholder="레시피명 입력" />
           </div>
           <div class="form-group">
             <label>카테고리 *</label>
@@ -649,18 +664,18 @@ function showRecipeDetail(recipe) {
           </div>
           <div class="form-group">
             <label>카드 색상</label>
-            <input type="color" id="recipeColor" value="${recipe?.color || '#4A7C59'}" style="height:36px;width:60px;padding:2px;" />
+            <input type="color" id="recipeColor" value="${recipeColor(recipe?.color)}" style="height:36px;width:60px;padding:2px;" />
           </div>
         </div>
         <!-- [봉투 연동] raw 카테고리 폼: 팩당 중량 + 봉투 선택 -->
         <div class="form-row" id="rawFields" style="${recipe?.category !== 'raw' && recipe?.category ? 'display:none' : ''}">
           <div class="form-group">
             <label>팩당 중량 (g)</label>
-            <input type="number" id="packWeightG" value="${recipe?.packWeightG || ''}" placeholder="예: 75" />
+            <input type="number" id="packWeightG" value="${escapeHtml(recipe?.packWeightG || '')}" placeholder="예: 75" />
           </div>
           <div class="form-group">
             <label>판당 팩수 (팩/판)</label>
-            <input type="number" id="recipePacksPerPlate" value="${recipe?.packsPerPlate || ''}" placeholder="비우면 설정 기본값" />
+            <input type="number" id="recipePacksPerPlate" value="${escapeHtml(recipe?.packsPerPlate || '')}" placeholder="비우면 설정 기본값" />
           </div>
           <div class="form-group">
             <label>사용 봉투 *</label>
@@ -668,7 +683,7 @@ function showRecipeDetail(recipe) {
               <option value="">선택</option>
               ${bagTypes
                 .filter(b => b.active !== false || recipe?.bagTypeId === b.id)
-                .map(b => `<option value="${b.id}" ${recipe?.bagTypeId === b.id ? 'selected' : ''}>${b.name}${b.active === false ? ' (비활성)' : ''}</option>`)
+                .map(b => `<option value="${escapeHtml(b.id)}" ${recipe?.bagTypeId === b.id ? 'selected' : ''}>${escapeHtml(b.name)}${b.active === false ? ' (비활성)' : ''}</option>`)
                 .join('')}
             </select>
           </div>
@@ -676,22 +691,22 @@ function showRecipeDetail(recipe) {
         <div class="form-row">
           <div class="form-group">
             <label>비고</label>
-            <input type="text" id="recipeNote" value="${recipe?.note || ''}" placeholder="비고" />
+            <input type="text" id="recipeNote" value="${escapeHtml(recipe?.note || '')}" placeholder="비고" />
           </div>
         </div>
         <div id="freezeDryFields" style="${recipe?.category !== 'freezeDry' ? 'display:none' : ''}">
           <div class="form-row">
             <div class="form-group">
               <label>생산단위 1당 봉지수</label>
-              <input type="number" id="freezeDryBagCount" value="${recipe?.freezeDryBagCountPerUnit || ''}" />
+              <input type="number" id="freezeDryBagCount" value="${escapeHtml(recipe?.freezeDryBagCountPerUnit || '')}" />
             </div>
             <div class="form-group" id="breadPanCountGroup" style="${recipe?.requiresSeparation === false ? 'display:none' : ''}">
               <label>생산단위 1당 빵판수</label>
-              <input type="number" id="breadPanCount" value="${recipe?.breadPanCountPerUnit || ''}" />
+              <input type="number" id="breadPanCount" value="${escapeHtml(recipe?.breadPanCountPerUnit || '')}" />
             </div>
             <div class="form-group">
               <label>생산단위 1당 동결판수</label>
-              <input type="number" id="freezePanCount" value="${recipe?.freezePanCountPerUnit || ''}" />
+              <input type="number" id="freezePanCount" value="${escapeHtml(recipe?.freezePanCountPerUnit || '')}" />
             </div>
             <div class="form-group">
               <label>분리작업 필요</label>
@@ -824,12 +839,21 @@ async function deleteRecipeWithCommand(recipe, command) {
 
   try {
     const context = await loadRecipeDeleteContext(recipe,command);
+    if (!context.currentRecipe) {
+      alert('레시피 원본을 찾을 수 없습니다. 최신 자료를 확인해주세요.');
+      return;
+    }
     if (context.productionCount > 0) {
       alert(`이 레시피로 만든 생산 기록이 ${context.productionCount}건 있어 삭제할 수 없습니다.\n비활성화로 처리해주세요.`);
       return;
     }
     if (context.scheduleCount > 0) {
       alert(`입고 예정 ${context.scheduleCount}건이 있어 삭제할 수 없습니다.`);
+      return;
+    }
+    if (context.supplementSummaries.length > 0 ||
+        (Array.isArray(context.currentRecipe.unitPresets) && context.currentRecipe.unitPresets.length > 0)) {
+      alert('영양제 SKU·재고·이력의 참조 보존을 확인할 수 없어 레시피를 삭제할 수 없습니다. 비활성화나 별도 정리 절차를 검토해주세요.');
       return;
     }
 
@@ -893,8 +917,8 @@ function renderUnitPresetChips() {
 
   return currentUnitPresets.map((unit, idx) => `
     <span class="unit-preset-chip">
-      <span>${unit}</span>
-      <button type="button" class="unit-preset-remove" data-idx="${idx}" aria-label="${unit} 삭제">×</button>
+      <span>${escapeHtml(unit)}</span>
+      <button type="button" class="unit-preset-remove" data-idx="${idx}" aria-label="${escapeHtml(unit)} 삭제">×</button>
     </span>
   `).join('');
 }
@@ -970,15 +994,15 @@ function renderIngredientRow(ing, idx) {
   const displayWeight = getIngredientWeightDisplay(ing);
   const meatOptions = meatTypes
     .filter(m => m.active !== false || ing.meatTypeId === m.id)
-    .map(m => `<option value="${m.id}" ${ing.meatTypeId === m.id ? 'selected' : ''}>${m.name}</option>`)
+    .map(m => `<option value="${escapeHtml(m.id)}" ${ing.meatTypeId === m.id ? 'selected' : ''}>${escapeHtml(m.name)}</option>`)
     .join('');
 
   return `
     <tr data-idx="${idx}">
-      <td><input type="text" class="ing-name cell-input" value="${ing.name || ''}" placeholder="원료명" /></td>
+      <td><input type="text" class="ing-name cell-input" value="${escapeHtml(ing.name || '')}" placeholder="원료명" /></td>
       <td>
         <div class="ingredient-weight-control">
-          <input type="number" class="ing-weight cell-input" value="${displayWeight}" placeholder="${weightDisplayUnit}" step="0.001" />
+          <input type="number" class="ing-weight cell-input" value="${escapeHtml(displayWeight)}" placeholder="${weightDisplayUnit}" step="0.001" />
           <select class="ing-weight-unit">
             <option value="g" ${weightDisplayUnit === 'g' ? 'selected' : ''}>g</option>
             <option value="kg" ${weightDisplayUnit === 'kg' ? 'selected' : ''}>kg</option>
@@ -988,7 +1012,7 @@ function renderIngredientRow(ing, idx) {
       <td style="text-align:center">
         <input type="radio" name="productionUnit" class="ing-unit-radio" value="${idx}" ${ing.isProductionUnit ? 'checked' : ''} />
       </td>
-      <td><input type="text" class="ing-unit-name cell-input" value="${ing.unitName || ''}" placeholder="예: 마리" /></td>
+      <td><input type="text" class="ing-unit-name cell-input" value="${escapeHtml(ing.unitName || '')}" placeholder="예: 마리" /></td>
       <td style="text-align:center">
         <input type="checkbox" class="ing-linked" ${isLinked ? 'checked' : ''} />
       </td>
@@ -1164,6 +1188,10 @@ async function saveRecipeWithCommand(id, command) {
   // 영양제 미사용 레시피는 supplementType을 만들지 않음 (예: 텐더동결).
   // toggle을 끄면 supplementUnits=[] → 기존 SKU/재고/이력이 removedUnits로 정리됨.
   const supplementUnits = usesSupplement ? data.unitPresets : [];
+  if(supplementUnits.length>12){
+    alert('영양제 생산단위는 한 레시피에 최대 12개까지 등록할 수 있습니다. 관리자에게 문의해주세요.');
+    return;
+  }
 
   if (category === 'raw') {
     data.packWeightG = parseFloat(document.getElementById('packWeightG').value) || null;
@@ -1320,7 +1348,7 @@ async function saveRecipeWithCommand(id, command) {
     const recipe = recipes.find(r => r.id === selectedRecipeId);
     if (recipe) {
       showRecipeDetail(recipe);
-      document.querySelector(`[data-id="${selectedRecipeId}"]`)?.classList.add('active');
+      Array.from(document.querySelectorAll('.recipe-list-item')).find(node => node.dataset.id === selectedRecipeId)?.classList.add('active');
     }
   }
 

@@ -26,7 +26,15 @@ export function makeEditableFirestore(options={}){
   };
   const writeBatch=()=>{const operations=[];let used=false;const batch={set:(target,data,options)=>{operations.push({kind:'set',target,data,options});return batch;},update:(target,data)=>{operations.push({kind:'update',target,data});return batch;},delete:target=>{operations.push({kind:'delete',target});return batch;},commit:()=>{if(used)throw Error('fixture batch reused');used=true;return commit(operations);}};return batch;};
   const api={...fake.api,collection,doc,writeBatch,increment:value=>({increment:value}),
-    runTransaction:async(_db,callback)=>{const batch=writeBatch();const result=await callback({...batch,get:fake.api.getDocFromServer});await batch.commit();return result;},
+    runTransaction:async(_db,callback)=>{
+      if(options.retryTransactionCallbackOnce){
+        const paths=[],dry={get:fake.api.getDocFromServer};
+        for(const kind of ['set','update','delete'])dry[kind]=(target)=>{paths.push(target.path);return dry;};
+        await callback(dry);
+        state.transactionRetryPaths=paths;
+      }
+      const batch=writeBatch();const result=await callback({...batch,get:fake.api.getDocFromServer});await batch.commit();return result;
+    },
     setDoc:(target,data,options)=>writeBatch().set(target,data,options).commit(),updateDoc:(target,data)=>writeBatch().update(target,data).commit(),deleteDoc:target=>writeBatch().delete(target).commit(),
     addDoc:async(parent,data)=>{const target=doc(parent);await writeBatch().set(target,data).commit();return target;},
   };

@@ -38,3 +38,6 @@ test('a recipe write with lost acknowledgement is not automatically repeated',as
 test('changed displayed recipe aborts the real save handler before a batch is sent',async()=>{
   const e=await setup();e.state.rows.recipes[0].name='external';await assert.rejects(e.save,/원본이 변경/);assert.equal(e.state.commits.length,0);assert.equal(e.nodes.recipeName.value,'changed');
 });
+test('recipe refuses more than twelve supplement presets before publishing any write',async()=>{
+  const e=await setup({units:Array.from({length:13},(_,i)=>i+1)});await e.save();assert.equal(e.state.commits.length,0);assert.match(e.alerts.at(-1),/최대 12개/);
+});

@@ -49,6 +49,16 @@ test('production creation keeps ingredient calculation, supplement deduction and
   assert.equal(e.state.rows.productions[0].ingredientsSnapshot[0].requiredQtyG,1000);
   assert.equal(e.state.rows.supplementStock[0].currentQty,19);
   assert.equal(e.state.rows.productions[0].round,1);
+  const production=e.state.rows.productions[0],log=e.state.rows.supplementLogs[0];
+  assert.equal(log.relatedProductionId,production.id);assert.equal(log.supplementTypeId,'r1_1');
+  assert.equal(log.qty,-1);assert.equal(log.before,20);assert.equal(log.after,19);assert.equal(log.uid,'fixture');
+  assert.equal(e.state.rows.supplementStock[0].lastMovementId,log.id);
+  assert.deepEqual(production.supplementReservation,{version:1,skuId:'r1_1',quantity:1});
+  const proof=e.state.rows.supplementContractProofs[0];
+  assert.equal(proof.id,'p_'+production.id);assert.equal(proof.productionId,production.id);
+  assert.equal(proof.skuId,'r1_1');assert.equal(proof.quantity,1);assert.equal(proof.orderRevision,1);
+  assert.equal(e.state.rows.productionOrderDays[0].revision,1);
+  assert.equal(e.state.commits.length,1);assert.equal(e.state.commits[0].length,6);
  }finally{await e.cleanup();}
 });
 

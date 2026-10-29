@@ -1,3 +1,4 @@
+import {escapeHtml} from '../utils/html.js';
 import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
 import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
@@ -107,21 +108,21 @@ function renderBagItem(b) {
   const inactive = b.active === false;
   const canReorder = currentUserRole === 'admin' || currentUserRole === 'office';
   return `
-    <div class="recipe-list-item ${selectedBagId === b.id ? 'active' : ''} ${inactive ? 'inactive-master' : ''}" data-id="${b.id}">
+    <div class="recipe-list-item ${selectedBagId === b.id ? 'active' : ''} ${inactive ? 'inactive-master' : ''}" data-id="${escapeHtml(b.id)}">
       ${canReorder ? '<span class="drag-handle" title="순서 변경" aria-label="순서 변경">≡</span>' : ''}
       <div class="recipe-list-info">
-        <span class="recipe-name" style="color:${inactive ? '#999' : isLow ? '#e53e3e' : '#1a1a1a'}">${b.name}</span>
+        <span class="recipe-name" style="color:${inactive ? '#999' : isLow ? '#e53e3e' : '#1a1a1a'}">${escapeHtml(b.name)}</span>
         <div class="recipe-tags">
-          <span class="tag tag-${b.category}">${b.category === 'raw' ? '생식' : '동결'}</span>
+          <span class="tag tag-${escapeHtml(b.category)}">${b.category === 'raw' ? '생식' : '동결'}</span>
           ${inactive ? '<span class="tag tag-inactive">비활성</span>' : ''}
           <span style="font-size:11px;color:${isLow ? '#e53e3e' : '#888'}">
-            ${Math.floor((b.currentQty || 0) / (b.piecesPerBox || 1))}박스 (${b.currentQty || 0}장)
+            ${Math.floor((b.currentQty || 0) / (b.piecesPerBox || 1))}박스 (${escapeHtml(b.currentQty || 0)}장)
           </span>
         </div>
       </div>
       ${currentUserRole === 'admin' || currentUserRole === 'office' ? `
         <label class="toggle-switch" title="${inactive ? '비활성' : '활성'}" onclick="event.stopPropagation()">
-          <input type="checkbox" class="bag-active-toggle" data-id="${b.id}" ${inactive ? '' : 'checked'}>
+          <input type="checkbox" class="bag-active-toggle" data-id="${escapeHtml(b.id)}" ${inactive ? '' : 'checked'}>
           <span class="toggle-slider"></span>
         </label>
       ` : ''}
@@ -284,7 +285,7 @@ async function showBagDetail(bag) {
 
   detail.innerHTML = `
     <div class="detail-header">
-      <span class="detail-title">${bag.name}</span>
+      <span class="detail-title">${escapeHtml(bag.name)}</span>
       <div class="detail-actions">
         ${canManageBagTypes ? '<button class="btn-secondary" id="btnEditBag">수정</button>' : ''}
         ${canManageBagTypes ? '<button class="btn-danger" id="btnDeleteBag">삭제</button>' : ''}
@@ -298,11 +299,11 @@ async function showBagDetail(bag) {
         <div class="stat-row">
           <div class="stat-item">
             <span class="stat-label">현재 재고</span>
-            <span class="stat-value">${bag.currentQty || 0}장 (${Math.floor((bag.currentQty || 0) / (bag.piecesPerBox || 1))}박스)</span>
+            <span class="stat-value">${escapeHtml(bag.currentQty || 0)}장 (${Math.floor((bag.currentQty || 0) / (bag.piecesPerBox || 1))}박스)</span>
           </div>
           <div class="stat-item">
             <span class="stat-label">박스당 장수</span>
-            <span class="stat-value">${bag.piecesPerBox || '-'}장</span>
+            <span class="stat-value">${escapeHtml(bag.piecesPerBox || '-')}장</span>
           </div>
           <div class="stat-item">
             <span class="stat-label">최소재고</span>
@@ -333,16 +334,16 @@ async function showBagDetail(bag) {
               ${logs.length === 0 ? `<tr><td colspan="5" style="text-align:center;color:#aaa;padding:16px;">이력 없음</td></tr>` :
                 logs.map(l => `
                   <tr>
-                    <td>${l.date || '-'}</td>
+                    <td>${escapeHtml(l.date || '-')}</td>
                     <td>
                       <span class="tag ${l.type === 'incoming' ? 'tag-raw' : l.type === 'autoDeduct' ? '' : 'tag-cat'}"
                             style="${l.type === 'autoDeduct' ? 'background:#f0f0f0;color:#666' : ''}">
-                        ${movementLabel(l,l.type === 'incoming' ? '입고' : l.type === 'autoDeduct' ? '자동차감' : '수동조정')}
+                        ${escapeHtml(movementLabel(l,l.type === 'incoming' ? '입고' : l.type === 'autoDeduct' ? '자동차감' : '수동조정'))}
                       </span>
                     </td>
-                    <td style="color:${l.qty > 0 ? '#2d7a3a' : '#e53e3e'}">${l.qty > 0 ? '+' : ''}${l.qty}</td>
-                    <td>${l.staffName || '-'}</td>
-                    <td>${l.note || l.reason || '-'}</td>
+                    <td style="color:${l.qty > 0 ? '#2d7a3a' : '#e53e3e'}">${l.qty > 0 ? '+' : ''}${escapeHtml(l.qty)}</td>
+                    <td>${escapeHtml(l.staffName || '-')}</td>
+                    <td>${escapeHtml(l.note || l.reason || '-')}</td>
                   </tr>
                 `).join('')}
             </tbody>
@@ -452,7 +453,7 @@ function showBagModal(bag) {
     <h3 class="modal-title">${isNew ? '봉투 추가' : '봉투 수정'}</h3>
     <div class="form-group">
       <label>봉투명 *</label>
-      <input type="text" id="m_bagName" value="${bag?.name || ''}" placeholder="봉투명 입력" />
+      <input type="text" id="m_bagName" value="${escapeHtml(bag?.name || '')}" placeholder="봉투명 입력" />
     </div>
     <div class="form-row">
       <div class="form-group">
@@ -465,11 +466,11 @@ function showBagModal(bag) {
       </div>
       <div class="form-group">
         <label>박스당 장수</label>
-        <input type="number" id="m_piecesPerBox" min="0" step="1" value="${bag?.piecesPerBox || ''}" placeholder="장" />
+        <input type="number" id="m_piecesPerBox" min="0" step="1" value="${escapeHtml(bag?.piecesPerBox || '')}" placeholder="장" />
       </div>
       <div class="form-group">
         <label>최소재고(박스)</label>
-        <input type="number" id="m_minBox" min="0" step="1" value="${bag?.minimumBoxQty || ''}" placeholder="박스" />
+        <input type="number" id="m_minBox" min="0" step="1" value="${escapeHtml(bag?.minimumBoxQty || '')}" placeholder="박스" />
       </div>
     </div>
     <p id="m_bagMinimumPreview" class="text-muted" aria-live="polite"></p>
@@ -544,7 +545,7 @@ function showEditBagModal(bag) {
 
 function showBagIncomingModal(bag) {
   showModal(`
-    <h3 class="modal-title">봉투 입고 등록 — ${bag.name}</h3>
+    <h3 class="modal-title">봉투 입고 등록 — ${escapeHtml(bag.name)}</h3>
     ${movementFields({incoming:true,reasonField:false})}
     <div class="form-row">
       <div class="form-group">
@@ -650,8 +651,8 @@ function showBagIncomingModal(bag) {
 
 function showBagAdjustModal(bag) {
   showModal(`
-    <h3 class="modal-title">수동 재고 조정 — ${bag.name}</h3>
-    <p style="font-size:12px;color:#888;margin-bottom:16px;">현재 재고: ${bag.currentQty || 0}장</p>
+    <h3 class="modal-title">수동 재고 조정 — ${escapeHtml(bag.name)}</h3>
+    <p style="font-size:12px;color:#888;margin-bottom:16px;">현재 재고: ${escapeHtml(bag.currentQty || 0)}장</p>
     ${movementFields({incoming:false,reasonField:false})}
     <div class="form-row">
       <div class="form-group">
@@ -760,7 +761,7 @@ function getStaffOptions(groups) {
   for (const g of groups) {
     const members = staffCache[g] || [];
     members.forEach(m => {
-      options += `<option value="${m.name}">${m.name}</option>`;
+      options += `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
     });
   }
   return options;

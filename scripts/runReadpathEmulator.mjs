@@ -7,6 +7,10 @@ import { getSecurityRules } from 'firebase-admin/security-rules';
 const inventory=process.env.INVENTORY_RULES_REPO || 'C:/dev/fantapet-inventory';
 const rulesIndex=process.argv.indexOf('--rules');
 const rulesPath=rulesIndex>=0?process.argv[rulesIndex+1]:process.env.READPATH_RULES_FILE;
+const outputIndex=process.argv.indexOf('--output');
+if(outputIndex>=0&&!process.argv[outputIndex+1])throw Error('--output requires a new evidence directory.');
+const output=resolve(outputIndex>=0?process.argv[outputIndex+1]:'output/readpath/emulator');
+if(outputIndex>=0&&existsSync(output))throw Error('Existing evidence cannot be overwritten.');
 if(rulesIndex>=0&&!rulesPath)throw Error('--rules requires a file path.');
 let rules, rulesSource;
 if(rulesPath){rules=readFileSync(resolve(rulesPath),'utf8');rulesSource=resolve(rulesPath);}
@@ -20,9 +24,9 @@ else {
 }
 const rulesSha=createHash('sha256').update(rules).digest('hex');
 const revision=rulesSource+':sha256:'+rulesSha;
-mkdirSync('output/readpath/emulator',{recursive:true});writeFileSync('output/readpath/emulator/firestore.rules',rules);
-writeFileSync('output/readpath/emulator/firebase.json',JSON.stringify({firestore:{rules:'firestore.rules'},emulators:{firestore:{host:'127.0.0.1',port:8088},singleProjectMode:true}}));
-const env={...process.env,READPATH_RULES_REVISION:revision,READPATH_INVENTORY_REPO:inventory};
+mkdirSync(output,{recursive:true});writeFileSync(join(output,'firestore.rules'),rules);
+writeFileSync(join(output,'firebase.json'),JSON.stringify({firestore:{rules:'firestore.rules'},emulators:{firestore:{host:'127.0.0.1',port:8088},singleProjectMode:true}}));
+const env={...process.env,READPATH_RULES_REVISION:revision,READPATH_INVENTORY_REPO:inventory,RECEIPT_REVIEW_RULES:join(output,'firestore.rules'),READPATH_LOADED_RULES_OUTPUT:join(output,'loaded-rules.json')};
 const java='C:/Program Files/Android/Android Studio/jbr/bin';
 if(existsSync(java+'/java.exe')) {env.JAVA_HOME=dirname(java);const key=Object.keys(env).find(k=>k.toLowerCase()==='path')||'PATH';env[key]=java+';'+env[key];}
 const npx=join(dirname(process.execPath),'node_modules/npm/bin/npx-cli.js');
@@ -30,8 +34,10 @@ env.READPATH_CHECK_INVENTORY=String(process.argv.includes('--inventory-tests'));
 console.log('Emulator rules:',rulesSource,rulesSha);
 let passed=false;
 try {
-  execFileSync(process.execPath,[npx,'--yes','firebase-tools','emulators:exec','--project','demo-fant-readpath','--config',resolve('output/readpath/emulator/firebase.json'),'--only','firestore','node scripts/runReadpathEmulatorTests.mjs'],{env,stdio:'inherit'});
+  execFileSync(process.execPath,[npx,'--yes','firebase-tools','emulators:exec','--project','demo-fant-readpath','--config',join(output,'firebase.json'),'--only','firestore','node scripts/runReadpathEmulatorTests.mjs'],{env,stdio:'inherit'});
+  const loaded=JSON.parse(readFileSync(env.READPATH_LOADED_RULES_OUTPUT,'utf8'));
+  if(loaded.sha256!==rulesSha)throw Error('Integration loaded a different rule candidate.');
   passed=true;
 } finally {
-  writeFileSync('output/readpath/emulator/verification.json',JSON.stringify({checkedAt:new Date().toISOString(),rulesSource,rulesSha,passed,inventoryTests:env.READPATH_CHECK_INVENTORY==='true'},null,2));
+  writeFileSync(join(output,'verification.json'),JSON.stringify({checkedAt:new Date().toISOString(),rulesSource,rulesSha,passed,inventoryTests:env.READPATH_CHECK_INVENTORY==='true'},null,2));
 }

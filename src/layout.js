@@ -15,6 +15,8 @@ import { showConfirmModal } from './utils/modal.js';
 import { loadPartAlerts } from './services/equipmentParts.js';
 import { createReadScope } from './services/readScope.js';
 import { openAction, fingerprint } from './services/actionGateway.js';
+import { prepareProductionClosing } from './services/productionClosingCommand.js';
+import { escapeHtml } from './utils/html.js';
 
 // [Phase 3d] 모달 자동 오픈 1회 플래그 — 모듈 레벨에서 유지
 let blockingModalAutoShown = false;
@@ -664,6 +666,7 @@ async function handleLogoutClick() {
  */
 async function showCloseConfirmModal(targetDate) {
   const action = await openAction({ refs: ['closings/' + targetDate], reusableConfirm:true });
+  const closingCommand = await prepareProductionClosing(targetDate, 'close');
   // 기존 모달 제거
   const existing = document.getElementById('closeConfirmOverlay');
   if (existing) existing.remove();
@@ -680,7 +683,7 @@ async function showCloseConfirmModal(targetDate) {
   for (const key of groups) {
     const members = staffByGroup[key] || [];
     members.forEach(m => {
-      staffOptions += `<option value="${m.name}">${m.name}</option>`;
+      staffOptions += `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
     });
   }
 
@@ -738,7 +741,7 @@ async function showCloseConfirmModal(targetDate) {
       const finalBlocks = await getAllBlockingItems(targetDate);
       if (fingerprint(finalBlocks) !== fingerprint(latest)) throw new Error('마감 확인 중 처리 항목이 변경되었습니다. 다시 확인해주세요.');
       const { closeDate } = await import('./closing.js');
-      await action.submit(()=>closeDate(targetDate, staffName));
+      await action.submit(()=>closeDate(targetDate, staffName, closingCommand));
       overlay.remove();
       alert(`${dateLabel} 마감 완료`);
       // 라벨/배너 갱신
@@ -759,6 +762,7 @@ async function showCloseConfirmModal(targetDate) {
  */
 async function showReleaseConfirmModal(targetDate) {
   const action = await openAction({ refs: ['closings/' + targetDate], reusableConfirm:true });
+  const closingCommand = await prepareProductionClosing(targetDate, 'release');
   // 기존 모달 제거
   const existing = document.getElementById('releaseConfirmOverlay');
   if (existing) existing.remove();
@@ -775,7 +779,7 @@ async function showReleaseConfirmModal(targetDate) {
   for (const key of groups) {
     const members = staffByGroup[key] || [];
     members.forEach(m => {
-      staffOptions += `<option value="${m.name}">${m.name}</option>`;
+      staffOptions += `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`;
     });
   }
 
@@ -832,7 +836,7 @@ async function showReleaseConfirmModal(targetDate) {
     try {
       await action.confirm();
       const { releaseClosing } = await import('./closing.js');
-      await action.submit(()=>releaseClosing(targetDate, staffName, reason));
+      await action.submit(()=>releaseClosing(targetDate, staffName, reason, closingCommand));
       overlay.remove();
       alert(`${dateLabel} 마감해제 완료`);
       // 라벨/배너 갱신

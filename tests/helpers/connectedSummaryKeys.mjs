@@ -1,0 +1,5 @@
+import {pageEnvironment} from './pageDom.mjs';
+export async function freezeKeyEnvironment(options={}){return pageEnvironment('freezeOp',{...options,instrument:'\nexport {buildStockMap,buildColorMapFromItems,calcDeductions,showCreateModal,cancelOrder,buildLayoutGridHtml};\nexport function __colorState(){return _colorMap;}'});}
+export async function sepKeyEnvironment(options={}){return pageEnvironment('frozenSep',{...options,instrument:'\nexport {getSummary,renderDailyMatrix,showAdjustModal};\nexport function __prototypeStockType(){return Object.hasOwn(Object.prototype,"notSeparated");}'});}
+export function seedConnected(e,names){e.state.rows.freezeOrders=[];e.state.rows.frozenPanLots=names.flatMap((productName,i)=>[{id:'new'+i,productName,date:'2026-09-13',remaining:3,closed:false},{id:'old'+i,productName,date:'2026-09-12',remaining:2,closed:false}]);e.state.rows.frozenSeparation=names.flatMap((productName,i)=>['notSeparated','separated','noSplit'].map((stockType,j)=>({id:'s'+i+'_'+j,productName,date:'2026-09-12',stockType,remaining:j+1,closed:false})));e.state.rows.frozenSeparationLogs=[];}
+
