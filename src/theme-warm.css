@@ -1,4 +1,4 @@
-/* Warm palette; geometry and type overrides limited to approved UI3/UI4/UI5 changes. */
+/* Warm palette; geometry and type overrides limited to approved UI3/UI4/UI5/UI6 changes. */
 .closing-flag-row {
   background: #FAF7F2
 }
@@ -422,4 +422,67 @@ input:checked + .toggle-slider { background: #8B5E3C
 }
 .stock-summary-adjust:hover {
   background: #fff;
+}
+
+/* Shared inventory movement palette. Use the existing display label as the key. */
+.stock-movement-badge {
+  background: #F3EDE5;
+  border: 1px solid #D3C8BA;
+  color: #5A4E46;
+}
+.stock-movement-badge:is([data-movement-label="입고"], [data-movement-label="실제 입고"]) {
+  background: #E6EEF7;
+  border-color: #B7CBE3;
+  color: #1F4E8C;
+}
+.stock-movement-badge[data-movement-label="실사 보정"] {
+  background: #EEEAF4;
+  border-color: #CDC4DE;
+  color: #4B3F72;
+}
+.stock-movement-badge[data-movement-label="출고"] {
+  background: #FBEAE7;
+  border-color: #E8BDB5;
+  color: #9E3326;
+}
+.stock-quantity--increase { color: #1F4E8C; }
+.stock-quantity--decrease { color: #B03A2E; }
+
+/* UI6: retain egg controls, summary layout, table structure and existing type sizes. */
+.egg-page .page-header .btn-secondary {
+  background: #FFFFFF;
+  border: 1px solid #D3C8BA;
+  /* Keep the original outer dimensions when adding the outline. */
+  padding: 5px 13px;
+}
+.egg-page .egg-status-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.egg-status {
+  padding: 1px 8px;
+  border-radius: 4px;
+  border: 1px solid #D3C8BA;
+  background: #F3EDE5;
+  color: #5A4E46;
+}
+.egg-status--low {
+  background: #FCE7BF;
+  border-color: #E0A33A;
+  color: #5C3300;
+}
+.egg-status--empty {
+  background: #FBEAE7;
+  border-color: #E8BDB5;
+  color: #9E3326;
+}
+.egg-minimum-diff {
+  font-size: 11px;
+  font-weight: 400;
+  color: #8A7E72;
+}
+.egg-page .data-table :is(th, td):is(:nth-child(3), :nth-child(4), :nth-child(5)) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }

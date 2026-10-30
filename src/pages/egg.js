@@ -73,7 +73,7 @@ function renderEggLayout(eggStock, logs) {
   const recentLogs = sortEggLogsDesc(logs).slice(0, 50);
 
   content.innerHTML = `
-    <div class="page-wrap">
+    <div class="page-wrap egg-page">
       <div class="page-header">
         <h2 class="page-title">계란</h2>
         <div style="display:flex;gap:8px;">
@@ -100,7 +100,10 @@ function renderEggLayout(eggStock, logs) {
           </div>
           <div class="stat-item">
             <span class="stat-label">상태</span>
-            <span class="stat-value" style="color:${isLow ? '#e53e3e' : '#2d7a3a'}">${isLow ? '⚠️ 부족' : '✅ 정상'}</span>
+            <span class="stat-value egg-status-line">
+              <span class="egg-status egg-status--${currentQty <= 0 ? 'empty' : isLow ? 'low' : 'normal'}">${currentQty <= 0 || isLow ? '부족' : '정상'}</span>
+              ${minimumQty > 0 ? `<span class="egg-minimum-diff">최소재고 대비 ${currentQty - minimumQty >= 0 ? '+' : ''}${currentQty - minimumQty}개</span>` : ''}
+            </span>
           </div>
         </div>
         ${eggFifoExpanded ? renderEggFifoPanel(fifo, currentQty) : ''}
@@ -130,12 +133,11 @@ function renderEggLayout(eggStock, logs) {
                   <tr>
                     <td>${escapeHtml(l.date || '-')}</td>
                     <td>
-                      <span class="tag ${l.type === 'in' ? 'tag-raw' : l.type === 'out' ? 'tag-cat' : ''}"
-                            style="${l.type === 'adjust' ? 'background:#fff0e8;color:#8a4a2d' : ''}">
+                      <span class="tag stock-movement-badge" data-movement-label="${escapeHtml(movementLabel(l,l.type === 'in' ? '입고' : l.type === 'out' ? '출고' : '수동조정'))}">
                         ${movementLabel(l,l.type === 'in' ? '입고' : l.type === 'out' ? '출고' : '수동조정')}
                       </span>
                     </td>
-                    <td style="color:${l.qty > 0 ? '#2d7a3a' : '#e53e3e'};font-weight:600">
+                    <td class="stock-quantity--${l.qty > 0 ? 'increase' : l.qty < 0 ? 'decrease' : 'zero'}" style="font-weight:600">
                       ${l.qty > 0 ? '+' : ''}${escapeHtml(l.qty)}
                     </td>
                     <td>${escapeHtml(l.before ?? '-')}</td>
