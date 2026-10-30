@@ -381,7 +381,7 @@ async function openIncomingAction(product,logId,kind) {
   if(log.productId!==product.id)throw Error('선택한 제품과 입고 원본이 다릅니다. 다시 불러와주세요.');
   const flow=await prepareFrozenSourceCommand(log.id,{expectedProductId:product.id});
   if(page&&!page.isCurrent())return;
-  if(!flow.eligible){
+  if(!flow.eligible&&!(kind==='correct'&&flow.metadataEligible)){
     showModal(`<h3 class="modal-title">재고앱 처리 필요 / 근거 확인</h3><p>${escapeHtml(flow.holdMessage)}</p><p>원본 ID: ${escapeHtml(log.id)} · 요청 버전: ${escapeHtml(flow.source.revision)}</p><p>원본 수량과 봉투 재고를 자동으로 바꾸지 않습니다.</p><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">닫기</button></div>`);
     return;
   }
@@ -395,6 +395,7 @@ function showEditIncomingModal(product,log,flow,kind='correct') {
     <input id="m_date" type="date" value="${escapeHtml(flow.source.date)}" disabled>
     <p>제조 ${escapeHtml(flow.source.date)} · 현재 ${escapeHtml(flow.source.quantity)}봉 · 입고 버전 ${escapeHtml(flow.source.revision)}</p>
     <p>담당자: ${escapeHtml(flow.actor.name)} (본인 계정)</p>
+    ${!flow.eligible?`<p>${escapeHtml(flow.holdMessage)} 메모·표시 담당자는 여기서 수정할 수 있습니다.</p>`:''}
     ${cancelling?'<p>미인계 입고를 취소하고 확인된 봉투 차감분만 원자적으로 환급합니다. 과거 원장·로그는 보존합니다.</p>':`<div class="form-group"><label>정정할 절대 수량(봉)</label><input id="m_source_qty" type="number" min="1" step="1" value="${escapeHtml(flow.source.quantity)}"></div>
     <div class="form-group"><label>유통기한</label><input id="m_source_expiry" type="date" value="${escapeHtml(flow.source.expiryDate)}"></div>
     <div class="form-group"><label>표시 담당자</label><select id="m_source_staff"><option value="">선택</option>${getStaffOptions(['senior','lead','office'],flow.source.staffName)}</select></div>

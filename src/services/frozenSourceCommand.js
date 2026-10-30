@@ -1,3 +1,4 @@
+import {inventoryReceiptCorrectionLink} from './inventoryReceiptCorrection.js';
 import {getFunctions,httpsCallable} from 'firebase/functions';
 import {doc} from 'firebase/firestore';
 import {auth,db} from '../firebase.js';
@@ -40,15 +41,16 @@ export async function prepareFrozenSourceCommand(sourceId,{expectedProductId}={}
     const saved=observed.operation;if(!saved)return {confirmed:false};
     const result=saved.result;
     if(saved.status!=='completed'||saved.actorUid!==user.uid||saved.actorEmployeeId!==identity.employeeId||saved.sourceId!==sourceId||saved.inputHash!==requestHash
-      ||result?.sourceId!==sourceId||result?.operationId!==operationId||result?.revision!==context.revision+1||result?.receiptId!==`frozenLogs:${sourceId}:${context.revision+1}`
+      ||result?.sourceId!==sourceId||result?.operationId!==operationId||result?.revision!==(result.metadataOnly?context.revision:context.revision+1)||result?.receiptId!==`frozenLogs:${sourceId}:${result.metadataOnly?context.revision:context.revision+1}`
       ||result?.status!==(request.action==='correctFrozenSource'?'corrected':'cancelled'))throw Error('이 작업의 서버 결과가 요청과 일치하지 않습니다. 재고앱에서 확인해주세요.');
     return {confirmed:true,result:{...result,recovered:true}};
   }
-  return {source:response.source,context,actor:identity,operationId,eligible:response.eligible===true,holdMessage:frozenSourceHoldMessage(response.blockers),
+  return {inventoryCorrection:inventoryReceiptCorrectionLink(response.source.receiptId,sourceId),source:response.source,context,actor:identity,operationId,eligible:response.eligible===true,metadataEligible:response.metadataEligible===true,holdMessage:frozenSourceHoldMessage(response.blockers),
     get dispatched(){return dispatched;},inspectResult,
     async submit(kind,{quantity,expiryDate,staffName,note,allowComponentShortage=false,reason,command}={}){
       checkSession();if(busy||dispatched)throw Error('이미 전송한 작업입니다. 서버 결과를 확인해주세요.');
-      if(response.eligible!==true)throw Error(frozenSourceHoldMessage(response.blockers));
+      const metadataOnly=kind==='correct'&&quantity===response.source.quantity&&(expiryDate===undefined||expiryDate===response.source.expiryDate);
+      if(response.eligible!==true&&!(metadataOnly&&response.metadataEligible===true))throw Error(frozenSourceHoldMessage(response.blockers));
       if(!['correct','cancel'].includes(kind))throw Error('입고 처리 구분을 확인해주세요.');
       const cleanReason=typeof reason==='string'?reason.trim():'';
       if(!cleanReason||cleanReason.length>500)throw Error('정정·취소 사유를 1~500자로 입력해주세요.');
