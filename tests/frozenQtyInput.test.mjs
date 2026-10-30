@@ -1,3 +1,4 @@
+import {sourceFlow} from './helpers/frozenSourceFlow.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { pageEnvironment } from './helpers/pageDom.mjs';
@@ -26,8 +27,8 @@ async function edit() {
     status: 'active', staffName: '검증 담당', note: '' };
   e.state.rows.frozenLogs = [log];
   await e.page.renderFrozenProduct();
-  e.page.showEditIncomingModal(product, log);
-  e.fill('#m_note', '정정 메모');
+  e.page.showEditIncomingModal(product, log,sourceFlow(e,log));
+  e.fill('#m_source_note', '정정 메모');e.fill('#m_source_reason','정정 사유');
   return e;
 }
 
@@ -46,8 +47,8 @@ for (const value of ['', '1.5', '1e3', '1abc', '0', '-1', '9007199254740992']) {
   test(`metadata edit rejects invalid ${JSON.stringify(value)} before a write`, async () => {
     const e = await edit();
     try {
-      e.fill('#m_qty', value);
-      await e.fire('#btnSaveEditIncoming');
+      e.fill('#m_source_qty', value);
+      await e.fire('#btnSubmitFrozenSource');
       assert.deepEqual(e.state.writes, []);
       assert.equal(e.state.rows.frozenLogs[0].note, '');
     } finally { await e.cleanup(); }
@@ -67,19 +68,19 @@ test('positive decimal integer still creates an incoming receipt', async () => {
 test('unchanged positive integer still permits metadata edit', async () => {
   const e = await edit();
   try {
-    e.fill('#m_qty', '1');
-    await e.fire('#btnSaveEditIncoming');
+    e.fill('#m_source_qty', '1');
+    await e.fire('#btnSubmitFrozenSource');
     assert.deepEqual(e.state.writes, ['frozenLogs/receipt-qty'], e.alerts.join('\n'));
     assert.equal(e.state.rows.frozenLogs[0].note, '정정 메모');
   } finally { await e.cleanup(); }
 });
 
-test('different valid integer remains blocked as an unsupported quantity correction', async () => {
+test('different valid integer reaches the restored quantity command', async () => {
   const e = await edit();
   try {
-    e.fill('#m_qty', '2');
-    await e.fire('#btnSaveEditIncoming');
-    assert.deepEqual(e.state.writes, []);
-    assert.ok(e.alerts.some(message => message.includes('수량 정정')));
+    e.fill('#m_source_qty', '2');
+    await e.fire('#btnSubmitFrozenSource');
+    assert.deepEqual(e.state.writes,['frozenLogs/receipt-qty']);
+    assert.equal(e.state.rows.frozenLogs[0].qty,2);
   } finally { await e.cleanup(); }
 });

@@ -1,6 +1,8 @@
+import {sourceFlow} from './frozenSourceFlow.mjs';
 import {pageEnvironment} from './pageDom.mjs';import {attackText,ordinaryText,serializeView} from './settingsBagXssViews.mjs';export {attackText,ordinaryText};
 export async function captureFrozenProductViews({sourceFiles,role='office',text=attackText}={}){
  const e=await pageEnvironment('frozenProduct',{role,sourceFiles,instrument:'\nexport {renderProductListItemCompact,showProductDetail,renderComponentOptions,showProductModal,showEditIncomingModal,showIncomingModal};\nexport function __fixture(products,staff={},selected=null){frozenProducts=products;staffCache=staff;selectedProductId=selected;}'});const views=[],id=text===attackText?'x"><img src=x onerror="window.__xss=(window.__xss||0)+1">':text.slice(0,200),base={...e.state.rows.frozenProducts[0]},root=e.document.querySelector('#mainContent');
+ const edit=(product,log)=>e.page.showEditIncomingModal(product,log,sourceFlow(e,log));
  const add=(name,html,selector,expected=text,attribute)=>views.push({name,role,html,selector,expected,attribute}),modal=()=>serializeView(e.document.querySelector('#modalOverlay'));
  async function detail(name,product,log,selector,expected=text,attribute){root.innerHTML='<div id="productDetail"></div>';e.page.__fixture([product],{},product.id);e.state.rows.frozenLogs=log?[{id:'log',productId:product.id,status:'active',date:e.today,timestamp:1,expiryDate:'2027-10-28',qty:4,deductedBagQty:4,staffName:'담당',note:'',...log}]:[];await e.page.showProductDetail(product);add(name,serializeView(e.document.querySelector('#productDetail')),selector,expected,attribute);}
  try{
@@ -16,9 +18,9 @@ export async function captureFrozenProductViews({sourceFiles,role='office',text=
   const util=await e.load('src/utils/recipe.js');add('recipe-option','<select>'+util.getRecipeOptionsHtml([{displayName:text}],text)+'</select>','option:nth-child(2)',text,'value');
   if(role!=='production'){
    for(const field of ['name','id']){e.state.rows.bagTypes=[{id:'b1',name:'봉투',category:'freezeDry',active:true,sortOrder:0,[field]:field==='id'?id:text}];e.page.__fixture([base]);await e.page.showProductModal(base);add('bag-'+field,modal(),'#m_bagType option:nth-child(2)',field==='id'?id:text,field==='id'?'value':undefined);}
-   for(const field of ['date','expiryDate','qty','note']){e.page.__fixture([base]);e.page.showEditIncomingModal(base,{date:e.today,expiryDate:'2027-10-28',qty:4,staffName:'담당',note:'',[field]:text});const selector=field==='date'?'#m_date':field==='expiryDate'?'#m_expiry':field==='qty'?'#m_qty':'#m_note';add('edit-'+field,modal(),selector,text,'value');}
-   e.page.showEditIncomingModal({...base,name:text},{date:e.today,qty:4});add('edit-name',modal(),'.modal-title');
-   e.page.__fixture([base],{senior:[{name:text}]});e.page.showEditIncomingModal(base,{date:e.today,qty:4,staffName:text});add('edit-staff',modal(),'#m_staff option:nth-child(2)',text,'value');
+   for(const field of ['date','expiryDate','qty','note']){e.page.__fixture([base]);edit(base,{date:e.today,expiryDate:'2027-10-28',qty:4,staffName:'담당',note:'',[field]:text});const selector=field==='date'?'#m_date':field==='expiryDate'?'#m_source_expiry':field==='qty'?'#m_source_qty':'#m_source_note';add('edit-'+field,modal(),selector,text,'value');}
+   edit({...base,name:text},{date:e.today,qty:4});add('edit-name',modal(),'.modal-title');
+   e.page.__fixture([base],{senior:[{name:text}]});edit(base,{date:e.today,qty:4,staffName:text});add('edit-staff',modal(),'#m_source_staff option:nth-child(2)',text,'value');
   }
   e.state.rows.bagTypes=[{id:'b1',name:'봉투',category:'freezeDry',currentQty:100}];e.page.__fixture([base],{senior:[{name:'담당'}]});await e.page.showIncomingModal({...base,name:text});add('incoming-name',modal(),'.modal-title');
   e.page.__fixture([base],{senior:[{name:text}]});await e.page.showIncomingModal(base);add('incoming-staff',modal(),'#m_staff option:nth-child(2)',text,'value');

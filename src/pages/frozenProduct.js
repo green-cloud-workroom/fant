@@ -379,28 +379,33 @@ async function openIncomingAction(product,logId,kind) {
   if(!snap.exists())throw Error('입고 원본을 찾을 수 없습니다.');
   const log={...snap.data(),id:snap.id};
   if(log.productId!==product.id)throw Error('선택한 제품과 입고 원본이 다릅니다. 다시 불러와주세요.');
-  if(kind==='correct'&&!log.receiptRevision&&!log.frozenSourceVersion&&!log.frozenSampleSetVersion
-    &&!await hasFrozenReceiptTransfer(log.id,{getDoc,getDocs})){
-    if(!page||page.isCurrent())showEditIncomingModal(product,log);
-    return;
-  }
   const flow=await prepareFrozenSourceCommand(log.id,{expectedProductId:product.id});
   if(page&&!page.isCurrent())return;
   if(!flow.eligible){
-    showModal(`<h3 class="modal-title">입고 정정·취소 보류</h3><p>${escapeHtml(flow.holdMessage)}</p><p>원본 수량과 봉투 재고를 자동으로 바꾸지 않습니다.</p><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">닫기</button></div>`);
+    showModal(`<h3 class="modal-title">재고앱 처리 필요 / 근거 확인</h3><p>${escapeHtml(flow.holdMessage)}</p><p>원본 ID: ${escapeHtml(log.id)} · 요청 버전: ${escapeHtml(flow.source.revision)}</p><p>원본 수량과 봉투 재고를 자동으로 바꾸지 않습니다.</p><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">닫기</button></div>`);
     return;
   }
+  showEditIncomingModal(product,log,flow,kind);
+}
+
+function showEditIncomingModal(product,log,flow,kind='correct') {
+  const page=getPageContext();
   const cancelling=kind==='cancel';
-  showModal(`<h3 class="modal-title">입고 ${cancelling?'취소':'수량 정정'} — ${escapeHtml(product.name)}</h3>
+  showModal(`<h3 class="modal-title">입고 ${cancelling?'취소':'수정'} — ${escapeHtml(product.name)}</h3>
+    <input id="m_date" type="date" value="${escapeHtml(flow.source.date)}" disabled>
     <p>제조 ${escapeHtml(flow.source.date)} · 현재 ${escapeHtml(flow.source.quantity)}봉 · 입고 버전 ${escapeHtml(flow.source.revision)}</p>
     <p>담당자: ${escapeHtml(flow.actor.name)} (본인 계정)</p>
-    ${cancelling?'<p>미인계 입고를 취소하고 확인된 봉투 차감분만 원자적으로 환급합니다. 과거 원장·로그는 보존합니다.</p>':`<div class="form-group"><label>정정할 절대 수량(봉)</label><input id="m_source_qty" type="number" min="1" max="9999" step="1" value="${escapeHtml(flow.source.quantity)}"></div>`}
+    ${cancelling?'<p>미인계 입고를 취소하고 확인된 봉투 차감분만 원자적으로 환급합니다. 과거 원장·로그는 보존합니다.</p>':`<div class="form-group"><label>정정할 절대 수량(봉)</label><input id="m_source_qty" type="number" min="1" step="1" value="${escapeHtml(flow.source.quantity)}"></div>
+    <div class="form-group"><label>유통기한</label><input id="m_source_expiry" type="date" value="${escapeHtml(flow.source.expiryDate)}"></div>
+    <div class="form-group"><label>표시 담당자</label><select id="m_source_staff"><option value="">선택</option>${getStaffOptions(['senior','lead','office'],flow.source.staffName)}</select></div>
+    <div class="form-group"><label>메모</label><input id="m_source_note" maxlength="2000" value="${escapeHtml(flow.source.note)}"></div>`}
+    ${flow.source.components?.length?`<p>저장 당시 구성비로 함께 정정합니다. ${flow.source.components.map(c=>`${escapeHtml(c.productId)}: 현재 ${escapeHtml(c.before)}봉, 세트당 ${escapeHtml(c.ratio)}봉`).join(' / ')}</p><label><input id="m_component_shortage" type="checkbox">구성품이 부족해 음수가 되어도 진행할 것을 확인합니다.</label>`:''}
     <div class="form-group"><label>${cancelling?'취소':'정정'} 사유</label><input id="m_source_reason" maxlength="500" type="text"></div>
     <p id="m_source_status" role="status"></p>
-    <div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">닫기</button><button id="btnInspectFrozenSource" class="btn-secondary" hidden>서버 결과 확인</button><button id="btnSubmitFrozenSource" class="btn-primary">${cancelling?'입고 취소':'수량 정정'}</button></div>`);
+    <div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">닫기</button><button id="btnInspectFrozenSource" class="btn-secondary" hidden>서버 결과 확인</button><button id="btnSubmitFrozenSource" class="btn-primary">${cancelling?'입고 취소':'수정 저장'}</button></div>`);
   const save=document.getElementById('btnSubmitFrozenSource'),inspect=document.getElementById('btnInspectFrozenSource'),status=document.getElementById('m_source_status');
   let busy=false;
-  const finish=async()=>{if(page&&!page.isCurrent())return;closeModal();await renderFrozenProduct({force:true});showStatus(cancelling?'입고 취소를 확인했습니다.':'수량 정정을 확인했습니다.');};
+  const finish=async()=>{if(page&&!page.isCurrent())return;closeModal();await renderFrozenProduct({force:true});showStatus(cancelling?'입고 취소를 확인했습니다.':'입고 수정을 확인했습니다.');};
   inspect.addEventListener('click',async()=>{
     if(busy)return;busy=true;inspect.disabled=true;
     try{const actual=await flow.inspectResult();if(page&&!page.isCurrent())return;if(actual.confirmed)await finish();else status.textContent='아직 이 작업의 서버 결과를 확인하지 못했습니다. 새 요청을 만들지 말고 잠시 후 다시 확인해주세요.';}
@@ -411,12 +416,12 @@ async function openIncomingAction(product,logId,kind) {
     if(busy||flow.dispatched)return;
     const reason=document.getElementById('m_source_reason').value.trim(),quantity=cancelling?undefined:parsePositiveWholeQty(document.getElementById('m_source_qty').value);
     if(!reason||reason.length>500){status.textContent='사유를 1~500자로 입력해주세요.';return;}
-    if(!cancelling&&(!Number.isSafeInteger(quantity)||quantity>9999||quantity===flow.source.quantity)){status.textContent='현재와 다른 1~9,999봉 정수를 입력해주세요.';return;}
+    if(!cancelling&&(!Number.isSafeInteger(quantity))){status.textContent='1봉 이상의 안전한 정수를 입력해주세요.';return;}
     busy=true;save.disabled=true;document.querySelectorAll('#modalOverlay input').forEach(input=>input.disabled=true);
     await runPageCommand(frozenProductResource,async command=>{
       try{
         if(await blockIfClosed(flow.source.date,command))return;
-        await flow.submit(kind,{quantity,reason,command});
+        await flow.submit(kind,{quantity,reason,command,...(!cancelling?{expiryDate:document.getElementById('m_source_expiry').value,staffName:document.getElementById('m_source_staff').value,note:document.getElementById('m_source_note').value}:{}),allowComponentShortage:document.getElementById('m_component_shortage')?.checked===true});
         if(command.isCurrent())await finish();
       }catch(error){if(!page||page.isCurrent()){status.textContent=error.message;inspect.hidden=false;}}
     },{roles:['admin','office']});
@@ -688,110 +693,6 @@ async function showProductModal(product) {
  },{roles:['admin','office']});
 });
 }
-function showEditIncomingModal(product, log) {
-  showModal(`
-    <h3 class="modal-title">입고 수정 — ${escapeHtml(product.name)}</h3>
-    <div class="form-row">
-      <div class="form-group">
-        <label>날짜 (수정 불가)</label>
-        <input type="date" id="m_date" value="${escapeHtml(log.date || '')}" disabled />
-      </div>
-      <div class="form-group">
-        <label>유통기한</label>
-        <input type="date" id="m_expiry" value="${escapeHtml(log.expiryDate || '')}" disabled />
-      </div>
-    </div>
-    <div class="form-group">
-      <label>수량(개) *</label>
-      <input type="number" id="m_qty" value="${escapeHtml(log.qty || 0)}" />
-    </div>
-    <div class="form-group">
-      <label>담당자</label>
-      <select id="m_staff">
-        <option value="">선택</option>
-        ${getStaffOptions(['senior', 'lead', 'office'], log.staffName)}
-      </select>
-    </div>
-    <div class="form-group">
-      <label>비고</label>
-      <input type="text" id="m_note" value="${escapeHtml(log.note || '')}" />
-    </div>
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="closeModal()">취소</button>
-      <button class="btn-primary" id="btnSaveEditIncoming">저장</button>
-    </div>
-  `);
-
-  document.getElementById('btnSaveEditIncoming').addEventListener('click', async () => {
- return runPageCommand(frozenProductResource,async command=>{
-  const {getDoc}=commandWrites(command);
-
-    const expiry = document.getElementById('m_expiry').value;
-    const newQty = parsePositiveWholeQty(document.getElementById('m_qty').value);
-    const staff = document.getElementById('m_staff').value;
-    const note = document.getElementById('m_note').value;
-
-    if (newQty === null) { alert('수량은 1개 이상의 정수로 입력해 주세요.'); return; }
-    if(expiry!==(log.expiryDate||'')){alert('과거 입고의 유통기한 정정은 재고앱 입고 관리에서 확인해주세요.');return;}
-    if (await blockIfClosed(log.date, command)) return;
-
-    // [권한 매트릭스 C4] production은 동결제품 입고 수정 불가
-    if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
-      alert('동결제품 입고 수정은 대표/사무실 계정만 가능합니다.');
-      return;
-    }
-    if (await blockIfFrozenReceiptTransferred(log.id, {getDoc,getDocs:command.getDocs})) return;
-
-    // Quantity or stock corrections need an explicit cross-app event contract.
-    // A metadata-only edit keeps the original inventory and component evidence intact.
-    if (!Number.isSafeInteger(newQty) || newQty !== Number(log.qty)) {
-      alert('입고 수량 정정은 현재 보류 중입니다. 원본과 재고앱 처리 상태를 확인해 주세요.');
-      return;
-    }
-    const parentRef = doc(db, 'frozenLogs', log.id);
-    const productRef = doc(db, 'frozenProducts', product.id);
-    const closingRef = doc(db, 'closings', log.date);
-    const requestRef = doc(db, 'productTransferRequests', 'frozenLogs:' + log.id + ':1');
-    const signature = value => JSON.stringify({
-      date: value.date, productId: value.productId, status: value.status,
-      qty: value.qty, bagTypeId: value.bagTypeId ?? null,
-      deductedBagQty: value.deductedBagQty ?? 0, ledgerId: value.ledgerId ?? null,
-      componentDeductLogIds: value.componentDeductLogIds || [],
-      componentsSnapshot: value.componentsSnapshot ?? null,
-      expiryDate: value.expiryDate ?? null, staffName: value.staffName ?? null,
-      note: value.note ?? null,
-    });
-    await commandWrites(command).runTransaction(db, async tx => {
-      const [parentSnap, productSnap, closingSnap, requestSnap] = await Promise.all([
-        tx.get(parentRef), tx.get(productRef), tx.get(closingRef), tx.get(requestRef),
-      ]);
-      if (!parentSnap.exists() || signature(parentSnap.data()) !== signature(log) ||
-          parentSnap.data().status !== 'active') {
-        throw new Error('입고 원본이 변경되었습니다. 최신 자료를 확인해 주세요.');
-      }
-      if (!productSnap.exists() || productSnap.data().active === false ||
-          (productSnap.data().bagTypeId ?? null) !== (log.bagTypeId ?? null) ||
-          getFrozenProductKind(productSnap.data()) !== getFrozenProductKind(product)) {
-        throw new Error('제품 구성이 변경되었습니다. 최신 자료를 확인해 주세요.');
-      }
-      if (closingSnap.exists() && closingSnap.data().status === 'closed') {
-        throw new Error('입고 날짜가 마감되었습니다.');
-      }
-      if (requestSnap.exists()) {
-        throw new Error('재고앱 전송 요청이 확인되었습니다. 입고 정정을 중단합니다.');
-      }
-      tx.update(parentRef, { staffName: staff, note, updatedAt: new Date() });
-    });
-    if(!command.isCurrent())return;
-    closeModal();
-    if(!command.isCurrent())return;
-    await showProductDetail(product);
-    showStatus('수정 완료!');
-
- },{roles:['admin','office']});
-});
-}
-
 // 제품별 현재 재고 (frozenLogs 합산, deleted 제외)
 async function getFrozenStockByProduct() {
   const snap = await getDocs(collection(db, 'frozenLogs'));
@@ -905,7 +806,7 @@ async function showIncomingModal(product) {
     if (date > today) { alert('미래 날짜는 입력할 수 없습니다.'); return; }
     if (!expiry) { alert('유통기한을 입력해주세요.'); return; }
     if (expiry < date) { alert('유통기한이 입고일보다 빠릅니다.'); return; }
-    if (!Number.isSafeInteger(qty) || qty <= 0 || qty > 9999) { alert('봉지수는 1~9,999봉 정수로 입력해주세요.'); return; }
+    if (!Number.isSafeInteger(qty) || qty <= 0) { alert('봉지수는 1봉 이상의 안전한 정수로 입력해주세요.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (await blockIfClosed(date, command)) return;
 
