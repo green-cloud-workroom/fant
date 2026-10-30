@@ -419,24 +419,24 @@ function renderStockSummaryCell(g) {
     return dateA.localeCompare(dateB);
   });
   return `
-    <div class="stock-summary-cell" data-meat-type-id="${escapeHtml(g.meatTypeId || '')}" data-summary-id="${escapeHtml(summaryId)}" style="min-width:0;border:1px solid #e8e8e8;border-radius:5px;padding:0;background:#fff;overflow:hidden;">
-      <div class="stock-summary-main" style="display:flex;align-items:center;gap:4px;min-width:0;padding:3px 5px;cursor:pointer;">
+    <div class="stock-summary-cell" data-meat-type-id="${escapeHtml(g.meatTypeId || '')}" data-summary-id="${escapeHtml(summaryId)}">
+      <div class="stock-summary-main">
         ${canDrag ? '<span class="stock-summary-drag-handle" style="cursor:grab;color:#bbb;font-size:11px;flex-shrink:0;">::</span>' : ''}
         <span style="color:#888;font-size:11px;flex-shrink:0;width:10px;text-align:center;">${expanded ? '-' : '+'}</span>
         <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#444;font-size:12px;flex:1;">${escapeHtml(g.name)}</span>
         <b style="color:${color};font-variant-numeric:tabular-nums;font-size:12px;white-space:nowrap;">${(g.totalG / 1000).toFixed(2)}kg</b>
       </div>
       ${expanded ? `
-        <div class="stock-summary-lots" style="border-top:1px solid #eee;background:#fafafa;padding:4px 5px;display:flex;flex-direction:column;gap:3px;">
+        <div class="stock-summary-lots">
           ${lots.map(lot => {
             const date = lot.incomingDate || lot.processedDate || lot.repackedDate || '-';
             const lotColor = lot.remaining < 0 ? '#e53e3e' : '#333';
             return `
-              <div style="border:1px solid #ececec;border-radius:4px;background:#fff;padding:4px;">
+              <div class="stock-summary-lot">
                 <div style="display:flex;align-items:center;gap:5px;">
                   <span style="color:#777;font-size:11px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(date)}</span>
                   <b style="color:${lotColor};font-size:11px;white-space:nowrap;">${(Number(lot.remaining || 0) / 1000).toFixed(2)}kg</b>
-                  <button class="btn-adjust" data-id="${escapeHtml(lot.id)}" data-name="${escapeHtml(lot.meatNameSnapshot || g.name || '')}" data-remaining="${escapeHtml(lot.remaining)}" style="padding:1px 6px;font-size:11px;">&#51312;&#51221;</button>
+                  <button class="btn-adjust stock-summary-adjust" data-id="${escapeHtml(lot.id)}" data-name="${escapeHtml(lot.meatNameSnapshot || g.name || '')}" data-remaining="${escapeHtml(lot.remaining)}">&#51312;&#51221;</button>
                 </div>
               </div>
             `;
@@ -458,14 +458,13 @@ function renderStockSummary(stocks) {
         <div style="color:#666;font-weight:600;">원료별 합계</div>
         ${canManage ? '<button type="button" class="btn-secondary" id="btnMeatStockCategories" style="padding:4px 8px;font-size:12px;">카테고리 관리</button>' : ''}
       </div>
-      <div class="stock-summary-columns" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;">
+      <div class="stock-summary-columns">
         ${groups.map(group => `
-          <div class="stock-summary-category-column" data-category-id="${escapeHtml(group.id)}" data-virtual="${group.virtual ? 'true' : 'false'}"
-               style="flex:0 0 calc((100% - 50px) / 6);flex-grow:0;flex-shrink:0;min-width:0;max-width:calc((100% - 50px) / 6);background:#fff;border:1px solid #e8e8e8;border-radius:6px;overflow:hidden;">
-            <div class="stock-summary-category-header" style="display:flex;align-items:center;gap:6px;padding:5px 7px;background:#f1f3f5;border-bottom:1px solid #e8e8e8;font-weight:700;color:#444;font-size:12px;">
+          <div class="stock-summary-category-column" data-category-id="${escapeHtml(group.id)}" data-virtual="${group.virtual ? 'true' : 'false'}">
+            <div class="stock-summary-category-header">
               ${canManage && !group.virtual ? '<span class="stock-summary-category-handle" style="cursor:grab;color:#aaa;">⠿</span>' : ''}
               <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${escapeHtml(group.name)}</span>
-              <span style="font-size:11px;color:#888;">${group.items.length}</span>
+              <span style="font-size:11px;color:#888;">${group.items.length}종</span>
             </div>
             <div class="stock-summary-category-items" data-category-id="${escapeHtml(group.id)}" style="display:flex;flex-direction:column;gap:4px;min-height:28px;padding:5px;">
               ${group.items.length === 0

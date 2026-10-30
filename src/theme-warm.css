@@ -1,4 +1,4 @@
-/* Warm palette; geometry and type overrides limited to approved UI3/UI4 changes. */
+/* Warm palette; geometry and type overrides limited to approved UI3/UI4/UI5 changes. */
 .closing-flag-row {
   background: #FAF7F2
 }
@@ -357,3 +357,69 @@ input:checked + .toggle-slider { background: #8B5E3C
 .user-badge { color: #D9D2CA; }
 .log-ack-done { color: #8B5E3C; }
 .main-completed-pill { background: #F3EDE5; color: #8B5E3C; border-color: #E6DED3; }
+
+/* UI5: shared meat stock summary; retain existing text and control sizes. */
+.stock-summary-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+.stock-summary-category-column {
+  min-width: 0;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.stock-summary-category-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  background: #F3EDE5;
+  border-bottom: 1px solid #D3C8BA;
+  font-weight: 700;
+  color: #444;
+  font-size: 12px;
+}
+.stock-summary-cell {
+  min-width: 0;
+  padding: 0;
+  background: #fff;
+  overflow: hidden;
+}
+.stock-summary-cell + .stock-summary-cell {
+  border-top: 1px solid #E6DED3;
+}
+.stock-summary-main {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 3px 5px;
+  cursor: pointer;
+  font-weight: 700;
+}
+.stock-summary-lots {
+  margin-left: 10px;
+  padding: 4px 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-left: 2px solid #E6DED3;
+}
+.stock-summary-lot {
+  padding: 4px;
+}
+.stock-summary-adjust {
+  /* Compensate the new 1px border to keep the original button dimensions. */
+  padding: 0 5px;
+  font-size: 11px;
+  background: #fff;
+  border: 1px solid #D3C8BA;
+  color: #8B5E3C;
+}
+.stock-summary-adjust:hover {
+  background: #fff;
+}
