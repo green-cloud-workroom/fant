@@ -143,7 +143,7 @@ function renderProductListByCategory() {
         <div class="frozen-product-category" data-category="${category.key}">
           <button type="button" class="frozen-product-category-header list-category-header" data-category="${category.key}"
             >
-            <span>입고 정정·취소는 대표·사무실 계정에서 가능합니다.</span>
+            <span>${collapsed?'▶':'▼'} ${category.label}</span>
             <span style="font-size:11px;color:#777;">${products.length}</span>
           </button>
           <div class="frozen-product-category-items" data-category="${category.key}" style="${collapsed ? 'display:none;' : ''}">
@@ -351,7 +351,7 @@ async function showProductDetail(product) {
                       ${canManageFrozenProduct ? `
                         <button class="btn-edit-row" data-logid="${escapeHtml(l.id)}" style="margin-right:4px;">수정</button>
                         <button class="btn-del-row" data-logid="${escapeHtml(l.id)}" data-qty="${escapeHtml(l.qty)}" data-bagqty="${escapeHtml(l.deductedBagQty || 0)}" data-bagid="${escapeHtml(product.bagTypeId || '')}">취소</button>
-                      ` : '<span>입고 정정·취소는 대표·사무실 계정에서 가능합니다.</span>'}
+                      ` : (INVENTORY_RECEIPT_CORRECTION_ENABLED?'<span>입고 정정·취소는 대표·사무실 계정에서 가능합니다.</span>':'')}
                     </td>
                   </tr>
                 `).join('')}

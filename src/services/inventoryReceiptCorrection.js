@@ -18,10 +18,11 @@ const copy=value=>JSON.parse(JSON.stringify(value));
 // against both real local callable handlers and a lost-response transport.
 export async function createInventoryReceiptCorrectionFlow({invoke,sourceCollection,sourceId,pending=null,savePending=()=>{},clearPending=()=>{},newId=()=>crypto.randomUUID()}){
  let context=pending?.context,prepared=null,request=pending?.request,busy=false,inventoryResult=pending?.inventoryResult;
+ if(!request){const recovered=await invoke('productionReceiptCommand',{action:'inventoryCorrectionRecovery',sourceCollection});pending=recovered.intents?.find(i=>i.sourceId===sourceId);if(pending){context=pending.context;request=pending.request;}}
  if(!request){context=await invoke('productionReceiptCommand',{action:'inventoryCorrectionContext',sourceCollection,sourceId});prepared=await invoke('inventoryReceiptCorrectionPrepare',{contractVersion:1,receiptId:context.receiptId,sourceFingerprint:context.sourceFingerprint});}
  const remember=()=>savePending(copy({context,request,...(inventoryResult?{inventoryResult}:{})}));
  const finalize=async result=>{
-  if(result?.ok===false){clearPending();request=null;if(prepared){prepared.ok=false;prepared.blocked=result.blocked;}throw Error(inventoryCorrectionMessage(result.blocked));}
+  if(result?.ok===false){await invoke('productionReceiptCommand',{action:'saveInventoryCorrectionIntent',sourceCollection,sourceId,request,blocked:true});clearPending();request=null;if(prepared){prepared.ok=false;prepared.blocked=result.blocked;}throw Error(inventoryCorrectionMessage(result.blocked));}
   if(result?.ok!==true)throw Error('재고 성공 결과가 없습니다.');
   if(result.operationId!==request.operationId||result.receiptId!==request.receiptId||result.receiptRevision!==request.expected.receiptRevision)throw Error('입력·권한 또는 서버 결과를 확인해주세요.');
   inventoryResult=copy(result);remember();
@@ -31,11 +32,11 @@ export async function createInventoryReceiptCorrectionFlow({invoke,sourceCollect
  };
  async function recover(){
   if(!request)throw Error('입력·권한 또는 서버 결과를 확인해주세요.');
-  if(inventoryResult)return finalize(inventoryResult);
   const status=await invoke('inventoryReceiptCorrectionStatus',{contractVersion:1,operationId:request.operationId});
   if(status.state==='completed')return finalize(status.result);
   if(status.state!=='not_found')throw Error('입력·권한 또는 서버 결과를 확인해주세요.');
   // A retry uses the exact frozen request and ID; never prepare or generate here.
+  await invoke('productionReceiptCommand',{action:'saveInventoryCorrectionIntent',sourceCollection,sourceId,request});
   return finalize(await invoke('inventoryReceiptCorrection',request));
  }
  return {context,prepared,get pending(){return !!request;},get operationId(){return request?.operationId;},
@@ -54,6 +55,7 @@ export async function createInventoryReceiptCorrectionFlow({invoke,sourceCollect
    request=copy({contractVersion:1,operationId:newId(),receiptId:context.receiptId,mode,lines,reason:reason.trim(),expected:{receiptRevision:prepared.receiptRevision,sourceFingerprint:context.sourceFingerprint,contextHash:prepared.contextHash}});
    remember();busy=true;
    try{
+    await invoke('productionReceiptCommand',{action:'saveInventoryCorrectionIntent',sourceCollection,sourceId,request});
     let result;
     try{result=await invoke('inventoryReceiptCorrection',request);}catch(cause){
      try{return await recover();}catch{throw new Error('응답 미확정: 같은 작업 ID로 결과 확인을 눌러주세요. 새 작업을 만들지 않습니다.',{cause});}
@@ -64,17 +66,14 @@ export async function createInventoryReceiptCorrectionFlow({invoke,sourceCollect
  };
 }
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-export async function openInventoryReceiptCorrection({sourceCollection,sourceId,mode='edit',onComplete=()=>{},showModal,closeModal,onMetadata}){
+export async function openInventoryReceiptCorrection({sourceCollection,sourceId,mode='edit',onComplete=()=>{},showModal,closeModal,onMetadata,pending=null}){
  if(!INVENTORY_RECEIPT_CORRECTION_ENABLED)return false;
  const user=auth.currentUser,epoch=sessionStore.epoch,page=getPageContext();
  if(!user)throw Error('입력·권한 또는 서버 결과를 확인해주세요.');
  const check=()=>{if(auth.currentUser?.uid!==user.uid||sessionStore.epoch!==epoch||page&&!page.isCurrent())throw Error('입력·권한 또는 서버 결과를 확인해주세요.');};
  const gate=await openAction({refs:[sourceCollection+'/'+sourceId],roles:['admin','office'],reusableConfirm:true});
  const invoke=async(name,data)=>{check();const token=await user.getIdTokenResult();if(!['admin','office'].includes(token.claims.roles?.production))throw Error('입력·권한 또는 서버 결과를 확인해주세요.');const result=await httpsCallable(getFunctions(auth.app,'asia-northeast3'),name)(data);check();return result.data;};
- // Keep an unresolved ID across closing the modal and reloading this tab.
- const key=`inventoryReceiptCorrection:${user.uid}:${sourceCollection}:${sourceId}`,storage=globalThis.sessionStorage;
- const pending=JSON.parse(storage?.getItem(key)||'null');
- const flow=await createInventoryReceiptCorrectionFlow({invoke,sourceCollection,sourceId,pending,savePending:value=>storage?.setItem(key,JSON.stringify(value)),clearPending:()=>storage?.removeItem(key)});
+ const flow=await createInventoryReceiptCorrectionFlow({invoke,sourceCollection,sourceId,pending});
  check();await gate.confirm();
  const prepared=flow.prepared,lots=prepared?.lots||[];
  showModal(`<h3>재고 입고 수량 ${mode==='cancel'?'취소':'정정'}</h3><p>수량만 정정합니다. 재고 반영 후 생산 원본을 확정합니다.</p>
@@ -95,20 +94,24 @@ export async function openInventoryReceiptCorrection({sourceCollection,sourceId,
  return true;
 }
 
-// A cancelled source may disappear from its normal list before its ACK arrives.
-// Keep recovery reachable from the page even after that row is hidden.
-export function mountInventoryCorrectionRecovery({sourceCollection,role,root=document.getElementById('mainContent'),...options}){
+// Production-owned server intents survive tab closure and another device login.
+export async function mountInventoryCorrectionRecovery({sourceCollection,role,root=document.getElementById('mainContent'),...options}){
  if(!INVENTORY_RECEIPT_CORRECTION_ENABLED||!['admin','office'].includes(role)||!root)return;
  root.querySelector('[data-inventory-correction-recovery]')?.remove();
- const storage=globalThis.sessionStorage,prefix=`inventoryReceiptCorrection:${auth.currentUser?.uid}:${sourceCollection}:`;
- const holder=document.createElement('div');holder.dataset.inventoryCorrectionRecovery='true';
- for(let i=0;i<(storage?.length??0);i++){
-  const key=storage.key(i);if(!key?.startsWith(prefix))continue;
-  const pending=JSON.parse(storage.getItem(key)||'null');if(!pending?.request)continue;
-  const button=document.createElement('button');button.className='btn-secondary';
-  button.textContent=`미확정 재고 정정 결과 확인 (${pending.request.operationId})`;
-  button.addEventListener('click',()=>openInventoryReceiptCorrection({sourceCollection,sourceId:key.slice(prefix.length),mode:pending.request.mode,...options}).catch(error=>alert(error.message)));
-  holder.appendChild(button);
- }
- if(holder.childNodes.length)root.prepend(holder);
+ const user=auth.currentUser,epoch=sessionStore.epoch,page=getPageContext();
+ if(!user)return;
+ const holder=document.createElement('div');holder.dataset.inventoryCorrectionRecovery='true';root.prepend(holder);
+ const current=()=>auth.currentUser?.uid===user.uid&&sessionStore.epoch===epoch&&(!page||page.isCurrent())&&holder.parentNode;
+ try{
+  const token=await user.getIdTokenResult();if(!['admin','office'].includes(token.claims.roles?.production))return;
+  const response=await httpsCallable(getFunctions(auth.app,'asia-northeast3'),'productionReceiptCommand')({action:'inventoryCorrectionRecovery',sourceCollection});
+  if(!current())return;
+  for(const pending of response.data.intents||[]){
+   const button=document.createElement('button');button.className='btn-secondary';
+   button.textContent=`확정 마저 하기 (${pending.request.operationId})`;
+   button.addEventListener('click',()=>openInventoryReceiptCorrection({sourceCollection,sourceId:pending.sourceId,mode:pending.request.mode,pending,...options}).catch(error=>alert(error.message)));
+   holder.appendChild(button);
+  }
+  if(!holder.childNodes.length)holder.remove();
+ }catch(error){if(current())holder.textContent='미확정 작업 조회 실패: '+error.message;}
 }

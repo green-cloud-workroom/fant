@@ -539,7 +539,6 @@ function renderMainLayout() {
           ...productions,
           ...nextProductions,
         ].find(p => p.id === card.dataset.id);
-        if(INVENTORY_RECEIPT_CORRECTION_ENABLED&&target?.category==='raw'&&target.received&&!['admin','office'].includes(currentUserRole)){alert('입고 수량 정정·취소는 대표·사무실 계정에서 가능합니다.');return;}
         if (target?.category === 'freezeDry') openFreezeDryReceiptModal(card.dataset.id);
         else openProductReceiptModal(card.dataset.id);
       });
@@ -2229,9 +2228,10 @@ async function openProductReceiptModal(productionId) {
     alert('미래 날짜의 제품 입고는 입력할 수 없습니다.');
     return;
   }
-  // Received/handed-off raw receipts never enter the old new-revision writer
-  // when correction is enabled. The inventory command owns the stock delta.
-  if(p.received&&INVENTORY_RECEIPT_CORRECTION_ENABLED&&(action.values.slice(4).some(item=>['completed','입고완료'].includes(item?.status))||(await getDoc(doc(db,'receiptHandoffs',`productions:${productionId}:${p.receivedRevision}`))).exists())){
+  // Only inventory-received raw receipts use inventory corrections. Pending
+  // receipts retain the existing editor, including the production role.
+  if(p.received&&INVENTORY_RECEIPT_CORRECTION_ENABLED&&action.values.slice(4).some(item=>['completed','입고완료'].includes(item?.status))){
+    if(!['admin','office'].includes(currentUserRole)){alert('입고 수량 정정·취소는 대표·사무실 계정에서 가능합니다.');return;}
     if(await openInventoryReceiptCorrection({sourceCollection:'productions',sourceId:productionId,showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderMain()}))return;
   }
   const closedGate = await gateClosedReceiptEdit(p.date);
