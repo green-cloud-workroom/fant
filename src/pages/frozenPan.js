@@ -1,3 +1,5 @@
+import { fingerprint } from '../services/actionGateway.js';
+import { atomicStockOperation, stockOperationId } from '../services/atomicStockOperation.js';
 import { escapeHtml } from '../utils/html.js';
 import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
@@ -527,6 +529,9 @@ function showTenderInModal() {
     const now = new Date();
 
     try {
+      await atomicStockOperation({db,command,operationId:stockOperationId(db,document.getElementById('btnSaveTenderIn')),
+        actionType:'frozenPanTenderIn',date,request:{productName,qty,staffName,note},build:async ({writer})=>{
+        const {addDoc,updateDoc}=writer;
       // 1. frozenPanLots 신규 lot
       const lotRef = await addDoc(collection(db, 'frozenPanLots'), {
         productName,
@@ -584,6 +589,8 @@ function showTenderInModal() {
           isNewDoc: true,
         }],
       });
+
+      }});
 
       if(!command.isCurrent())return;
       closeModal();
@@ -1054,6 +1061,13 @@ async function handleWorkRowSave() {
   // 3. 빵판 lot 재로드 (저장 직전 최신 잔량 확인)
   const allBreadLots = await loadBreadPanLots();
 
+  try {
+    await atomicStockOperation({db,command,operationId:stockOperationId(db,document.getElementById('btnSaveWorkRow')),
+      actionType:'breadToFrozenPreprocess',date,request:{items,staffName,note},inputs:{breadPanLots:allBreadLots.filter(l=>items.some(i=>i.productName===l.productName))},
+      build:async ({writer,fresh})=>{
+      const {addDoc,updateDoc}=writer;
+      const allBreadLots=fresh.breadPanLots;
+      if(new Set(items.map(i=>i.productName)).size!==items.length)throw Error('같은 제품은 한 행으로 입력해주세요.');
   // 4. 재고 부족 검증
   const shortages = [];
   for (const item of items) {
@@ -1064,8 +1078,7 @@ async function handleWorkRowSave() {
     }
   }
   if (shortages.length > 0) {
-    alert(`빵판 재고가 부족합니다.\n\n${shortages.join('\n')}`);
-    return;
+    throw Error(`빵판 재고가 부족합니다.\n\n${shortages.join('\n')}`);
   }
 
   // 5. batchId 생성 (이 트랜잭션 전체를 묶는 ID)
@@ -1073,7 +1086,6 @@ async function handleWorkRowSave() {
   const now = new Date();
   const ledgerItems = [];
 
-  try {
     // 6. 각 item 처리
     for (const item of items) {
       const expectedFrozenQty = breadToFrozenPan(item.breadPanQty);
@@ -1196,6 +1208,8 @@ async function handleWorkRowSave() {
       items: ledgerItems,
     });
 
+    }});
+
     if(!command.isCurrent())return;
     closeModal();
     if(!command.isCurrent())return;
@@ -1204,7 +1218,7 @@ async function handleWorkRowSave() {
 
   } catch (err) {
     console.error('handleWorkRowSave 에러:', err);
-    alert(`저장 중 오류가 발생했습니다.\n\n${err.message}\n\n일부 데이터가 저장되었을 수 있으니 화면을 새로고침해서 확인해주세요.`);
+    alert(`저장 중 오류가 발생했습니다.\n\n${err.message}`);
   }
 
  },{roles:['admin','office','production']});
@@ -1356,7 +1370,15 @@ async function confirmOrder(row, lots, staff) {
  return runPageCommand(frozenPanResource,async command=>{
   const {addDoc,updateDoc,recordActivity}=commandWrites(command);
 
-  const items = row.items || [];
+  await atomicStockOperation({db,command,operationId:`frozenPanOrder_${row.id}_${row.ledgerId||'initial'}`,actionType:'frozenPanOrder',date:row.date,
+    request:{orderId:row.id,items:row.items,staff},inputs:{frozenPanLots:lots.filter(l=>(row.items||[]).some(i=>i.productName===l.productName))},readRefs:[doc(db,'frozenPanStock',row.id)],
+    build:async ({writer,fresh})=>{
+    const {addDoc,updateDoc,recordActivity,getDoc}=writer;
+    const current=(await getDoc(doc(db,'frozenPanStock',row.id))).data();
+    if(current.status!=='pending' || fingerprint(current.items)!==fingerprint(row.items))throw Error('발주 내용이나 상태가 변경되었습니다.');
+    const items=current.items||[], lots=fresh.frozenPanLots;
+    if(!items.length || items.some(i=>!Number.isFinite(i.orderPanQty)||i.orderPanQty<=0) || new Set(items.map(i=>i.productName)).size!==items.length)throw Error('발주 수량이나 품목이 비정상입니다.');
+
 
   // 발주 확인 시점 재고 재검증 (등록 후 시간 경과로 재고 변동 가능)
   const shortages = [];
@@ -1368,8 +1390,7 @@ async function confirmOrder(row, lots, staff) {
     }
   }
   if (shortages.length > 0) {
-    alert(`재고가 부족하여 발주 확인할 수 없습니다.\n\n${shortages.join('\n')}\n\n발주를 삭제하거나 작업 행을 먼저 추가하세요.`);
-    return;
+    throw Error(`재고가 부족하여 발주 확인할 수 없습니다.\n\n${shortages.join('\n')}\n\n발주를 삭제하거나 작업 행을 먼저 추가하세요.`);
   }
 
   // FIFO 차감 + ledger items 누적
@@ -1392,6 +1413,10 @@ async function confirmOrder(row, lots, staff) {
         closed: after <= 0,
         updatedAt: stockUpdatedAt,
       });
+
+      await addDoc(collection(db,'frozenPanLogs'),{type:'orderDeduct',date:row.date||getToday(),productName:item.productName,
+        qty:-deduct,before,after,lotId:lot.id,staffName:staff,uid:null,note:null,reason:null,
+        batchId:`frozenPanOrder_${row.id}`,ledgerId:null,timestamp:new Date()});
 
       ledgerItems.push({
         collection: 'frozenPanLots',
@@ -1446,6 +1471,8 @@ async function confirmOrder(row, lots, staff) {
       ledgerId,
     },
   });
+
+  }});
 
   if(!command.isCurrent())return;
   await refreshFrozenPanLayout();

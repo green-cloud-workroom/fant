@@ -732,7 +732,7 @@ async function handleAdjustCellBlur(input) {
 
 // 수동조정 저장 — 기존 saveSupplementAdjust 트랜잭션 로직 + activityLogs 풀필드 재사용.
 async function saveAdjustCell(supplementTypeId,date,signedQty,reason,staffName,selection) {
-  return withReadCommand(supplementResource,command=>saveAdjustCellWithCommand(supplementTypeId,date,signedQty,reason,staffName,command,selection),{roles:['admin','office','production']});
+  return withReadCommand(supplementResource,command=>saveAdjustCellWithCommand(supplementTypeId,date,signedQty,reason,staffName,command,selection),{roles:['admin','office']});
 }
 async function saveAdjustCellWithCommand(supplementTypeId,date,signedQty,reason,staffName,command,selection) {
   return saveManualMovement({db,command,name:'supplementLogs',stockId:supplementTypeId,selection,uid:currentUser?.uid||null,

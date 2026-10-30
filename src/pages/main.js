@@ -1,3 +1,4 @@
+import { confirmAutoRepack } from '../services/autoRepackConfirm.js';
 import { escapeHtml, recipeColor } from '../utils/html.js';
 import { inventoryHandoffButton, bindInventoryHandoff } from '../services/inventoryHandoff.js';
 import { registerCloseModal } from '../utils/modalManager.js';
@@ -1503,58 +1504,7 @@ async function showAutoRepackConfirmModal(logId, log) {
 }
 
 async function processAutoRepackConfirm({ logId, log, actualCount, surplusG, processedUnitWeightG, staffName }) {
-  const d = log.details || {};
-  const repackedStockId = d.repackedStockId;
-  const meatTypeId = d.meatTypeId;
-  const meatName = d.meatName;
-  const today = getToday();
-  const actualG = actualCount * processedUnitWeightG;
-  const diffG = actualG - surplusG;
-
-  if (diffG === 0) {
-    await acknowledgeLog(logId, staffName);
-    await loadCombinedLogs();
-    refreshLogPanels();
-    return;
-  }
-
-  const lotRef = doc(db, 'meatStocks', repackedStockId);
-  const lotSnap = await getDoc(lotRef);
-  if (!lotSnap.exists()) throw new Error('자동 재포장 lot 문서를 찾을 수 없습니다.');
-
-  const lot = lotSnap.data();
-  const currentRemaining = Number(lot.remaining) || 0;
-  const newRemaining = currentRemaining + diffG;
-  if (newRemaining < 0) {
-    throw new Error(`자동 재포장 lot 잔량이 음수가 됩니다 (현재 ${currentRemaining}g, 보정 ${diffG}g).`);
-  }
-
-  await updateDoc(lotRef, {
-    remaining: newRemaining,
-    closed: actualCount === 0 && newRemaining === 0,
-    updatedAt: new Date(),
-  });
-
-  await recordActivity({
-    action: 'autoRepack',
-    subAction: 'diff',
-    date: today,
-    staff: staffName,
-    message: `자동 재포장 차이 — ${meatName} 시스템 ${surplusG}g / 실제 ${actualG}g (${diffG > 0 ? '+' : ''}${diffG}g) — 담당: ${staffName}`,
-    details: {
-      meatTypeId,
-      meatName,
-      repackedStockId,
-      processedUnitWeightG,
-      systemG: surplusG,
-      actualCount,
-      actualG,
-      diffG,
-      sourceLogId: logId,
-    },
-  });
-
-  await acknowledgeLog(logId, staffName);
+  await confirmAutoRepack({db,logId,log,actualCount,staffName,date:getToday(),uid:currentUser?.uid||null});
   await loadCombinedLogs();
   refreshLogPanels();
 }

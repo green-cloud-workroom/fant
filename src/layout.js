@@ -761,7 +761,7 @@ async function showCloseConfirmModal(targetDate) {
  * 전체 담당자(senior+lead+office) 선택 가능.
  */
 async function showReleaseConfirmModal(targetDate) {
-  const action = await openAction({ refs: ['closings/' + targetDate], reusableConfirm:true });
+  const action = await openAction({ refs: ['closings/' + targetDate], reusableConfirm:true, roles:['admin','office'] });
   const closingCommand = await prepareProductionClosing(targetDate, 'release');
   // 기존 모달 제거
   const existing = document.getElementById('releaseConfirmOverlay');

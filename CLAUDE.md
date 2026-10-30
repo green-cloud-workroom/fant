@@ -190,7 +190,7 @@ The production app reads only `roles.production`; do not write a bare top-level 
 - production role accounts - to be created during seed step
 
 Cutover safety: do not push or merge Firestore rules changes to `main` before the Admin SDK re-claim has been executed and verified with live token reads. Push to `main` triggers the GitHub Actions rules deploy immediately.
-Transitional rule: `hasRole` accepts BOTH the new `token.roles.production` and the legacy flat `token.role` during cutover. This legacy branch MUST be removed in a follow-up commit after the live re-claim is verified and all client tokens have refreshed.
+Current source (verified 2026-10-30): `hasRole` in this checkout reads only `token.roles.production`; the legacy flat `token.role` branch is already absent. The client also uses only `claims.roles.production`. Do not reintroduce the legacy branch. This is a local source check, not verification of live tokens or deployed shared Rules. Shared Rules changes and publication belong to the inventory session.
 
 **Passwords are NOT in this document.** Request from 호두 when verification requires login.
 

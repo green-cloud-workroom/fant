@@ -1,3 +1,4 @@
+import { atomicStockOperation, stockOperationId } from '../services/atomicStockOperation.js';
 import {showStatus} from '../utils/statusToast.js';
 import {escapeHtml} from '../utils/html.js';
 import { registerCloseModal } from '../utils/modalManager.js';
@@ -10,7 +11,7 @@ import { currentUserRole } from '../app.js';
 import { getTodayKST as getToday } from '../utils/date.js';
 import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
-import { showConfirmModal } from '../utils/modal.js';
+import { showConfirmModal, showPromptModal } from '../utils/modal.js';
 import { recordActivity } from '../services/activityLogs.js';
 
 let freezeDryRecipes = [];
@@ -533,7 +534,7 @@ async function deleteFrozenSepStock(stock) {
     return;
   }
 
-  const staff = window.prompt('삭제 담당자 이름을 입력해주세요.');
+  const staff = await showPromptModal({title:'동결 분리작업 삭제',label:'삭제 담당자 이름',required:true});
   if (!staff || !staff.trim()) return;
 
   const stockTypeLabel = getStockTypeLabel(stock.stockType);
@@ -784,12 +785,17 @@ function showSeparateModal(stocks, draft=null) {
     if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (await blockIfClosed(date, command)) return;
 
+    await atomicStockOperation({db,command,operationId:stockOperationId(db,document.getElementById('btnSaveSeparate')),
+      actionType:'frozenSepSeparate',date,request:{productName,qty,staff},inputs:{frozenSeparation:notSepStocks.filter(s=>s.productName===productName)},
+      build:async ({writer,fresh})=>{
+      const {addDoc,updateDoc,recordActivity}=writer;
+      const notSepStocks=fresh.frozenSeparation;
     const productStocks = notSepStocks
       .filter(s => s.productName === productName)
       .sort((a, b) => a.date.localeCompare(b.date));
     const totalAvail = productStocks.reduce((sum, s) => sum + Number(s.remaining || 0), 0);
 
-    if (qty - totalAvail > QTY_EPSILON) { alert(`분리X 재고가 부족합니다. (현재: ${formatQty(totalAvail)}개)`); return; }
+    if (qty - totalAvail > QTY_EPSILON) { throw Error(`분리X 재고가 부족합니다. (현재: ${formatQty(totalAvail)}개)`); }
 
     // FIFO 차감
     let remaining = qty;
@@ -838,6 +844,8 @@ function showSeparateModal(stocks, draft=null) {
         toStockType: 'separated',
       },
     });
+
+    }});
 
     if(!command.isCurrent())return;
     const next = readEntryContext();
@@ -949,6 +957,11 @@ function showOutModal(stocks, draft=null) {
     const stockType = recipe.requiresSeparation ? 'separated' : 'noSplit';
     const stockTypeLabel = recipe.requiresSeparation ? '분리O' : '소분X';
 
+    await atomicStockOperation({db,command,operationId:stockOperationId(db,document.getElementById('btnSaveOut')),
+      actionType:'frozenSepOut',date,request:{productName,qty,staff,stockType},inputs:{frozenSeparation:outStocks.filter(s=>s.productName===productName&&s.stockType===stockType)},
+      build:async ({writer,fresh})=>{
+      const {addDoc,updateDoc,recordActivity}=writer;
+      const outStocks=fresh.frozenSeparation;
     const targetStocks = outStocks
       .filter(s => s.productName === productName && s.stockType === stockType)
       .sort((a, b) => a.date.localeCompare(b.date));
@@ -958,8 +971,7 @@ function showOutModal(stocks, draft=null) {
       const hint = recipe.requiresSeparation
         ? '\n\n분리 작업을 먼저 진행해주세요.'
         : '';
-      alert(`${stockTypeLabel} 재고가 부족합니다. (현재: ${formatQty(totalAvail)}개)${hint}`);
-      return;
+      throw Error(`${stockTypeLabel} 재고가 부족합니다. (현재: ${formatQty(totalAvail)}개)${hint}`);
     }
 
     let remaining = qty;
@@ -997,6 +1009,8 @@ function showOutModal(stocks, draft=null) {
         autoDecided: true,  // [묶음 5C] 자동 결정 표시
       },
     });
+
+    }});
 
     if(!command.isCurrent())return;
     const next = readEntryContext();

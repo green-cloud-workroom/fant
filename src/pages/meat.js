@@ -1,3 +1,4 @@
+import { atomicStockOperation, stockOperationId } from '../services/atomicStockOperation.js';
 import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
 import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
@@ -1350,16 +1351,21 @@ function showAddProcessedModal() {
 
     const totalG = unitWeight * count;
 
-    // 냉동창고 잔량 확인 (FIFO 순서: incomingDate 오름차순)
     const allFrozen = await loadMeatStocks('frozen');
+    await atomicStockOperation({db,command,operationId:stockOperationId(db,document.getElementById('btnSaveProcessed')),
+      actionType:'meatProcessed',date,request:{meatTypeId,totalG,unitWeight,count,staff,note},
+      inputs:{meatStocks:allFrozen.filter(s=>s.meatTypeId===meatTypeId)},build:async ({writer,fresh})=>{
+      const {addDoc,updateDoc,recordMeatLog}=writer;
+      const allFrozen=fresh.meatStocks;
+    // 냉동창고 잔량 확인 (FIFO 순서: incomingDate 오름차순)
+
     const candidates = allFrozen
       .filter(s => s.meatTypeId === meatTypeId && s.remaining > 0)
       .sort((a, b) => (a.incomingDate || '').localeCompare(b.incomingDate || ''));
 
     const totalAvailable = candidates.reduce((sum, s) => sum + s.remaining, 0);
     if (totalAvailable < totalG) {
-      alert(`냉동창고 잔량이 부족합니다.\n${meatName}: 필요 ${(totalG/1000).toFixed(1)}kg / 현재 ${(totalAvailable/1000).toFixed(1)}kg`);
-      return;
+      throw Error(`냉동창고 잔량이 부족합니다.\n${meatName}: 필요 ${(totalG/1000).toFixed(1)}kg / 현재 ${(totalAvailable/1000).toFixed(1)}kg`);
     }
 
     const batchId = Date.now().toString();
@@ -1430,6 +1436,8 @@ function showAddProcessedModal() {
       reason: note || null,
       batchId,
     });
+
+    }});
 
     if(!command.isCurrent())return;
     closeModal();
@@ -1526,16 +1534,24 @@ function showAddRepackedModal() {
       return;
     }
 
+    const capturedProcessed = (await loadMeatStocks('processed')).filter(s=>s.meatTypeId===meatTypeId);
+    await atomicStockOperation({db,command,operationId:stockOperationId(db,document.getElementById('btnSaveRepacked')),
+      actionType:'meatRepacked',date,request:{meatTypeId,totalG,unitWeight,count,staff,note},
+      inputs:{meatStocks:capturedProcessed},build:async ({writer,fresh})=>{
+      const {addDoc,updateDoc,recordMeatLog}=writer;
+      const allProcessed=fresh.meatStocks;
+      // A concurrent repack consumes these same source lots. Hold the stale
+      // request even when stock remains, preserving the one-active-repack gate.
+      if(capturedProcessed.some(old=>(allProcessed.find(lot=>lot.id===old.id)?.remaining ?? 0)!==old.remaining))throw Error('전처리 재고가 변경되었습니다. 활성 재포장 행을 다시 확인해주세요.');
     // 전처리 잔량 확인 (FIFO 순서: processedDate 오름차순)
-    const allProcessed = await loadMeatStocks('processed');
+
     const candidates = allProcessed
       .filter(s => s.meatTypeId === meatTypeId && s.remaining > 0)
       .sort((a, b) => (a.processedDate || '').localeCompare(b.processedDate || ''));
 
     const totalAvailable = candidates.reduce((sum, s) => sum + s.remaining, 0);
     if (totalAvailable < totalG) {
-      alert(`전처리 잔량이 부족합니다.\n${meatName}: 필요 ${(totalG/1000).toFixed(1)}kg / 현재 ${(totalAvailable/1000).toFixed(1)}kg`);
-      return;
+      throw Error(`전처리 잔량이 부족합니다.\n${meatName}: 필요 ${(totalG/1000).toFixed(1)}kg / 현재 ${(totalAvailable/1000).toFixed(1)}kg`);
     }
 
     const batchId = Date.now().toString();
@@ -1606,6 +1622,8 @@ function showAddRepackedModal() {
       reason: note || null,
       batchId,
     });
+
+    }});
 
     if(!command.isCurrent())return;
     closeModal();

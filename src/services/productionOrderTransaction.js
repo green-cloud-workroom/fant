@@ -2,6 +2,7 @@ import { collection, doc, query, where, getDocFromServer, getDocsFromServer, ser
 import { fingerprint } from './actionGateway.js';
 import { commandWrites } from './commandWrites.js';
 import { newProductionWriteToken } from '../utils/productionWriteToken.js';
+import { isBusinessDay } from '../utils/date.js';
 import {planProductionSupplementChanges} from './productionSupplementReservation.js';
 
 const MAX_DATE_ROWS = 400;
@@ -92,6 +93,17 @@ export async function runProductionOrderTransaction({ db, date, command, prepare
     throw conflict('화면의 생산 순서가 변경되었습니다. 최신 자료를 다시 불러온 뒤 정렬해주세요.');
   }
   const { runTransaction } = commandWrites(command);
+  // Completion IDs are RUN dates, not target production dates. Include every
+  // intervening non-business day (a load can also run on a weekend/holiday).
+  // Read absent fixed documents too, so concurrent creation causes a retry.
+  const completionDates = [date];
+  let runDate = date;
+  for (let i = 0; i < 366; i++) {
+    runDate = new Date(Date.parse(runDate + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
+    completionDates.push(runDate);
+    if (isBusinessDay(runDate)) break;
+    if (i === 365) throw conflict('완료 실행일 범위를 확인할 수 없습니다.');
+  }
   const logRefs=new Map();
   return runTransaction(db, async transaction => {
     const anchor = await transaction.get(captured.anchorRef);
@@ -103,11 +115,20 @@ export async function runProductionOrderTransaction({ db, date, command, prepare
       if (!snapshot.exists() || rowFingerprint(snapshot) !== captured.rows[index].fingerprint) throw conflict();
       return { ...snapshot.data(), id: snapshot.id };
     });
+    const completions=await Promise.all(completionDates.map(day=>transaction.get(doc(db,'productionCompletion',day))));
+    const completed=completions.some(s=>s.exists() && s.data().status==='completed' && (s.data().targetProductionDate===date || (s.id===date && !s.data().targetProductionDate)));
     const plan = await prepare({ transaction, rows: rows.map(row => ({ ...row })), revision: captured.revision });
     let changes = plan?.changes || [];
     const suppliedWrites = plan?.businessWrites || [];
     if(suppliedWrites.some(write=>write.ref?.path?.split('/')[0]!=='activityLogs'))throw conflict('생산 영양제 재고·로그는 예약 거래에서만 계산할 수 있습니다.');
     if (changes.length === 0) throw conflict('생산 순서 변경 내용이 없습니다.');
+    for(const change of changes){
+      const previous=rows.find(row=>row.id===change.id);
+      if(change.kind==='update' && (previous?.lockedByCompletion===true || completed)) {
+        throw conflict('완료 차감된 생산은 수정·삭제할 수 없습니다. 메인에서 완료 취소를 먼저 진행해주세요.');
+      }
+      if(change.kind==='update' && Object.hasOwn(change.data,'lockedByCompletion'))throw conflict('생산 잠금은 완료 취소 거래에서만 변경할 수 있습니다.');
+    }
     const newRefs = changes.filter(change => change.kind === 'create').map(change => doc(db, 'productions', change.id));
     const newSnapshots = await Promise.all(newRefs.map(ref => transaction.get(ref)));
     if (newSnapshots.some(snapshot => snapshot.exists())) throw conflict('이미 존재하는 생산 ID입니다.');
@@ -159,6 +180,9 @@ export async function runProductionOrderTransaction({ db, date, command, prepare
           ...(patch?.data || {}), ...values, mutationToken:patch?.data?.mutationToken || newProductionWriteToken(),
         } });
       }
+    }
+    for(const [id,patch] of patches){
+      if(patch.kind==='update' && (rows.find(row=>row.id===id)?.lockedByCompletion===true || completed))throw conflict('완료 차감된 생산의 회차·순서를 변경할 수 없습니다. 완료 취소를 먼저 진행해주세요.');
     }
     if (patches.size + businessWrites.length + 1 > MAX_WRITES) throw conflict('생산 변경 건수가 안전 처리 한도를 넘었습니다. 관리자에게 문의해주세요.');
     const anchorData = { date, revision: nextRevision, updatedAt: serverTimestamp() };

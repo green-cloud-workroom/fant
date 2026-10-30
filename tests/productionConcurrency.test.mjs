@@ -123,13 +123,14 @@ test('invalid supplement log is not silently treated as no refund',async()=>{
   }finally{await e.cleanup();}
 });
 
-test('locked production remains editable and SKU movement is atomic',async()=>{
+test('locked production blocks edits and preserves supplement reservation',async()=>{
   const e=await setup({locked:true});try{
+    assert.equal(e.document.querySelector('#btnSaveProduction').disabled,true);
+    assert.equal(e.document.querySelector('.card-del').disabled,true);
     e.fill('#pf_qty_select','2');await e.fire('#pf_qty_select','change');await e.fire('#btnSaveProduction');
-    assert.deepEqual(e.alerts,[]);assert.deepEqual(stocks(e),[10,19]);
-    assert.equal(e.state.rows.productions[0].productionUnitQty,2);
-    assert.equal(e.state.rows.supplementLogs.length,3);
-    assert.equal(e.state.commits[0].filter(o=>o.target.path.startsWith('supplementLogs/')).length,2);
+    assert.match(e.alerts.at(-1),/완료 취소/);assert.deepEqual(stocks(e),[9,20]);
+    assert.equal(e.state.rows.productions[0].productionUnitQty,1);
+    assert.equal(e.state.rows.supplementLogs.length,1);assert.equal(e.state.commits.length,0);
   }finally{await e.cleanup();}
 });
 

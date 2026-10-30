@@ -132,12 +132,12 @@ function verifyFrozenReceiptLinks(e) {
 function alphaRenameGeneratedIds(payload) {
  const ids=new Map();
  for(const [collection,rows]of Object.entries(payload))for(const [index,row]of rows.entries()){
-  if(/^fixture-\d+$/.test(row.id)){
+  if(/^fixture-\d+$/.test(row.id)||/^stockOperation_/.test(row.id)){
    assert(!ids.has(row.id),'one generated document ID cannot identify two documents');
    ids.set(row.id,`generated:${collection}:${index}`);
   }
  }
- const visit=value=>typeof value==='string'?value.replace(/fixture-\d+/g,id=>ids.get(id)||id)
+ const visit=value=>typeof value==='string'?(ids.get(value)||value.replace(/fixture-\d+/g,id=>ids.get(id)||id))
   :Array.isArray(value)?value.map(visit):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([key,item])=>[key,visit(item)])):value;
  return visit(payload);
 }
@@ -196,8 +196,33 @@ for(const scenario of scenarios)test(`${scenario.route}: ${scenario.name} ${scen
      // and authenticated UID (asserted above), replacing the old 'system' label.
      deletedRefund.staffName='validated deletion attribution';
     }
+    if(['processed meat FIFO and repacking','fractional separation','fractional outbound','FIFO order confirmation'].includes(scenario.name)){
+     if(!baseline){
+      const ledgers=e.state.rows.stockLedger;
+      assert.ok(ledgers.length>0);
+      for(const ledger of ledgers){
+       assert.ok(ledger.operationId);assert.ok(ledger.requestFingerprint);
+       for(const item of ledger.items){assert.equal(item.before+item.delta,item.after);assert.ok(item.after>=0);}
+      }
+      for(const collection of scenario.collections.filter(c=>c.endsWith('Logs')))for(const log of e.state.rows[collection]||[]){
+       assert.ok(ledgers.some(l=>l.id===log.ledgerId && l.operationId===log.operationId));
+      }
+      // Order confirmation gained the previously missing orderDeduct history.
+      if(scenario.name==='FIFO order confirmation'){
+       const log=e.state.rows.frozenPanLogs[0],item=ledgers[0].items[0];
+       assert.equal(log.type,'orderDeduct');assert.equal(log.qty,item.delta);assert.equal(log.lotId,item.docId);
+       assert.equal(e.state.commits.length,1);
+      }
+     }
+     // Only additive operation metadata is projected out after its links have
+     // been verified; every historical quantity and payload field is compared.
+     for(const [collection,rows]of Object.entries(payload))for(const row of rows){
+      delete row.operationId;delete row.requestFingerprint;
+      if(collection.endsWith('Logs'))delete row.ledgerId;
+     }
+    }
     if(scenario.route==='frozenProduct'&&!baseline)verifyFrozenReceiptLinks(e);
-    results.push(['production','frozenProduct'].includes(scenario.route)?alphaRenameGeneratedIds(payload):payload);
+    results.push(['production','frozenProduct','meat','frozenSep','frozenPan'].includes(scenario.route)?alphaRenameGeneratedIds(payload):payload);
    }
   }finally{await e.cleanup();}
  }

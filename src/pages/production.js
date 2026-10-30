@@ -443,7 +443,8 @@ function renderProductionCards() {
       <div class="card-info">${escapeHtml(p.productionUnitQty)} ${escapeHtml(getProductionCardUnitName(p))}</div>
       ${p.category === 'raw' ? `<div class="card-sub">${escapeHtml(p.rawBoxQty || 0)}박스</div>` : ''}
       ${p.category === 'freezeDry' ? `<div class="card-sub">${escapeHtml(renderFreezeDryQtyLine(p))}</div>` : ''}
-      ${canManageProduction ? `<button class="card-del" data-id="${escapeHtml(p.id)}">✕</button>` : ''}
+      ${canManageProduction ? `<button class="card-del" data-id="${escapeHtml(p.id)}" ${p.lockedByCompletion ? 'disabled title="완료 취소를 먼저 진행해주세요"' : ''}>✕</button>` : ''}
+      ${p.lockedByCompletion ? '<div class="card-sub">완료 차감됨 · 수정·삭제하려면 메인에서 완료 취소를 먼저 진행해주세요.</div>' : ''}
     </div>
   `).join('');
 }
@@ -482,6 +483,7 @@ function bindCardEvents() {
         alert('생산 카드 삭제는 대표/사무실 계정만 가능합니다.');
         return;
       }
+      if(productions.find(p=>p.id===btn.dataset.id)?.lockedByCompletion){alert('완료 취소를 먼저 진행해주세요.');return;}
       const __c = await showConfirmModal({ title:'삭제 확인', message:'정말 삭제하시겠습니까?', confirmText:'삭제', danger:true }); if (!__c) return;
       if (await blockIfClosed(selectedDate,command)) return;
       const deletedId = btn.dataset.id;
@@ -631,7 +633,7 @@ async function showProductionForm(production, draft=null) {
       <div id="pf_refs" style="font-size:11px;color:#888;margin-bottom:12px;"></div>
 
       ${isNew&&canManageProduction?`<label style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><input type="checkbox" id="pf_continue" ${draft?'checked':''} />저장 후 같은 제품 계속 입력</label>`:''}
-      ${canManageProduction ? `<button class="btn-primary" id="btnSaveProduction" style="width:100%;">${isNew ? '저장' : '수정'}</button>` : ''}
+      ${canManageProduction ? `<button class="btn-primary" id="btnSaveProduction" ${production?.lockedByCompletion ? 'disabled title="완료 취소를 먼저 진행해주세요"' : ''} style="width:100%;">${isNew ? '저장' : '수정'}</button>` : ''}
     </div>
   `;
 
@@ -641,6 +643,7 @@ async function showProductionForm(production, draft=null) {
   const qtyDirectInput = document.getElementById('pf_qty_direct');
   const qtyMessage = document.getElementById('pf_qty_message');
   const saveButton = document.getElementById('btnSaveProduction');
+  if(production?.lockedByCompletion && saveButton)saveButton.disabled=true;
   const methodSelect = document.getElementById('pf_methodKey');
   const conversionBlock = document.getElementById('pf_conversion_block');
   const conversionMessage = document.getElementById('pf_conversion_message');
@@ -650,7 +653,7 @@ async function showProductionForm(production, draft=null) {
   let conversionBlocked = false;
 
   function updateSaveButtonState() {
-    if (saveButton) saveButton.disabled = unitBlocked || conversionBlocked;
+    if (saveButton) saveButton.disabled = !!production?.lockedByCompletion || unitBlocked || conversionBlocked;
   }
 
   function getSelectedQty() {
@@ -880,6 +883,7 @@ async function showProductionForm(production, draft=null) {
   markFieldsSaved(form);
 
   document.getElementById('btnSaveProduction')?.addEventListener('click', () => runProductionCommand(async command => {
+    if(production?.lockedByCompletion){alert('완료 취소를 먼저 진행해주세요.');return;}
     if (currentUserRole !== 'admin' && currentUserRole !== 'office') {
       alert('생산 입력은 대표/사무실 계정만 가능합니다.');
       return;
@@ -956,7 +960,7 @@ async function showProductionForm(production, draft=null) {
       })(),
       staffName: staff,
       sortOrder: isNew ? productions.length : production.sortOrder,
-      lockedByCompletion: false,
+      ...(isNew ? {lockedByCompletion:false} : {}),
       status: 'active',
       updatedAt: new Date(),
     };
@@ -1214,6 +1218,8 @@ registerCloseModal('production', function() {
 async function loadInitialModel(scope, date) {
     const keys=['senior','lead','office'];
     const [recipes,productions,...groups]=await Promise.all([loadRecipes(scope),loadProductions(date,scope),...keys.map(key=>scope.getDoc(doc(db,'staffGroups',key)))]);
+    const completions=await scope.getDocs(query(collection(db,'productionCompletion'),where('targetProductionDate','==',date)));
+    if(completions.docs.some(s=>s.data().status==='completed'))productions.forEach(p=>{p.lockedByCompletion=true;});
     return {recipes,productions,staff:Object.fromEntries(keys.map((key,i)=>[key,groups[i].exists()?groups[i].data().members||[]:[]]))};
 }
 export function preparePage({cacheOnly=true,date=getToday()}={}) { return productionResource.prepare?.(date,scope=>loadInitialModel(scope,date),{cacheOnly}); }
