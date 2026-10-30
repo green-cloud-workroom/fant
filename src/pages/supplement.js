@@ -245,7 +245,11 @@ function getStockStatus(qty, inactive) {
 
 function renderStockStatus(qty, inactive) {
   const status = getStockStatus(qty, inactive);
-  return `<span class="supplement-status ${status.className}">${status.label}</span>`;
+  const empty = !inactive && qty === 0;
+  const chipClass = empty ? 'egg-status--empty'
+    : status.className === 'supplement-status--danger' ? 'egg-status--low'
+    : status.className === 'supplement-status--warning' ? 'egg-status--warning' : '';
+  return `<span class="supplement-status ${status.className} egg-status ${chipClass}">${empty ? '0개' : status.label}</span>`;
 }
 
 function renderRecentChange(typeId) {
@@ -256,8 +260,8 @@ function renderRecentChange(typeId) {
   return `
     <div class="supplement-recent-change">
       <span class="supplement-recent-date">${escapeHtml(log.date || '-')}</span>
-      ${renderLogTypeTag(log.type,log)}
-      <span class="supplement-recent-qty">${formatSignedQty(log.qty)}${after}</span>
+      ${renderLogTypeTag(log.type,log,true)}
+      <span class="supplement-recent-qty ${Number(log.qty) < 0 ? 'stock-quantity--decrease' : Number(log.qty) > 0 ? 'stock-quantity--increase' : ''}">${formatSignedQty(log.qty)}</span><span class="supplement-muted">${after}</span>
     </div>
   `;
 }
@@ -276,7 +280,7 @@ function renderSupplementTypeRow(type) {
         ${escapeHtml(type.name || type.id)}
         ${inactive ? '<span class="tag tag-inactive">비활성</span>' : ''}
       </td>
-      <td class="supplement-td-qty ${qtyClass}">${qty}봉</td>
+      <td class="supplement-td-qty ${qtyClass} ${qty === 0 ? 'supplement-qty--empty' : ''}">${qty}봉</td>
       <td class="supplement-td-status">${renderStockStatus(qty, inactive)}</td>
       <td class="supplement-td-recent">${renderRecentChange(type.id)}</td>
       <td class="supplement-td-actions">
@@ -290,10 +294,6 @@ function renderSupplementTypeRow(type) {
 function renderSupplementGroup(group) {
   const summary = getSupplementGroupSummary(group.types);
   const hasAlert = summary.danger > 0 || summary.warning > 0;
-  const alertText = [
-    summary.danger > 0 ? `부족 ${summary.danger}` : '',
-    summary.warning > 0 ? `주의 ${summary.warning}` : '',
-  ].filter(Boolean).join(' · ');
   const openAttr = supplementFilter === 'all' ? '' : ' open';
 
   return `
@@ -302,7 +302,8 @@ function renderSupplementGroup(group) {
         <span class="recipe-name">${escapeHtml(group.recipeName)}</span>
         <span class="preset-count">${group.types.length} 프리셋</span>
         <span class="total-stock">합계 ${summary.totalStock}봉</span>
-        ${hasAlert ? `<span class="alert-summary">⚠ ${alertText}</span>` : ''}
+        ${summary.danger > 0 ? `<span class="alert-summary egg-status egg-status--low">⚠ 부족 ${summary.danger}</span>` : ''}
+        ${summary.warning > 0 ? `<span class="alert-summary egg-status egg-status--warning">주의 ${summary.warning}</span>` : ''}
       </summary>
       <div class="supplement-list">
         <table class="supplement-table">
@@ -356,7 +357,7 @@ function renderSupplementFlatTable() {
           ${escapeHtml(type.name || type.id)}
           ${inactive ? '<span class="tag tag-inactive">비활성</span>' : ''}
         </td>
-        <td class="supplement-td-qty ${qtyClass}">${qty}봉</td>
+        <td class="supplement-td-qty ${qtyClass} ${qty === 0 ? 'supplement-qty--empty' : ''}">${qty}봉</td>
         <td class="supplement-td-status">${renderStockStatus(qty, inactive)}</td>
         <td class="supplement-td-recent">${renderRecentChange(type.id)}</td>
         <td class="supplement-td-actions">
@@ -506,7 +507,11 @@ function renderSupplementLogTable(logs) {
   `;
 }
 
-function renderLogTypeTag(type,log) {
+function renderLogTypeTag(type,log,shared=false) {
+  if(shared) {
+    const label=movementLabel(log,({in:'입고',autoDeduct:'자동차감',adjust:'수동조정'})[type] || type || '-');
+    return `<span class="tag stock-movement-badge" data-movement-label="${escapeHtml(label)}">${escapeHtml(label)}</span>`;
+  }
   if(log?.manualMovement)return `<span class="tag tag-common">${escapeHtml(movementLabel(log,type))}</span>`;
   if (type === 'in') return '<span class="tag supplement-log-tag supplement-log-tag--in">입고</span>';
   if (type === 'autoDeduct') return '<span class="tag supplement-log-tag supplement-log-tag--auto">자동차감</span>';

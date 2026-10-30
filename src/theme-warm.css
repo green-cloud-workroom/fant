@@ -523,3 +523,42 @@ input:checked + .toggle-slider { background: #8B5E3C
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+/* UI8: supplement presentation only; retain existing dimensions and type sizes. */
+.egg-status--warning {
+  background: #FFF6E6;
+  border-color: #EBC98A;
+  color: #5C3300;
+}
+.supplement-page .supplement-recipe-group,
+.supplement-page .supplement-recipe-group[open] .supplement-recipe-header {
+  border-color: #E6DED3;
+}
+.supplement-page .supplement-recipe-header { background: #FFFFFF; }
+.supplement-page .supplement-recipe-header :is(.preset-count, .total-stock) { color: #5A4E46; }
+.supplement-page .egg-status--low,
+.supplement-page .egg-status--warning { color: #5C3300; }
+.supplement-page .alert-summary.egg-status--low { font-weight: 700; }
+.supplement-page .alert-summary.egg-status--warning { font-weight: 400; }
+.supplement-page .supplement-td-qty {
+  background: #FFFFFF;
+  color: #333;
+  font-weight: 400;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.supplement-page .supplement-qty--empty { color: #9E2A1E; font-weight: 700; }
+.supplement-page .supplement-row--inactive .supplement-td-qty { background: #f4f4f4; }
+.supplement-page .supplement-status--inactive { background: #eeeeee; color: #777; }
+.supplement-page .supplement-status.egg-status {
+  /* Keep the original 22px outer height and 60px minimum outer width. */
+  height: 20px;
+  padding: 0 7px;
+}
+.supplement-page .supplement-muted { color: #8A7E72; }
+.supplement-page .supplement-action-in {
+  background: #FFFFFF;
+  border: 1px solid #D3C8BA;
+  /* Compensate for the new outline so the button stays in place. */
+  padding: 3px 9px;
+}
