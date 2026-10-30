@@ -394,10 +394,7 @@ function installMainModel(source, {detached=false}={}) {
   meatTypeCategoryMap = new Map(model.meatTypeRows.map(r => [r.id, r.category === 'produce' ? 'produce' : 'meat']));
 }
 
-let closeMainLogMenu = () => {};
-let mainLogMenuPage = null;
 function renderMainLayout() {
-  closeMainLogMenu();
   bindInventoryHandoff();
   if (currentMenu !== 'main') return;
   const content = document.getElementById('mainContent');
@@ -444,24 +441,24 @@ function renderMainLayout() {
       <div class="main-panel-left">
         <div class="main-panel-header">
           <button type="button" id="btnProductionDate" class="main-panel-title main-date-button" title="생산 날짜 선택">📅 ${todayStr} 생산${isViewingSelectedDate ? ' <span style="font-size:11px;color:#3182ce;font-weight:normal;">(선택 날짜)</span>' : ''}${isOverdueClosingMode ? ` <span style="font-size:11px;color:#c53030;font-weight:normal;">(${overdueStatusText})</span>` : ''}</button>
-          <div class="main-toolbar-actions">
-            <button class="btn-secondary main-toolbar-button" id="btnBigView">크게보기</button>
-            <button class="btn-secondary main-toolbar-button" id="btnTodayReceiptSummary">입고 현황 전체 보기</button>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button class="btn-secondary" id="btnBigView" style="font-size:11px;padding:3px 10px;">크게보기</button>
+            <button class="btn-secondary" id="btnTodayReceiptSummary" style="font-size:11px;padding:3px 10px;">입고 현황 전체 보기</button>
             ${isViewingSelectedDate
               ? `
-                <button class="btn-primary main-toolbar-button" id="btnTomorrowLoad" disabled title="오늘 화면에서만 가능">내일생산불러오기</button>
-                <button class="btn-secondary main-toolbar-button main-toolbar-link" id="btnBackToToday">↩ 오늘로 돌아가기</button>
+                <button class="btn-primary" id="btnTomorrowLoad" style="font-size:12px;padding:5px 14px;opacity:0.5;cursor:not-allowed;" disabled title="오늘 화면에서만 가능">내일생산불러오기</button>
+                <button class="btn-secondary" id="btnBackToToday" style="font-size:11px;padding:3px 10px;color:#3182ce;">↩ 오늘로 돌아가기</button>
               `
               : (isOverdueClosingMode
                 ? (overdueCompletionDoc?.status === 'completed'
-                  ? `<button class="btn-primary main-toolbar-button" id="btnTomorrowLoad" disabled title="이미 처리되었습니다">이미 처리됨</button>`
-                  : `<button class="btn-primary main-toolbar-button" id="btnTomorrowLoad" ${overdueNextProductions.length === 0 ? 'disabled title="다음 영업일에 등록된 생산이 없습니다"' : ''}>내일생산불러오기 (${overdueClosingDate} 소급)</button>`)
+                  ? `<button class="btn-primary" id="btnTomorrowLoad" style="font-size:12px;padding:5px 14px;opacity:0.5;cursor:not-allowed;" disabled title="이미 처리되었습니다">이미 처리됨</button>`
+                  : `<button class="btn-primary" id="btnTomorrowLoad" style="font-size:12px;padding:5px 14px;" ${overdueNextProductions.length === 0 ? 'disabled title="다음 영업일에 등록된 생산이 없습니다"' : ''}>내일생산불러오기 (${overdueClosingDate} 소급)</button>`)
                 : (isCompleted
                 ? `
-                  ${canRefreshCompletion ? '<button class="btn-secondary main-toolbar-button main-toolbar-link" id="btnRefreshCompletion" title="롤백 후 변경된 생산 기준으로 재차감">새로고침</button>' : ''}
-                  <button class="btn-secondary main-toolbar-button main-toolbar-danger" id="btnCancelCompletion">내일생산취소</button>
+                  ${canRefreshCompletion ? '<button class="btn-secondary" id="btnRefreshCompletion" style="font-size:11px;padding:3px 10px;color:#3182ce;" title="롤백 후 변경된 생산 기준으로 재차감">새로고침</button>' : ''}
+                  <button class="btn-secondary" id="btnCancelCompletion" style="font-size:11px;padding:3px 10px;color:#e53e3e;">내일생산취소</button>
                 `
-                : `<button class="btn-primary main-toolbar-button" id="btnTomorrowLoad" ${nextProductions.length === 0 ? 'disabled title="다음 영업일에 등록된 생산이 없습니다"' : ''}>내일생산불러오기</button>`
+                : `<button class="btn-primary" id="btnTomorrowLoad" style="font-size:12px;padding:5px 14px;" ${nextProductions.length === 0 ? 'disabled title="다음 영업일에 등록된 생산이 없습니다"' : ''}>내일생산불러오기</button>`
                 )
               )
             }
@@ -486,7 +483,7 @@ function renderMainLayout() {
           <div class="main-panel-header">
             <span class="main-panel-title">${meatNeedsTitle}</span>
           </div>
-          <div class="main-meat-needs">
+          <div style="padding:8px;font-size:12px;">
             ${renderMeatNeeds(activeProductions, isCompleted && !isViewingSelectedDate)}
           </div>
         </div>
@@ -496,7 +493,7 @@ function renderMainLayout() {
           ${renderBlockerArea(activeBlockingData)}
           <div class="main-log-columns">
             ${renderLogSection('production')}
-            ${renderLogSection('office', activeBlockingData)}
+            ${renderLogSection('office')}
           </div>
         </div>
       </div>
@@ -676,7 +673,7 @@ function renderCalendarCell(date, today, holidays, holidayInfo) {
   });
   schedules.forEach(s => {
     const label = formatScheduleLabel(s);
-    tagBlocks.push(`<div class="cal-tag cal-tag-schedule" title="${escapeHtmlMain(label)}">입고 · ${escapeHtmlMain(label)}</div>`);
+    tagBlocks.push(`<div class="cal-tag cal-tag-schedule" title="${escapeHtmlMain(label)}">📦 ${escapeHtmlMain(label)}</div>`);
   });
   const prodCap = 3;
   productions.slice(0, prodCap).forEach(p => {
@@ -698,8 +695,6 @@ function renderCalendarCell(date, today, holidays, holidayInfo) {
 
   const cls = [
     'cal-cell',
-    date < today ? 'cal-cell-past' : '',
-    date === overdueClosingDate ? 'cal-cell-overdue' : '',
     isHoliday ? 'cal-cell-holiday' : '',
     isShippingOnlyClosed ? 'cal-cell-shipping-closed' : '',
     isToday ? 'cal-cell-today' : '',
@@ -709,8 +704,6 @@ function renderCalendarCell(date, today, holidays, holidayInfo) {
     <div class="${cls}" data-date="${date}">
       <div class="cal-cell-date-row">
         <span class="cal-cell-date">${dateLabel}</span>
-        ${isToday ? '<span class="cal-today-label">오늘</span>' : ''}
-        ${date === overdueClosingDate ? '<span class="cal-overdue-label">미처리</span>' : ''}
         ${shippingClosedLabel ? `<span class="cal-shipping-closed-label">(${shippingClosedLabel})</span>` : ''}
       </div>
       <div class="cal-cell-tags">${tagBlocks.join('')}</div>
@@ -1174,7 +1167,6 @@ function renderBlockerArea(data = blockingData) {
 
   // 차단 항목 (빨강)
   (data.items || []).forEach(it => {
-    if (it.id === 6) return; // 사무 로그 차단 안내는 해당 칸 상단에서 표시한다.
     cards.push(`
       <div class="alert-card alert-card-blocker">
         <span class="alert-card-label">⛔ ${escapeHtml(it.reason || it.label)}</span>
@@ -1207,7 +1199,7 @@ function renderBlockerArea(data = blockingData) {
 }
 
 // 로그 섹션 1개 (생산 또는 사무) — 패널 헤더 + 행 목록
-function renderLogSection(category, data = blockingData) {
+function renderLogSection(category) {
   const title = category === 'production' ? '🏭 생산 로그' : '🗒️ 사무 로그';
   const sectionLogs = combinedLogs
     .filter(log => classifyLog(log) === category);
@@ -1229,21 +1221,14 @@ function renderLogSection(category, data = blockingData) {
     ? `<div class="log-empty">${category === 'production' ? '오늘 생산 로그 없음' : '오늘 사무 로그 없음'}</div>`
     : sectionLogs.map(log => renderLogRow(log)).join('');
 
-  const officeBlocker = category === 'office' ? (data.items || []).find(it => it.id === 6) : null;
   return `
     <div class="log-section">
-      ${officeBlocker ? `<div class="log-office-strip"><span>${escapeHtml(officeBlocker.reason || officeBlocker.label)}</span><button class="alert-card-jump" data-jump="${escapeHtml(officeBlocker.jumpMenu)}">처리하러 가기 →</button></div>` : ''}
       <div class="log-section-header">
         <span class="log-section-title">${title}</span>
         <div class="log-section-actions">
-          <button class="log-action-btn" data-log-act="ackAll" data-log-cat="${category}" ${hasUnackGeneral ? '' : 'disabled'} aria-label="모두 확인">✓ 모두</button>
-          <div class="log-more">
-            <button type="button" class="log-action-btn log-more-toggle" aria-label="${title} 더보기" aria-expanded="false" aria-controls="log-more-${category}">⋯</button>
-            <div class="log-more-menu" id="log-more-${category}" hidden>
-              <button class="log-action-btn" data-log-act="all" data-log-cat="${category}">전체보기</button>
-              <button class="log-action-btn" data-log-act="history" data-log-cat="${category}">히스토리</button>
-            </div>
-          </div>
+          <button class="log-action-btn" data-log-act="ackAll" data-log-cat="${category}" ${hasUnackGeneral ? '' : 'disabled'}>모두 확인</button>
+          <button class="log-action-btn" data-log-act="all" data-log-cat="${category}">전체보기</button>
+          <button class="log-action-btn" data-log-act="history" data-log-cat="${category}">히스토리</button>
         </div>
       </div>
       <div class="log-section-body">
@@ -1254,19 +1239,9 @@ function renderLogSection(category, data = blockingData) {
 }
 
 // 로그 행 1개
-function stockLogSeverity(log) {
-  if (log.action !== 'minStock' || log.subAction !== 'alert') return '';
-  const { current, minimum } = log.details || {};
-  // 과거 로그의 누락/null/문자 값은 0으로 추정하지 않는다.
-  if (!Number.isFinite(current) || !Number.isFinite(minimum)) return '';
-  if (current === 0) return 'zero';
-  return current < minimum ? 'low' : '';
-}
-
 function renderLogRow(log) {
   const isUnack = (log.acknowledged !== true);
   const isCritical = logRequiresAck(log);
-  const severity = stockLogSeverity(log);
   const today = getToday();
   const yesterday = getYesterdayKST();
 
@@ -1284,12 +1259,11 @@ function renderLogRow(log) {
     'log-row',
     isUnack ? 'log-row-unack' : '',
     isCritical ? 'log-row-critical' : '',
-    severity ? `log-stock-${severity}` : '',
   ].filter(Boolean).join(' ');
 
   const ackBtn = isUnack
     ? `<button class="log-ack-btn" data-log-act="ack" data-log-id="${escapeHtml(log.id)}">확인</button>`
-    : `<span class="log-ack-done" title="${escapeHtml(log.acknowledgedBy || '')} 확인">확인됨</span>`;
+    : `<span class="log-ack-done" title="${escapeHtml(log.acknowledgedBy || '')} 확인">✓</span>`;
 
   const criticalBadge = isCritical && isUnack ? '<span class="log-critical-badge">⚠️</span>' : '';
   const message = getDisplayLogMessage(log);
@@ -1297,7 +1271,7 @@ function renderLogRow(log) {
   return `
     <div class="${cls}">
       <span class="log-row-time">${dateLabel}</span>
-      <span class="log-row-msg">${severity ? `<strong class="log-stock-label">${severity === 'zero' ? '재고 0' : '부족'}</strong> ` : criticalBadge}${escapeHtmlMain(message)}</span>
+      <span class="log-row-msg">${criticalBadge}${escapeHtmlMain(message)}</span>
       <span class="log-row-action">${ackBtn}</span>
     </div>
   `;
@@ -1353,63 +1327,7 @@ function getStaffLabelFromRole() {
 }
 
 // 로그 패널 [확인] / [모두 확인] / [전체보기] / [히스토리] 바인딩
-function bindLogMenus() {
-  const root = document.getElementById('mainContent');
-  const close = (restoreFocus = false) => {
-    root.querySelectorAll('.log-more-toggle').forEach(toggle => {
-      if (toggle.getAttribute('aria-expanded') !== 'true') return;
-      toggle.setAttribute('aria-expanded', 'false');
-      toggle.nextElementSibling.hidden = true;
-      if (restoreFocus) toggle.focus();
-    });
-    document.removeEventListener('click', outside);
-    document.removeEventListener('focus', outside, true);
-    document.removeEventListener('keydown', escape);
-  };
-  const outside = event => { if (!event.target.closest?.('.log-more')) close(); };
-  const escape = event => { if (event.key === 'Escape') { event.preventDefault(); close(true); } };
-  closeMainLogMenu = close;
-  const page = getPageContext();
-  if (mainLogMenuPage !== page) {
-    mainLogMenuPage = page;
-    registerPageCleanup(() => {
-      closeMainLogMenu();
-      closeMainLogMenu = () => {};
-      mainLogMenuPage = null;
-    });
-  }
-  root.querySelectorAll('.log-more').forEach(wrapper => {
-    const toggle = wrapper.querySelector('.log-more-toggle');
-    const menu = wrapper.querySelector('.log-more-menu');
-    const items = [...menu.querySelectorAll('button')];
-    const open = () => {
-      close();
-      menu.hidden = false;
-      toggle.setAttribute('aria-expanded', 'true');
-      document.addEventListener('click', outside);
-      document.addEventListener('focus', outside, true);
-      document.addEventListener('keydown', escape);
-    };
-    toggle.addEventListener('click', () => { if (menu.hidden) open(); else close(); });
-    toggle.addEventListener('keydown', event => {
-      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-      event.preventDefault(); open(); items[event.key === 'ArrowDown' ? 0 : items.length - 1].focus();
-    });
-    items.forEach((item, index) => {
-      item.addEventListener('click', () => close());
-      item.addEventListener('keydown', event => {
-        const next = event.key === 'ArrowDown' ? (index + 1) % items.length
-          : event.key === 'ArrowUp' ? (index + items.length - 1) % items.length
-          : event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : null;
-        if (next !== null) { event.preventDefault(); items[next].focus(); }
-      });
-    });
-    wrapper.addEventListener('focusout', event => { if (!wrapper.contains(event.relatedTarget)) close(); });
-  });
-}
-
 function bindLogActions() {
-  bindLogMenus();
   document.querySelectorAll('[data-log-act="ack"]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const logId = btn.dataset.logId;
@@ -2120,10 +2038,8 @@ function renderProductionTableCard(p, recipeRows = recipes, canReceive = true) {
     <div class="main-production-card${canReceive && (p.category === 'raw' || p.category === 'freezeDry') ? ' receivable' : ''}${p.received ? ' received' : ''}" data-id="${escapeHtml(p.id)}" style="--recipe-color:${recipeColor(p.color, '#ef7bd0')}">
       ${p.received ? '<div class="main-received-stamp">입고완료</div>' : ''}
       <div class="main-production-card-title">
-        <div>${escapeHtml(p.recipeName)}${roundBadge}</div>
-        ${p.category === 'raw' ? `<span class="main-box-count">${escapeHtml(groupMainQuantity(p.rawBoxQty || 0))}<span class="main-unit">박스</span></span>` : ''}
+        ${escapeHtml(p.recipeName)}${roundBadge}
       </div>
-      <div class="main-production-quantity"><span class="main-unit">생산</span><strong>${formatQty(p.productionUnitQty)}</strong><span class="main-unit">${escapeHtml(getProductionUnitDisplayUnit(p, recipeRows))} ${escapeHtml(unitRowName)}</span></div>
       <table class="main-ingredient-table">
         <thead>
           <tr>
@@ -2148,6 +2064,7 @@ function renderProductionTableCard(p, recipeRows = recipes, canReceive = true) {
         </tbody>
       </table>
       <div class="main-production-meta">
+        ${p.category === 'raw' ? `<span>${escapeHtml(p.rawBoxQty || 0)}박스</span>` : ''}
         ${p.category === 'freezeDry' ? renderFreezeDryProductionMeta(p) : ''}
         ${p.received ? renderReceivedBadge(p) : ''}
       </div>
@@ -2771,11 +2688,7 @@ function getIngredientDisplayUnit(p, ing, recipeRows = recipes) {
 
 function formatIngredientQty(p, ing, recipeRows = recipes) {
   const grams = Number(ing.requiredQtyG || 0);
-  return groupMainQuantity(formatIngredientQtyValue(grams, getIngredientDisplayUnit(p, ing, recipeRows)));
-}
-
-function groupMainQuantity(value) {
-  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return formatIngredientQtyValue(grams, getIngredientDisplayUnit(p, ing, recipeRows));
 }
 
 function getIngredientUnit(p, ing, recipeRows = recipes) {
@@ -2784,7 +2697,7 @@ function getIngredientUnit(p, ing, recipeRows = recipes) {
 
 function formatQty(value, maxDecimals = 1) {
   const num = Number(value || 0);
-  if (Number.isInteger(num)) return num.toLocaleString('ko-KR');
+  if (Number.isInteger(num)) return String(num);
   return num.toLocaleString('ko-KR', { maximumFractionDigits: maxDecimals });
 }
 
@@ -2822,11 +2735,11 @@ function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
   if (groups.size === 0) return '<div style="color:#aaa;">원료 출고 없음</div>';
   const sortedGroups = sortIngredientGroups(groups);
   return sortedGroups.map(grp => {
-    const qty = groupMainQuantity(formatIngredientQtyValue(grp.totalG, grp.unit));
+    const qty = formatIngredientQtyValue(grp.totalG, grp.unit);
     return `
-    <div class="main-meat-need">
+    <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #f5f5f5;">
       <span>${escapeHtml(grp.name)}</span>
-      <strong>${qty}</strong><span class="main-unit">${escapeHtml(grp.unit)}</span>
+      <span style="font-weight:600;">${qty} ${escapeHtml(grp.unit)}</span>
     </div>
   `;
   }).join('');

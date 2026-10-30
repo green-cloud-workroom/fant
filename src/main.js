@@ -1,5 +1,4 @@
 import './style.css';
-import './theme-warm.css';
 import { auth } from './firebase.js';
 import { signInWithEmailAndPassword, onIdTokenChanged, signOut } from 'firebase/auth';
 import { loadUserInfo, clearUserInfo, currentUserRole } from './app.js';
