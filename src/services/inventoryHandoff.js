@@ -10,7 +10,7 @@ export function inventoryHandoffButton(receiptId) {
 }
 async function call(data) {
   if (!auth.currentUser) throw Error('로그인하세요.');
-  return (await httpsCallable(getFunctions(auth.app, 'asia-northeast3'), 'productReceiptWorkflow')(data)).data;
+  return (await httpsCallable(getFunctions(auth.app, 'asia-northeast3'), 'productionReceiptCommand')(data)).data;
 }
 export function bindInventoryHandoff(root = document) {
   if (bound.has(root)) return;

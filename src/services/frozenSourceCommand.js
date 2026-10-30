@@ -23,7 +23,7 @@ export async function prepareFrozenSourceCommand(sourceId,{expectedProductId}={}
   if(!user)throw Error('로그인 상태를 확인해주세요.');
   const checkSession=()=>{if(auth.currentUser?.uid!==user.uid||sessionStore.epoch!==epoch||getTodayKST()!==day||page&&!page.isCurrent())throw Error('로그인·화면 또는 날짜가 변경되었습니다. 입고를 다시 열어주세요.');};
   const gate=await openAction({refs:['frozenLogs/'+sourceId],roles:ownRoles,reusableConfirm:true});
-  const call=async payload=>{checkSession();const response=await httpsCallable(getFunctions(auth.app,'asia-northeast3'),'productReceiptWorkflow')(payload);checkSession();return response.data;};
+  const call=async payload=>{checkSession();const response=await httpsCallable(getFunctions(auth.app,'asia-northeast3'),'productionReceiptCommand')(payload);checkSession();return response.data;};
   let identity,response;
   try{[identity,response]=await Promise.all([call({action:'identity'}),call({action:'frozenSourceContext',sourceId})]);}
   catch(cause){if(cause.code==='functions/permission-denied')throw new Error('본인 계정·회사·창고 권한을 관리자에게 확인해주세요.',{cause});throw cause;}

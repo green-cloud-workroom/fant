@@ -12,7 +12,7 @@ export async function prepareFrozenSampleSetIncoming(productId){
  const user=auth.currentUser,epoch=sessionStore.epoch,page=getPageContext(),day=getTodayKST();if(!user)throw Error('로그인 상태를 확인해주세요.');
  const check=()=>{if(auth.currentUser?.uid!==user.uid||sessionStore.epoch!==epoch||getTodayKST()!==day||page&&!page.isCurrent())throw Error('로그인·화면 또는 날짜가 변경되었습니다. 다시 열어주세요.');};
  const gate=await openAction({refs:['frozenProducts/'+productId],roles:['admin','office','production'],reusableConfirm:true}),operationId=crypto.randomUUID();
- const call=async payload=>{check();const r=await httpsCallable(getFunctions(auth.app,'asia-northeast3'),'productReceiptWorkflow')(payload);check();return r.data;};
+ const call=async payload=>{check();const r=await httpsCallable(getFunctions(auth.app,'asia-northeast3'),'productionReceiptCommand')(payload);check();return r.data;};
  let actor;try{actor=await call({action:'identity'});}catch(cause){if(cause.code==='functions/permission-denied')throw new Error('샘플세트 입고 본인·QC 계정 설정을 관리자에게 확인해주세요.',{cause});throw cause;}
  if(!actor?.production)throw Error('생산 권한을 확인해주세요.');
  let busy=false,dispatched=false,request=null,inputHash=null;

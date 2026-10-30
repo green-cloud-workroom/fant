@@ -23,7 +23,7 @@ async function setup({eligible=true,blockers=[],failure=null,linked=true,poisonI
     if(failure==='unknown')throw Object.assign(Error('synthetic unavailable'),{code:'functions/unavailable'});
     return {data:result(payload)};
   };
-  const functions=e.cache.get('firebase/functions');functions.setExport('getFunctions',()=>({}));functions.setExport('httpsCallable',()=>callable);
+  const functions=e.cache.get('firebase/functions');functions.setExport('getFunctions',()=>({}));functions.setExport('httpsCallable',(_functions,name)=>{assert.equal(name,'productionReceiptCommand');return callable;});
   if(poisonIds){
     const native=e.api.getDocsFromServer,one=e.api.getDocFromServer;
     const wrap=d=>({...d,data:()=>({...d.data(),id:'forged-body-id'})});
