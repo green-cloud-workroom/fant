@@ -322,8 +322,8 @@ function renderProductionLayout() {
       <div class="production-right">
         <div class="production-form-header">
           <span style="font-size:13px;font-weight:600;color:#333;">생산 입력</span>
-          <button class="btn-secondary" id="btnCopySheet" style="font-size:11px;padding:3px 10px;">생산지시서 복사</button>
-          <button class="btn-secondary" id="btnCopyOrder" style="font-size:11px;padding:3px 10px;">발주 복사</button>
+          <button class="btn-secondary" id="btnCopySheet" style="font-size:12px;padding:3px 10px;">생산지시서 복사</button>
+          <button class="btn-secondary" id="btnCopyOrder" style="font-size:12px;padding:3px 10px;">발주 복사</button>
         </div>
         <div id="productionForm">
           <div style="color:#aaa;font-size:12px;text-align:center;padding:20px;">
@@ -841,12 +841,12 @@ async function showProductionForm(production, draft=null) {
       } else {
         displayText = `${formatIngredientQtyValue(totalG, 'g')} g`;
       }
-      return `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #f5f5f5;">
-        <span>${escapeHtml(ing.name)}</span>
-        <span style="color:#333;font-weight:500">${escapeHtml(displayText)}</span>
-      </div>`;
+      return `<tr>
+        <td>${escapeHtml(ing.name)}</td>
+        <td style="color:#333;font-weight:500">${escapeHtml(displayText)}</td>
+      </tr>`;
     }).join('');
-    document.getElementById('pf_ingredients').innerHTML = ingHtml;
+    document.getElementById('pf_ingredients').innerHTML = `<table class="production-ingredient-table"><thead><tr><th scope="col">원료</th><th scope="col">투입량</th></tr></thead><tbody>${ingHtml}</tbody></table>`;
 
     // 참고 수치
     let refs = '';
