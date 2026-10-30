@@ -1,5 +1,6 @@
 import { confirmAutoRepack } from '../services/autoRepackConfirm.js';
 import { escapeHtml, recipeColor } from '../utils/html.js';
+import { displaySupplementLogMessage } from '../utils/activityLogMessage.js';
 import { inventoryHandoffButton, bindInventoryHandoff } from '../services/inventoryHandoff.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { createReadScope } from '../services/readScope.js';
@@ -23,7 +24,7 @@ let mainAlertRevision = null;
 const autoLogCoordinator = createAutoLogCoordinator();
 let mainRefreshTimer;
 let mainModelDirty = true;
-sessionStore.onClear(() => { mainModelDirty = true; autoLogCoordinator.clear(); clearTimeout(mainRefreshTimer); });
+sessionStore.onClear(() => { mainModelDirty = true; supplementTypeRows = []; autoLogCoordinator.clear(); clearTimeout(mainRefreshTimer); });
 import { createAutoLogBatch } from '../services/autoLogs.js';
 import { db } from '../firebase.js';
 import {
@@ -47,6 +48,7 @@ import { loadPartAlerts, partLabel, formatDday } from '../services/equipmentPart
 let productions = [];
 let nextProductions = [];
 let recipes = [];
+let supplementTypeRows = [];
 let meatStocks = [];
 let meatTypeCategoryMap = new Map();
 let eggStock = { currentQty: 0, minimumQty: 0 };
@@ -298,15 +300,17 @@ async function loadAllData(scope = createServerReadScope(), { autoLogsEnabled = 
         scope.getDocs(query(collection(db,'activityLogs'),where('date','==',today))),
         scope.getDoc(doc(db,'eggStock','global')),loadPartAlerts(today,scope),
       ]);
+      const alertState={eggStock:egg.exists()?egg.data():{},equipmentAlerts:alerts};
       const batch=createAutoLogBatch(logs.docs.map(d=>({id:d.id,...d.data()})));
       const outcome=autoLogsEnabled?await autoLogCoordinator.run('main:'+today,async()=>{
-        await triggerAutoLogs(today,batch,scope,{eggStock:egg.exists()?egg.data():{},equipmentAlerts:alerts});
+        await triggerAutoLogs(today,batch,scope,alertState);
         return isCurrent()?batch.flush():{createdIds:[],existingIds:[],failedIds:[]};
       }):{createdIds:[],existingIds:[],failedIds:[]};
       if(!isCurrent())return false;
       if(outcome.failedIds.length)throw new Error('일부 자동 알림을 저장하지 못했습니다. 다시 불러와주세요.');
       if(outcome.createdIds.length||outcome.existingIds.length||!await summaryStillCurrent(model))return loadAllData(createServerReadScope(),{autoLogsEnabled:false});
       if(!isCurrent())return false;
+      model.supplementTypeRows=alertState.supplementTypeRows||[];
       installMainModel(model);mainModelDirty=false;sessionStore.publish('main:model',{model});return true;
     }
   }
@@ -314,7 +318,7 @@ async function loadAllData(scope = createServerReadScope(), { autoLogsEnabled = 
   prefetchedLogs.catch(() => {});
   scope.getDocs(query(collection(db, 'events'), where('date', '==', today))).catch(() => {});
   scope.getDocs(query(collection(db, 'schedules'), where('date', '==', today))).catch(() => {});
-  scope.getDocs(query(collection(db, 'supplementTypes'), where('active', '==', true))).catch(() => {});
+  const supplementTypesRead = scope.getDocs(query(collection(db, 'supplementTypes'), where('active', '==', true))).catch(() => null);
   scope.getDocs(collection(db, 'supplementStock')).catch(() => {});
   const nextBizDay = getNextBusinessDay(today);
   const productionsRead = loadMainProductions([today,nextBizDay],scope);
@@ -363,6 +367,7 @@ async function loadAllData(scope = createServerReadScope(), { autoLogsEnabled = 
     logs = [...fresh.docs.map(d => ({ id: d.id, ...d.data() })), ...logs.filter(log => log.date !== today)]
       .sort((a,b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0));
   }
+  const supplementTypesSnap = await supplementTypesRead;
   if (!isCurrent()) return false;
 
   const rows = snap => snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -372,6 +377,7 @@ async function loadAllData(scope = createServerReadScope(), { autoLogsEnabled = 
     recipeRows: rows(recipeSnap), meatTypeRows: rows(meatTypeSnap), meatRows: rows(meatSnap),
     eggStock: state.eggStock, equipmentAlerts: alerts, completionDoc: row(compSnap),
     overdueCompletionDoc: row(overdueCompSnap), overdueClosing, blocks, calendar, logs });
+  model.supplementTypeRows = supplementTypesSnap ? rows(supplementTypesSnap) : [];
   installMainModel(model);
   mainModelDirty = false;
   if (useSessionReads('main')) sessionStore.publish('main:model', { model });
@@ -380,6 +386,7 @@ async function loadAllData(scope = createServerReadScope(), { autoLogsEnabled = 
 
 function installMainModel(source, {detached=false}={}) {
   const model = detached ? source : copyMainModel(source);
+  supplementTypeRows = model.supplementTypeRows || [];
   ({ productions, nextProductions, recipes, meatStocks, eggStock, completionDoc, blockingData,
     overdueClosingDate, overdueClosingAlreadyClosed, overdueProductions, overdueNextProductions,
     overdueCompletionDoc, calendarSchedules, calendarProductions, calendarEvents, combinedLogs,
@@ -1285,7 +1292,7 @@ function formatScheduleLogQty(qty, unit, unitGrams) {
 
 function getDisplayLogMessage(log) {
   if (log.action !== 'schedule' || log.subAction !== 'completeDiff') {
-    return log.message || '(메시지 없음)';
+    return displaySupplementLogMessage(log, supplementTypeRows);
   }
 
   const d = log.details || {};
@@ -1948,6 +1955,7 @@ async function triggerMinStockLogs(today, autoLogs, scope, state) {
       collection(db, 'supplementTypes'),
       where('active', '==', true),
     ));
+    state.supplementTypeRows = supplementTypesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const supplementStockSnap = await scope.getDocs(collection(db, 'supplementStock'));
     const supplementStockMap = new Map(
       supplementStockSnap.docs.map(d => [d.id, { id: d.id, ...d.data() }])
@@ -3332,6 +3340,7 @@ async function prepareMainModel(scope, {today=getToday(),weekOffset=0,onProducti
   const prefetchedLogs = measurePhase('main:logs', () => fetchCombinedLogs(scope));
   prefetchedLogs.catch(() => {});
   const recipeRead = guarded(scope.getDocs(collection(db, 'recipes')));
+  const supplementTypesRead = scope.getDocs(query(collection(db, 'supplementTypes'), where('active', '==', true))).catch(() => null);
   const meatTypeRead = guarded(scope.getDocs(collection(db, 'meatTypes')));
   const meatRead = guarded(scope.getDocs(collection(db, 'meatStocks')));
   const eggRead = guarded(scope.getDoc(doc(db, 'eggStock', 'global')));
@@ -3368,11 +3377,13 @@ async function prepareMainModel(scope, {today=getToday(),weekOffset=0,onProducti
   const row=snap=>snap?.exists()?{id:snap.id,...snap.data()}:null;
   onProductionReady?.({ today, nextBizDay, overdueNextBizDay:overdueDate?getNextBusinessDay(overdueDate):null,
     allProds, recipeRows:rows(recipeSnap), completionDoc:row(compSnap), overdueClosing });
-  const [calendar, alerts, logs] = await Promise.all([calendarRead, alertsRead, prefetchedLogs]);
-  return buildMainViewModel({today,nextBizDay,overdueNextBizDay:overdueDate?getNextBusinessDay(overdueDate):null,allProds,
+  const [calendar, alerts, logs, supplementTypesSnap] = await Promise.all([calendarRead, alertsRead, prefetchedLogs, supplementTypesRead]);
+  const model = buildMainViewModel({today,nextBizDay,overdueNextBizDay:overdueDate?getNextBusinessDay(overdueDate):null,allProds,
     recipeRows:rows(recipeSnap),meatTypeRows:rows(meatTypeSnap),meatRows:rows(meatSnap),
     eggStock:eggSnap.exists()?eggSnap.data():{currentQty:0,minimumQty:0},equipmentAlerts:alerts,
     completionDoc:row(compSnap),overdueCompletionDoc:row(overdueCompSnap),overdueClosing,blocks,calendar,logs});
+  model.supplementTypeRows = supplementTypesSnap ? rows(supplementTypesSnap) : [];
+  return model;
 }
 // This first view is display-only and never installs a partial command baseline.
 // Date selection waits for the same overdue-closing decision as the full view.

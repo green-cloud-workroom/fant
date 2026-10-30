@@ -35,7 +35,7 @@ export async function listCancellationSources(db,name,filter) {
   return rows.filter(r=>cancellableMovement(r)&&!cancelled.has(r.id)).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||a.id.localeCompare(b.id));
 }
 
-export async function saveManualMovement({db,command,name,stockId,log,selection,stockData=null,expectedBefore,uid=null,scheduleChange=null,activity=null}) {
+export async function saveManualMovement({db,command,name,stockId,log,selection,stockData=null,expectedBefore,uid=null,scheduleChange=null,activity=null,supplementName=null}) {
   const spec=specs[name],kind=selection?.kind;
   if (!spec||!MOVEMENT_LABELS[kind]||!selection?.operationId||!log.date||!Number.isFinite(movementAmount(log))||movementAmount(log)===0
     ||!(log.staff||log.staffName))throw Error('처리 구분·수량·날짜·담당자를 확인해주세요.');
@@ -164,7 +164,7 @@ export async function saveManualMovement({db,command,name,stockId,log,selection,
     if(scheduleRef&&kind!=='test')tx.update(scheduleRef,{...scheduleChange.patch,ledgerId:ledgerRef.id,completedAt:serverTimestamp(),updatedAt:serverTimestamp()});
     tx.set(activityRef,{action:activity?.action||({supplementLogs:'supplementStock',meatLogs:'meat',bagLogs:'bag',eggLogs:'egg',breadPanLogs:'breadPan',frozenPanLogs:'frozenPan'}[name]),
       subAction:name==='supplementLogs'?(kind==='receipt'?'incoming':'manualAdjust'):name==='eggLogs'?(kind==='receipt'?'in':kind==='usage'?'out':'adjust'):kind==='receipt'?'incoming':'adjust',date:log.date,staff:log.staff||log.staffName,uid,
-      message:`${MOVEMENT_LABELS[kind]} — ${log.meatNameSnapshot||log.bagNameSnapshot||log.supplementTypeId||log.productName||'계란'} ${entered}${kind==='test'?' (재고 변동 없음)':''} / ${reason}${kind==='cancel'?' / 원본: '+name+'/'+selection.cancelOf:''}`,
+      message:`${MOVEMENT_LABELS[kind]} — ${log.meatNameSnapshot||log.bagNameSnapshot||(name==='supplementLogs'&&supplementName)||log.supplementTypeId||log.productName||'계란'} ${entered}${kind==='test'?' (재고 변동 없음)':''} / ${reason}${kind==='cancel'?' / 원본: '+name+'/'+selection.cancelOf:''}`,
       ...(activity?{subAction:activity.subAction,message:activity.message}:{}),
       details:{...activity?.details,app:'production',sourceCollection:name,sourceLogId:logRef.id,manualMovement:metadata,delta,before,after},
       read:false,acknowledged:false,acknowledgedAt:null,acknowledgedBy:null,acknowledgedByUid:null,timestamp:serverTimestamp()});

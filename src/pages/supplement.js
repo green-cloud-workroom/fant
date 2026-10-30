@@ -717,6 +717,7 @@ async function saveIncomingCellWithCommand(supplementTypeId,date,qty,staffName,c
   const review=selection.kind==='test'?{approved:true}:await checkQuantityBeforeSave({itemId:'supplementLogs:'+supplementTypeId,date,qty,unit:'봉',stage:'영양제'},()=>!getPageContext()||getPageContext().isCurrent());
   if(!review.approved)throw Error('입고 저장을 취소했습니다.');
   return saveManualMovement({db,command,name:'supplementLogs',stockId:supplementTypeId,selection,uid:currentUser?.uid||null,
+    supplementName:supplementTypes.find(t=>t.id===supplementTypeId)?.name,
     stockData:{id:supplementTypeId,supplementTypeId,currentQty:0},log:{type:'in',date,qty,supplementTypeId,staffName,...(review.review?{statsQuantityReview:review.review}:{})}});
 }
 
@@ -736,6 +737,7 @@ async function saveAdjustCell(supplementTypeId,date,signedQty,reason,staffName,s
 }
 async function saveAdjustCellWithCommand(supplementTypeId,date,signedQty,reason,staffName,command,selection) {
   return saveManualMovement({db,command,name:'supplementLogs',stockId:supplementTypeId,selection,uid:currentUser?.uid||null,
+    supplementName:supplementTypes.find(t=>t.id===supplementTypeId)?.name,
     stockData:{id:supplementTypeId,supplementTypeId,currentQty:0},log:{type:'adjust',date,qty:signedQty,supplementTypeId,reason,staffName}});
 }
 
