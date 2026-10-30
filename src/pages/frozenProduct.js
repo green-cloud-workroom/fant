@@ -20,6 +20,7 @@ import Sortable from '../utils/sortable.js';
 
 let frozenProducts = [];
 let selectedProductId = null;
+const frozenCorrectionRecoveryCache = {};
 
 const FROZEN_PRODUCT_CATEGORY_STORAGE_KEY = 'frozenProductCategoryCollapsed';
 const FROZEN_PRODUCT_CATEGORIES = [
@@ -33,6 +34,7 @@ const FROZEN_PRODUCT_CATEGORIES = [
 ];
 
 export async function renderFrozenProduct({force=false}={}) {
+  frozenCorrectionRecoveryCache.promise=null;
   bindInventoryHandoff();
  const content=document.getElementById('mainContent');
  content.innerHTML='<p style="padding:24px">동결제품 입고 로딩 중...</p>';
@@ -40,7 +42,7 @@ export async function renderFrozenProduct({force=false}={}) {
  if(!data||!content.isConnected)return;
  frozenProducts=data.products;staffCache=data.staff;renderFrozenProductLayout();
  if(selectedProductId){const selected=frozenProducts.find(p=>p.id===selectedProductId);if(selected)await showProductDetail(selected);}
- mountInventoryCorrectionRecovery({sourceCollection:'frozenLogs',role:currentUserRole,showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderFrozenProduct({force:true})});
+ mountInventoryCorrectionRecovery({sourceCollection:'frozenLogs',role:currentUserRole,recoveryCache:frozenCorrectionRecoveryCache,showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderFrozenProduct({force:true})});
 }
 
 async function loadFrozenProducts(scope={getDocs,getDoc}) {
@@ -362,7 +364,7 @@ async function showProductDetail(product) {
     </div>
   `;
 
-  mountInventoryCorrectionRecovery({sourceCollection:'frozenLogs',role:currentUserRole,showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderFrozenProduct({force:true})});
+  mountInventoryCorrectionRecovery({sourceCollection:'frozenLogs',role:currentUserRole,recoveryCache:frozenCorrectionRecoveryCache,showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderFrozenProduct({force:true})});
   document.getElementById('btnAddIncoming')?.addEventListener('click', () => showIncomingModal(product));
   document.getElementById('btnEditProduct')?.addEventListener('click', () => showEditProductModal(product));
   document.getElementById('btnDeleteProduct')?.addEventListener('click', () => deleteFrozenProductIfNoLogs(product));
@@ -384,9 +386,9 @@ async function openIncomingAction(product,logId,kind) {
   if(log.productId!==product.id)throw Error('선택한 제품과 입고 원본이 다릅니다. 다시 불러와주세요.');
   if(INVENTORY_RECEIPT_CORRECTION_ENABLED){
     const receiptId=`frozenLogs:${log.id}:${log.receiptRevision??1}`;
-    const [receipt,handoff]=await Promise.all([getDoc(doc(db,'productTransferRequests',receiptId)),getDoc(doc(db,'receiptHandoffs',receiptId))]);
+    const receipt=await getDoc(doc(db,'productTransferRequests',receiptId));
     if(page&&!page.isCurrent())return;
-    if(['completed','입고완료'].includes(receipt.data()?.status)||handoff.exists()){
+    if(['completed','입고완료'].includes(receipt.data()?.status)){
       await openInventoryReceiptCorrection({sourceCollection:'frozenLogs',sourceId:log.id,mode:kind==='cancel'?'cancel':'edit',showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderFrozenProduct({force:true}),onMetadata:kind==='correct'?async()=>{
         try{const metadata=await prepareFrozenSourceCommand(log.id,{expectedProductId:product.id});showEditIncomingModal(product,log,metadata,'correct');}catch(error){alert(error.message);}
       }:undefined});
