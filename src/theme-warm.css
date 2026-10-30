@@ -447,6 +447,43 @@ input:checked + .toggle-slider { background: #8B5E3C
 }
 .stock-quantity--increase { color: #1F4E8C; }
 .stock-quantity--decrease { color: #B03A2E; }
+.stock-movement-badge[data-movement-label="자동차감"] {
+  background: #EFECE8;
+  border-color: #D6D0C8;
+  color: #6E655C;
+}
+.stock-movement-badge[data-movement-label="수동조정"] {
+  background: #FFFFFF;
+  border-color: #CDC4DE;
+  color: #4B3F72;
+}
+.stock-movement-badge[data-movement-label="오입력 취소"] {
+  background: #F0F0F0;
+  border-color: #D4D4D4;
+  color: #707070;
+  text-decoration: none;
+}
+
+/* UI7: keep the list content at its existing x position (8px -> 3px + 5px). */
+.bag-page .recipe-list-item { border-left-width: 3px; padding-left: 5px; }
+.bag-page .recipe-list-item.active { background: #F6EEE5; border-left-color: #8B5E3C; }
+.bag-page .tag-raw { background: #F3EDE5; color: #5A4E46; }
+.bag-page #btnNewBag {
+  background: #FFFFFF;
+  color: #444;
+  border: 1px solid #D3C8BA;
+  padding: 5px 13px;
+}
+.bag-page .detail-actions .btn-secondary {
+  background: #FFFFFF;
+  border: 1px solid #D3C8BA;
+  padding: 5px 13px;
+}
+.bag-page .bag-status-line { display: flex; align-items: center; gap: 6px; }
+.bag-page .data-table :is(th, td):nth-child(3) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 
 /* UI6: retain egg controls, summary layout, table structure and existing type sizes. */
 .egg-page .page-header .btn-secondary {

@@ -1,3 +1,4 @@
+import {movementNote} from '../utils/movementNote.js';
 import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
 import {currentUser} from '../app.js';
@@ -143,7 +144,7 @@ function renderEggLayout(eggStock, logs) {
                     <td>${escapeHtml(l.before ?? '-')}</td>
                     <td>${escapeHtml(l.after ?? '-')}</td>
                     <td>${escapeHtml(l.staffName || '-')}</td>
-                    <td>${escapeHtml(l.note || l.reason || '-')}</td>
+                    <td>${escapeHtml(movementNote(l.note || l.reason || '-', 'eggLogs', logs, row => row.type === 'in' ? '입고' : row.type === 'out' ? '출고' : '수동조정'))}</td>
                   </tr>
                 `).join('')}
             </tbody>

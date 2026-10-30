@@ -1,3 +1,4 @@
+import {movementNote} from '../utils/movementNote.js';
 import { atomicStockOperation, stockOperationId } from '../services/atomicStockOperation.js';
 import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
@@ -623,7 +624,7 @@ function buildMeatLogGroups(logs) {
   return otherGroup.items.length > 0 ? [...groups, otherGroup] : groups;
 }
 
-function renderMeatLogCard(log, typeName) {
+function renderMeatLogCard(log, typeName, loadedLogs) {
   return (
     '<div style="border:1px solid #ececec;border-radius:5px;background:#fff;padding:4px 5px;">' +
       '<div style="display:flex;align-items:center;gap:5px;min-width:0;">' +
@@ -635,14 +636,14 @@ function renderMeatLogCard(log, typeName) {
             : formatMeatLogQty(log.delta)) + '</b>' +
       '</div>' +
       '<div style="display:flex;justify-content:space-between;gap:6px;margin-top:2px;color:#777;font-size:11px;">' +
-        '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(log.staff || '-') + ' / ' + escapeHtml(log.reason || '-') + '</span>' +
+        '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(log.staff || '-') + ' / ' + escapeHtml(movementNote(log.reason || '-', 'meatLogs', loadedLogs, row => getMeatLogTypeLabel(row.type))) + '</span>' +
         '<span style="white-space:nowrap;">' + escapeHtml(movementLabel(log,getMeatLogTypeLabel(log.type))) + '</span>' +
       '</div>' +
     '</div>'
   );
 }
 
-function renderMeatLogTypeGroup(group, typeGroup) {
+function renderMeatLogTypeGroup(group, typeGroup, logs) {
   const typeId = [currentTab, group.id, typeGroup.key].join(':');
   const expanded = expandedMeatLogTypeIds.has(typeId);
   return (
@@ -654,7 +655,7 @@ function renderMeatLogTypeGroup(group, typeGroup) {
       '</button>' +
       (expanded
         ? '<div style="display:flex;flex-direction:column;gap:4px;border-top:1px solid #eee;background:#fafafa;padding:4px;">' +
-            typeGroup.items.map(log => renderMeatLogCard(log, typeGroup.name)).join('') +
+            typeGroup.items.map(log => renderMeatLogCard(log, typeGroup.name, logs)).join('') +
           '</div>'
         : '') +
     '</div>'
@@ -682,7 +683,7 @@ function renderMeatLogGroups(logs) {
               '<span style="font-size:11px;color:#888;">' + group.items.length + '</span>' +
             '</div>' +
             '<div style="display:flex;flex-direction:column;gap:4px;padding:5px;">' +
-              typeGroups.map(typeGroup => renderMeatLogTypeGroup(group, typeGroup)).join('') +
+              typeGroups.map(typeGroup => renderMeatLogTypeGroup(group, typeGroup, logs)).join('') +
             '</div>' +
           '</div>'
         );

@@ -1,3 +1,4 @@
+import {movementNote} from '../utils/movementNote.js';
 import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
 import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
@@ -497,7 +498,7 @@ function renderSupplementLogTable(logs) {
             <td style="color:${Number(log.qty || 0) < 0 ? '#e53e3e' : '#2d7a3a'}">${formatSignedQty(log.qty)}</td>
             <td>${Number.isFinite(Number(log.after)) ? Number(log.after) : '-'}</td>
             <td>${escapeHtml(log.staffName || '-')}</td>
-            <td>${escapeHtml([log.reason, log.note].filter(Boolean).join(' / ') || '-')}</td>
+            <td>${escapeHtml(movementNote([log.reason, log.note].filter(Boolean).join(' / ') || '-', 'supplementLogs', supplementLogs, row => ({in:'입고',autoDeduct:'자동차감',adjust:'수동조정'}[row.type] || row.type || '-')))}</td>
           </tr>
         `).join('')}
       </tbody>

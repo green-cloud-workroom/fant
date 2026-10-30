@@ -1,3 +1,4 @@
+import {movementNote} from '../utils/movementNote.js';
 import {escapeHtml} from '../utils/html.js';
 import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
@@ -54,7 +55,7 @@ function renderBagLayout() {
   const content = document.getElementById('mainContent');
   const canManageBagTypes = currentUserRole === 'admin' || currentUserRole === 'office';
   content.innerHTML = `
-    <div class="recipe-wrap">
+    <div class="recipe-wrap bag-page">
       <!-- 왼쪽: 봉투 목록 -->
       <div class="recipe-list-panel">
         <div class="panel-header">
@@ -275,6 +276,8 @@ async function loadBagDetailLogs(bagTypeId, read=getDocs) {
     .sort((a,b)=>ms(b.timestamp)-ms(a.timestamp)||b.id.localeCompare(a.id)).slice(0,30);
 }
 
+const bagMovementLabel = row => movementLabel(row, row.type === 'incoming' ? '입고' : row.type === 'autoDeduct' ? '자동차감' : '수동조정');
+
 async function showBagDetail(bag) {
   const detail = document.getElementById('bagDetail');
   const canManageBagTypes = currentUserRole === 'admin' || currentUserRole === 'office';
@@ -283,6 +286,10 @@ async function showBagDetail(bag) {
   const logs = await loadBagDetailLogs(bag.id);
   if(!detail.isConnected || selectedBagId!==bag.id)return;
 
+  const currentQty = Number(bag.currentQty || 0);
+  const minimumQty = Number(bag.minimumQty || 0);
+  const boxDiff = Math.floor(currentQty / (bag.piecesPerBox || 1)) - Math.floor(minimumQty / (bag.piecesPerBox || 1));
+  const status = currentQty <= 0 ? 'empty' : currentQty < minimumQty ? 'low' : 'normal';
   detail.innerHTML = `
     <div class="detail-header">
       <span class="detail-title">${escapeHtml(bag.name)}</span>
@@ -311,6 +318,13 @@ async function showBagDetail(bag) {
               ${Math.floor((bag.minimumQty || 0) / (bag.piecesPerBox || 1))}박스
             </span>
           </div>
+          <div class="stat-item">
+            <span class="stat-label">상태</span>
+            <span class="stat-value bag-status-line">
+              <span class="egg-status egg-status--${status}">${status === 'empty' ? '0' : status === 'low' ? '부족' : '정상'}</span>
+              ${minimumQty > 0 ? `<span class="egg-minimum-diff">최소재고 대비 ${boxDiff >= 0 ? '+' : ''}${boxDiff}박스</span>` : ''}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -336,14 +350,13 @@ async function showBagDetail(bag) {
                   <tr>
                     <td>${escapeHtml(l.date || '-')}</td>
                     <td>
-                      <span class="tag ${l.type === 'incoming' ? 'tag-raw' : l.type === 'autoDeduct' ? '' : 'tag-cat'}"
-                            style="${l.type === 'autoDeduct' ? 'background:#f0f0f0;color:#666' : ''}">
-                        ${escapeHtml(movementLabel(l,l.type === 'incoming' ? '입고' : l.type === 'autoDeduct' ? '자동차감' : '수동조정'))}
+                      <span class="tag stock-movement-badge" data-movement-label="${escapeHtml(bagMovementLabel(l))}">
+                        ${escapeHtml(bagMovementLabel(l))}
                       </span>
                     </td>
-                    <td style="color:${l.qty > 0 ? '#2d7a3a' : '#e53e3e'}">${l.qty > 0 ? '+' : ''}${escapeHtml(l.qty)}</td>
+                    <td class="${l.qty > 0 ? 'stock-quantity--increase' : l.qty < 0 ? 'stock-quantity--decrease' : ''}">${l.qty > 0 ? '+' : ''}${escapeHtml(l.qty)}</td>
                     <td>${escapeHtml(l.staffName || '-')}</td>
-                    <td>${escapeHtml(l.note || l.reason || '-')}</td>
+                    <td>${escapeHtml(movementNote(l.note || l.reason || '-', 'bagLogs', logs, bagMovementLabel))}</td>
                   </tr>
                 `).join('')}
             </tbody>
