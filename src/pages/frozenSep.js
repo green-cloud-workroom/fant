@@ -127,7 +127,7 @@ function getLogTypeLabel(type) {
 
 function getLogTypeColor(type) {
   return {
-    incoming: '#2d7a3a', separate: '#1f6fb2', out: '#b97a1f',
+    incoming: '#1F4E8C', separate: '#1f6fb2', out: '#b97a1f',
     adjust: '#8a5fbf', delete: '#e53e3e',
   }[type] || '#555';
 }
@@ -135,7 +135,7 @@ function getLogTypeColor(type) {
 // 재고 종류별 색상 (뱃지 / 진행률 바)
 const STOCK_TYPE_STYLE = {
   notSeparated: { bar: '#EF9F27', bg: '#fdf3e0', text: '#b97a1f' },
-  separated:    { bar: '#1D9E75', bg: '#e8f5ea', text: '#2d7a3a' },
+  separated:    { bar: '#8B5E3C', bg: '#EFE2D3', text: '#4A2F1C' },
   noSplit:      { bar: '#378ADD', bg: '#e8f0fc', text: '#2d4a8a' },
 };
 
@@ -218,7 +218,7 @@ function renderFrozenSepLayout(stocks, logs = []) {
   ])]);
 
   content.innerHTML = `
-    <div class="page-wrap">
+    <div class="page-wrap frozen-sep-page">
       <div class="page-header">
         <h2 class="page-title">동결 분리작업</h2>
         <div style="display:flex;gap:8px;">
@@ -337,7 +337,7 @@ function renderDailyMatrix(stocks, logs, productNames) {
   });
 
   // 제품 헤더 색상 (연한 파스텔 순환)
-  const PRODUCT_HEADER_BG = ['#fdf3e0', '#e8f0fc', '#e8f5ea', '#f3ecfa', '#fbeaea', '#e9f6f4'];
+  const PRODUCT_HEADER_BG = ['#fdf3e0', '#e8f0fc', '#EFE2D3', '#f3ecfa', '#fbeaea', '#EEEAF4'];
 
   const canDrag = canDeleteFrozenSepStock();
   const productHeaderCells = productNames.map((p, i) => {
@@ -918,7 +918,7 @@ function showOutModal(stocks, draft=null) {
     }
     const stockType = recipe.requiresSeparation ? 'separated' : 'noSplit';
     const stockTypeLabel = recipe.requiresSeparation ? '분리O' : '소분X';
-    const labelColor = recipe.requiresSeparation ? '#2d7a3a' : '#2d4a8a';
+    const labelClass = recipe.requiresSeparation ? 'ui-success' : 'sep-no-split-label';
 
     // 해당 재고 종류 잔량 계산 (사전 경고용)
     const avail = outStocks
@@ -929,10 +929,10 @@ function showOutModal(stocks, draft=null) {
       const hint = recipe.requiresSeparation
         ? '먼저 분리 작업이 필요합니다.'
         : '소분X 재고가 없습니다.';
-      guideEl.innerHTML = `⚠️ <b style="color:${labelColor};">${stockTypeLabel}</b> 재고 없음 — ${hint}`;
+      guideEl.innerHTML = `⚠️ <b class="${labelClass}">${stockTypeLabel}</b> 재고 없음 — ${hint}`;
       guideEl.style.color = '#c0392b';
     } else {
-      guideEl.innerHTML = `📌 <b style="color:${labelColor};">${stockTypeLabel}</b> 재고에서 출고됩니다 (현재 ${formatQty(avail)}개 보유)`;
+      guideEl.innerHTML = `📌 <b class="${labelClass}">${stockTypeLabel}</b> 재고에서 출고됩니다 (현재 ${formatQty(avail)}개 보유)`;
       guideEl.style.color = '#555';
     }
   };

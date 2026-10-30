@@ -72,7 +72,7 @@ function renderScheduleLayout(schedules) {
   let showDone = false;
 
   content.innerHTML = `
-    <div class="page-wrap">
+    <div class="page-wrap schedule-page">
       <div class="page-header">
         <h2 class="page-title">입고 예정관리</h2>
         ${canManageSchedule ? '<button class="btn-primary" id="btnAddSchedule">+ 입고 예정 등록</button>' : ''}
@@ -203,12 +203,12 @@ function renderScheduleRow(s, today, canManageSchedule = false) {
   return `
     <tr style="background:${isOverdue ? '#fffdf0' : 'white'}">
       <td style="color:${isOverdue ? '#e67e22' : '#1a1a1a'}">${escapeHtml(s.date)} ${isOverdue ? '⚠️' : ''}</td>
-      <td><span class="tag tag-raw">${getTypeLabel(s.type)}</span></td>
+      <td><span class="stock-movement-badge tag tag-raw">${getTypeLabel(s.type)}</span></td>
       <td>${escapeHtml(s.itemNameSnapshot)}</td>
       <td>${escapeHtml(formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams))}</td>
       <td>${escapeHtml(s.orderStaffName || '-')}</td>
       <td>${escapeHtml(s.orderMemo || '-')}</td>
-      <td><span style="color:#e67e22;font-size:12px">⏳ 예정</span></td>
+      <td><span class="egg-status schedule-status" style="font-size:12px">⏳ 예정</span></td>
       <td style="white-space:nowrap">
         ${canManageSchedule ? `<button class="btn-secondary btn-edit-schedule" data-id="${escapeHtml(s.id)}" style="font-size:11px;padding:3px 10px;margin-right:4px;">수정</button>` : ''}
         <button class="btn-primary btn-complete" data-id="${escapeHtml(s.id)}" style="font-size:11px;padding:3px 10px;margin-right:4px;">완료</button>
@@ -223,14 +223,14 @@ function renderDoneRow(s) {
   return `
     <tr style="opacity:0.8">
       <td>${escapeHtml(s.date)}</td>
-      <td><span class="tag tag-raw">${getTypeLabel(s.type)}</span></td>
+      <td><span class="stock-movement-badge tag tag-raw">${getTypeLabel(s.type)}</span></td>
       <td>${escapeHtml(s.itemNameSnapshot)}</td>
       <td>${escapeHtml(formatScheduleQty(s.orderedQty, s.orderedUnit, s.orderedUnitGrams))}</td>
       <td>${escapeHtml(s.actualQty ? formatScheduleQty(s.actualQty, s.actualUnit || s.orderedUnit, s.orderedUnitGrams) : '-')}</td>
       <td>${isComplete ? (validDate(s.receiptDate) ? s.receiptDate : kstDate(s.completedAt) || '-') : '-'}</td>
       <td>${escapeHtml(s.incomingStaffName || '-')}</td>
       <td>
-        <span style="color:${isComplete ? '#2d7a3a' : '#e53e3e'};font-size:12px">
+        <span class="${isComplete ? 'ui-success' : 'stock-quantity--decrease'}" style="font-size:12px">
           ${isComplete ? '✅ 완료' : '❌ 취소'}
         </span>
       </td>

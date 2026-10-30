@@ -85,7 +85,7 @@ function renderRecipeLayout() {
   const content = document.getElementById('mainContent');
   const canEdit = currentUserRole === 'admin' || currentUserRole === 'office';
   content.innerHTML = `
-    <div class="recipe-wrap">
+    <div class="recipe-wrap recipe-page">
       <!-- 왼쪽: 레시피 목록 -->
       <div class="recipe-list-panel">
         <div class="panel-header">
@@ -112,13 +112,13 @@ function renderRecipeLayout() {
 function renderRecipeListItem(r) {
   const canReorder = currentUserRole === 'admin' || currentUserRole === 'office';
   return `
-    <div class="recipe-list-item ${selectedRecipeId === r.id ? 'active' : ''}" data-id="${escapeHtml(r.id)}" style="border-left-color: ${recipeColor(r.color)}">
+    <div class="recipe-list-item ${selectedRecipeId === r.id ? 'active' : ''}" data-id="${escapeHtml(r.id)}" style="border-left-color: ${recipeColor(r.color, '#8B5E3C')}">
       ${canReorder ? '<span class="drag-handle" title="순서 변경" aria-label="순서 변경">≡</span>' : ''}
       <div class="recipe-list-info">
         <span class="recipe-name">${escapeHtml(getDisplayName(r))}</span>
         <div class="recipe-tags">
-          <span class="tag tag-${escapeHtml(r.category)}">${r.category === 'raw' ? '생식' : '동결'}</span>
-          <span class="tag tag-${escapeHtml(r.target)}">${getTargetLabel(r.target)}</span>
+          <span class="stock-movement-badge tag tag-${escapeHtml(r.category)}">${r.category === 'raw' ? '생식' : '동결'}</span>
+          <span class="stock-movement-badge tag tag-${escapeHtml(r.target)}">${getTargetLabel(r.target)}</span>
         </div>
       </div>
       <label class="toggle-switch">

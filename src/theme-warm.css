@@ -430,7 +430,7 @@ input:checked + .toggle-slider { background: #8B5E3C
   border: 1px solid #D3C8BA;
   color: #5A4E46;
 }
-.stock-movement-badge:is([data-movement-label="입고"], [data-movement-label="실제 입고"]) {
+.stock-movement-badge:is([data-movement-label="입고"], [data-movement-label="실제 입고"], [data-movement-label="텐더동결 입고"]) {
   background: #E6EEF7;
   border-color: #B7CBE3;
   color: #1F4E8C;
@@ -561,4 +561,75 @@ input:checked + .toggle-slider { background: #8B5E3C
   border: 1px solid #D3C8BA;
   /* Compensate for the new outline so the button stays in place. */
   padding: 3px 9px;
+}
+
+/* UI9: approved remaining screens. Keep layout, type and operational state. */
+:root { --ui-success-color: #8B5E3C; }
+.ui-success { color: var(--ui-success-color); }
+.sep-no-split-label { color: #2d4a8a; }
+.list-category-header,
+.bag-page .list-group-label {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #E6DED3;
+  border-radius: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #7A6E64;
+}
+.frozen-product-category-header {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 8px 3px; margin: 3px 0 1px; cursor: pointer;
+}
+.frozen-product-page .recipe-list-item { border-left-width: 3px; }
+.equipment-page .recipe-list-item { border-left-width: 3px; padding-left: 5px; }
+:is(.frozen-product-page, .bag-page, .equipment-page) .recipe-list-item.active {
+  background: #EFE2D3; border-left: 3px solid #8B5E3C; color: #4A2F1C; font-weight: 700;
+}
+:is(.frozen-product-page, .bag-page, .equipment-page) .recipe-list-item.active .recipe-name {
+  color: #4A2F1C !important; font-weight: 700;
+}
+.frozen-product-page .data-table :is(th, td):is(:nth-child(3), :nth-child(4)) {
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+/* Share the existing secondary control, preserving outer dimensions. */
+:is(.frozen-product-page, .frozen-pan-page, .schedule-page, .equipment-page) .btn-secondary {
+  background: #FFFFFF; border: 1px solid #D3C8BA; color: #2B2420; padding: 5px 13px;
+}
+.frozen-product-page [data-inventory-handoff] { padding: 2px 6px !important; }
+.equipment-page .eq-all-item { border-color: #E6DED3; background: transparent; }
+.frozen-pan-page .tab-btn { background: transparent; border-bottom: 0 !important; }
+.frozen-pan-page .tab-btn.active { background: #FFFFFF; border-bottom: 2px solid #8B5E3C !important; }
+.stock-movement-badge:is([data-movement-label="전처리"], [data-movement-label="전처리 입고"]) { background: #EFECE8; border-color: #D6D0C8; color: #6E655C; }
+.frozen-sep-page .tag-raw { background: #EFE2D3; color: #4A2F1C; }
+.equipment-page .tag-raw { background: #F3EDE5; color: #5A4E46; }
+.schedule-page .btn-complete {
+  background: #FFFFFF; border: 1px solid #8B5E3C; color: #8B5E3C;
+  padding: 2px 9px !important;
+}
+.schedule-page :is(.btn-edit-schedule, .btn-cancel-schedule) { padding: 2px 9px !important; }
+.equipment-page .eq-pill-gray { background: #F3EDE5; color: #5A4E46; }
+.equipment-page .eq-pill-amber { background: #FCE7BF; color: #5C3300; }
+.equipment-page .eq-pill-red { background: #FBEAE7; color: #9E3326; }
+.equipment-page .eq-filter-on { background: #EFE2D3 !important; color: #4A2F1C !important; }
+.recipe-page .toggle-slider { background: #D3C8BA; }
+.recipe-page input:checked + .toggle-slider { background: #8B5E3C; }
+.recipe-page .recipe-list-item.active { background: #EFE2D3; }
+.recipe-page .unit-preset-chip { background: #F3EDE5; border-color: #D3C8BA; color: #5A4E46; }
+.recipe-page .unit-preset-remove { color: #8B5E3C; }
+.recipe-page .unit-preset-remove:hover { background: #EFE2D3; color: #4A2F1C; }
+.recipe-page :is(.tag-raw, .tag-cat, .tag-dog, .tag-common),
+.schedule-page .tag-raw { background: #F3EDE5; color: #5A4E46; }
+.settings-wrap .holiday-badge { background: #F3EDE5; color: #5A4E46; }
+.settings-wrap :is(.btn-add-staff, .btn-primary):hover { background: #6B4529; }
+.settings-wrap :is(input, select):focus { border-color: #8B5E3C; }
+.modal-saving-status { background: #4A2F1C; }
+.stats-download-btn,
+.stats-download-btn:hover { background: #FFFFFF; border: 1px solid #D3C8BA; color: #2B2420; padding: 4px 11px; }
+.stats-wrap :is(.stats-tag, .stats-expected-tag, .stats-expected-note, .stats-v-badge) { background: #F3EDE5; color: #5A4E46; }
+.settings-section-summary::before { content: "▶"; color: #8B5E3C; }
+.settings-section[open] .settings-section-summary::before { content: "▼"; transform: none; }
+.settings-section-toggle,
+.settings-section[open] .settings-section-toggle {
+  border: 1px solid #D3C8BA; border-radius: 4px; color: #8B5E3C; padding: 2px 8px;
 }

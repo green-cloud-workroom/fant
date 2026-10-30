@@ -60,12 +60,12 @@ function renderFrozenProductLayout() {
   const content = document.getElementById('mainContent');
   const canManageFrozenProduct = currentUserRole === 'admin' || currentUserRole === 'office';
   content.innerHTML = `
-    <div class="recipe-wrap">
+    <div class="recipe-wrap frozen-product-page">
       <!-- 왼쪽: 제품 목록 -->
       <div class="recipe-list-panel">
         <div class="panel-header">
           <span class="panel-title">제품 목록</span>
-          ${canManageFrozenProduct ? '<button class="btn-primary" id="btnNewProduct">+ 추가</button>' : ''}
+          ${canManageFrozenProduct ? '<button class="btn-secondary" id="btnNewProduct">+ 추가</button>' : ''}
         </div>
         <div class="recipe-list" id="productList">
           ${renderProductList()}
@@ -122,7 +122,7 @@ function renderProductListItemCompact(p) {
   const canReorder = currentUserRole === 'admin' || currentUserRole === 'office';
   return `
     <div class="recipe-list-item ${selectedProductId === p.id ? 'active' : ''}"
-      data-id="${escapeHtml(p.id)}" style="padding:3px 8px;min-height:28px;">
+      data-id="${escapeHtml(p.id)}" style="padding:3px 8px 3px 13px;min-height:28px;">
       ${canReorder ? '<span class="drag-handle" title="순서 변경" aria-label="순서 변경">☰</span>' : ''}
       <div class="recipe-list-info" style="gap:0;">
         <span class="recipe-name" style="font-size:12.5px;line-height:1.2;">${escapeHtml(p.name)}</span>
@@ -139,8 +139,8 @@ function renderProductListByCategory() {
       const collapsed = collapsedState[category.key] === true;
       return `
         <div class="frozen-product-category" data-category="${category.key}">
-          <button type="button" class="frozen-product-category-header" data-category="${category.key}"
-            style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:4px 8px;margin:3px 0 1px;border:0;background:#f5f5f5;border-radius:6px;cursor:pointer;font-weight:700;font-size:12.5px;color:#333;">
+          <button type="button" class="frozen-product-category-header list-category-header" data-category="${category.key}"
+            >
             <span>${collapsed ? '▶' : '▼'} ${category.label}</span>
             <span style="font-size:11px;color:#777;">${products.length}</span>
           </button>

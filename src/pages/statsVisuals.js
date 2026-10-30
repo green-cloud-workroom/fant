@@ -160,7 +160,7 @@ export function renderStatsVisuals({ host, tab, view, fullView, choices, selecti
     for (const row of periodRows(events, aggregation)) periods.set(row.period, (periods.get(row.period) ?? 0) + row.qty);
     const rows = [...periods].sort(([a], [b]) => a.localeCompare(b));
     createChart(trend, { type: 'bar', data: { labels: rows.map(([d]) => d), datasets: [{
-      label: stage + ' (' + unit + ')', data: rows.map(([, qty]) => qty), backgroundColor: rows.map(([, qty]) => qty < 0 ? '#AD7137' : '#4A7C59'), borderWidth: 0,
+      label: stage + ' (' + unit + ')', data: rows.map(([, qty]) => qty), backgroundColor: rows.map(([, qty]) => qty < 0 ? '#AD7137' : '#8B5E3C'), borderWidth: 0,
     }] }, options: { responsive: true, maintainAspectRatio: false, animation: false,
       scales: { x: { title: { display: true, text: aggregation === 'weekly' ? '주 시작일 (월요일)' : aggregation === 'monthly' ? '기록월' : '기록일' }, ticks: { maxTicksLimit: 8 } },
         y: { beginAtZero: true, title: { display: true, text: unit } } }, plugins: { legend: { display: false } } } });
@@ -173,7 +173,7 @@ export function renderStatsVisuals({ host, tab, view, fullView, choices, selecti
       afterDatasetsDraw(chart) {
         if (rows.length > 6) return; // Dense histories remain available through tooltips and full evidence.
         const { ctx, chartArea } = chart, points = chart.getDatasetMeta(0).data;
-        ctx.save(); ctx.font = '12px sans-serif'; ctx.fillStyle = '#365440'; ctx.textAlign = 'center';
+        ctx.save(); ctx.font = '12px sans-serif'; ctx.fillStyle = '#4A2F1C'; ctx.textAlign = 'center';
         points.forEach((point, i) => {
           const label = rows[i].period.slice(5) + ' · ' + fmt(rows[i].qty) + unit;
           const half = ctx.measureText(label).width / 2;
@@ -185,7 +185,7 @@ export function renderStatsVisuals({ host, tab, view, fullView, choices, selecti
       },
     };
     createChart(timeline, { type: 'scatter', data: { datasets: [{ label: '입고량 (' + unit + ')', showLine: true,
-      data: rows.map(r => ({ x: day(r.period), y: 0, qty: r.qty, date: r.period })), backgroundColor: '#4A7C59', borderColor: '#4A7C59', pointRadius: 5, borderWidth: 1,
+      data: rows.map(r => ({ x: day(r.period), y: 0, qty: r.qty, date: r.period })), backgroundColor: '#8B5E3C', borderColor: '#8B5E3C', pointRadius: 5, borderWidth: 1,
     }] }, plugins: [labels], options: { responsive: true, maintainAspectRatio: false, animation: false, layout: { padding: { left: 20, right: 20 } },
       scales: { x: { type: 'linear', title: { display: true, text: '입고 기록일' }, ticks: { maxTicksLimit: 5, callback: value => dateAt(value).slice(5) } },
         y: { display: false, min: -1, max: 1 } },

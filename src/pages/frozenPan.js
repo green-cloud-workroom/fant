@@ -97,7 +97,7 @@ function renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPan
   const totalPan = lots.reduce((sum, l) => sum + (l.remaining || 0), 0);
 
   content.innerHTML = `
-    <div class="page-wrap">
+    <div class="page-wrap frozen-pan-page">
       <div class="page-header">
         <h2 class="page-title">동결판 재고</h2>
       </div>
@@ -122,16 +122,16 @@ function renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPan
 
       <!-- 탭 nav -->
       <div class="tab-nav" style="display:flex;gap:0;border-bottom:2px solid #e8e8e8;margin-bottom:16px;">
-        <button class="tab-btn" data-tab="breadPan"
-          style="padding:10px 20px;background:${activeTab === 'breadPan' ? '#fff' : '#f5f5f5'};border:1px solid #e8e8e8;border-bottom:${activeTab === 'breadPan' ? '2px solid white' : 'none'};margin-bottom:-2px;font-size:14px;cursor:pointer;font-weight:${activeTab === 'breadPan' ? '600' : '400'};color:${activeTab === 'breadPan' ? '#1a1a1a' : '#888'};">
+        <button class="tab-btn ${activeTab === 'breadPan' ? 'active' : ''}" data-tab="breadPan"
+          style="padding:10px 20px;border:1px solid #e8e8e8;margin-bottom:-2px;font-size:14px;cursor:pointer;font-weight:${activeTab === 'breadPan' ? '600' : '400'};color:${activeTab === 'breadPan' ? '#1a1a1a' : '#888'};">
           빵판 재고
         </button>
-        <button class="tab-btn" data-tab="frozenPan"
-          style="padding:10px 20px;background:${activeTab === 'frozenPan' ? '#fff' : '#f5f5f5'};border:1px solid #e8e8e8;border-bottom:${activeTab === 'frozenPan' ? '2px solid white' : 'none'};margin-bottom:-2px;font-size:14px;cursor:pointer;font-weight:${activeTab === 'frozenPan' ? '600' : '400'};color:${activeTab === 'frozenPan' ? '#1a1a1a' : '#888'};">
+        <button class="tab-btn ${activeTab === 'frozenPan' ? 'active' : ''}" data-tab="frozenPan"
+          style="padding:10px 20px;border:1px solid #e8e8e8;margin-bottom:-2px;font-size:14px;cursor:pointer;font-weight:${activeTab === 'frozenPan' ? '600' : '400'};color:${activeTab === 'frozenPan' ? '#1a1a1a' : '#888'};">
           동결판 재고
         </button>
-        <button class="tab-btn" data-tab="freezeOp"
-          style="padding:10px 20px;background:${activeTab === 'freezeOp' ? '#fff' : '#f5f5f5'};border:1px solid #e8e8e8;border-bottom:${activeTab === 'freezeOp' ? '2px solid white' : 'none'};margin-bottom:-2px;font-size:14px;cursor:pointer;font-weight:${activeTab === 'freezeOp' ? '600' : '400'};color:${activeTab === 'freezeOp' ? '#1a1a1a' : '#888'};">
+        <button class="tab-btn ${activeTab === 'freezeOp' ? 'active' : ''}" data-tab="freezeOp"
+          style="padding:10px 20px;border:1px solid #e8e8e8;margin-bottom:-2px;font-size:14px;cursor:pointer;font-weight:${activeTab === 'freezeOp' ? '600' : '400'};color:${activeTab === 'freezeOp' ? '#1a1a1a' : '#888'};">
           동결가동
         </button>
       </div>
@@ -171,7 +171,7 @@ function getSourceBadge(source) {
 
   const config = {
     tenderIn:    { label: '텐더', color: '#1f6fb2', bg: '#e8f3fc' },
-    preprocess:  { label: '전처리', color: '#2d7a3a', bg: '#e8f5ea' },
+    preprocess:  { label: '전처리', color: '#6E655C', bg: '#EFECE8' },
     adjust:      { label: '조정', color: '#b97a1f', bg: '#fdf3e0' },
   }[source];
 
@@ -240,14 +240,7 @@ function renderBreadPanLogRow(log) {
     rollback: '롤백',
   }[log.type] || log.type);
 
-  const typeColor = {
-    incoming: 'tag-raw',       // 파란색
-    preprocess: '',            // 회색
-    adjust: 'tag-cat',         // 노란색
-    rollback: 'tag-cat',
-  }[log.type] || '';
-
-  const qtyColor = log.qty > 0 ? '#2d7a3a' : '#e53e3e';
+  const qtyClass = log.qty > 0 ? 'stock-quantity--increase' : 'stock-quantity--decrease';
   const qtySign = log.qty > 0 ? '+' : '';
 
   // 비고 — preprocess는 expected/actual 표시, 아니면 note/reason
@@ -269,9 +262,9 @@ function renderBreadPanLogRow(log) {
   return `
     <tr>
       <td>${escapeHtml(log.date || '-')}</td>
-      <td><span class="tag ${typeColor}" style="${log.type === 'preprocess' ? 'background:#f0f0f0;color:#666' : ''}">${escapeHtml(typeLabel)}</span></td>
+      <td><span class="tag stock-movement-badge" data-movement-label="${escapeHtml(typeLabel)}">${escapeHtml(typeLabel)}</span></td>
       <td>${escapeHtml(log.productName || '-')}${lotDateLabel}</td>
-      <td style="color:${qtyColor};font-weight:500;">${qtySign}${escapeHtml(log.qty || 0)}개</td>
+      <td class="${qtyClass}" style="font-weight:500;">${qtySign}${escapeHtml(log.qty || 0)}개</td>
       <td>${escapeHtml(log.staffName || '-')}</td>
       <td style="font-size:12px;color:#666;">${escapeHtml(noteText)}</td>
     </tr>
@@ -285,7 +278,7 @@ function renderFrozenPanTab(rows, lotSummary, frozenPanLogs) {
       <span style="font-size:14px;color:#555;font-weight:600;">동결판 lot 잔량</span>
       <div style="display:flex;gap:8px;">
         <button class="btn-secondary" id="btnFrozenPanAdjust">+ 수동 조정</button>
-        <button class="btn-primary" id="btnTenderIn">+ 텐더동결 입고</button>
+        <button class="btn-secondary" id="btnTenderIn">+ 텐더동결 입고</button>
       </div>
     </div>
 
@@ -360,15 +353,7 @@ function renderFrozenPanLogRow(log) {
     adjust: '수동조정',
   }[log.type] || log.type);
 
-  const typeColor = {
-    tenderIn: 'tag-raw',           // 파란색
-    preprocess: 'tag-raw',         // 파란색
-    orderDeduct: '',               // 회색 (차감)
-    orderRollback: 'tag-cat',      // 노란색 (복원)
-    adjust: 'tag-cat',             // 노란색
-  }[log.type] || '';
-
-  const qtyColor = log.qty > 0 ? '#2d7a3a' : '#e53e3e';
+  const qtyClass = log.qty > 0 ? 'stock-quantity--increase' : 'stock-quantity--decrease';
   const qtySign = log.qty > 0 ? '+' : '';
 
   // 비고
@@ -382,9 +367,9 @@ function renderFrozenPanLogRow(log) {
   return `
     <tr>
       <td>${escapeHtml(log.date || '-')}</td>
-      <td><span class="tag ${typeColor}" style="${log.type === 'orderDeduct' ? 'background:#f0f0f0;color:#666' : ''}">${escapeHtml(typeLabel)}</span></td>
+      <td><span class="tag stock-movement-badge" data-movement-label="${escapeHtml(typeLabel)}">${escapeHtml(typeLabel)}</span></td>
       <td>${escapeHtml(log.productName || '-')}</td>
-      <td style="color:${qtyColor};font-weight:500;">${qtySign}${escapeHtml(log.qty || 0)}판</td>
+      <td class="${qtyClass}" style="font-weight:500;">${qtySign}${escapeHtml(log.qty || 0)}판</td>
       <td>${escapeHtml(log.staffName || '-')}</td>
       <td style="font-size:12px;color:#666;">${escapeHtml(noteText)}</td>
     </tr>
@@ -911,7 +896,7 @@ function renderPanRow(r) {
   const isConfirmed = r.status === 'confirmed';
 
   const total = (r.items || []).reduce((sum, i) => sum + (i.orderPanQty || 0), 0);
-  const color = total === 45 ? '#2d7a3a' : total > 45 ? '#e53e3e' : '#e67e22';
+  const color = total === 45 ? 'var(--ui-success-color)' : total > 45 ? '#e53e3e' : '#e67e22';
   const contentHtml = `
     ${(r.items || []).map(i => `<span style="font-size:11px;margin-right:8px">${escapeHtml(i.productName)}: ${escapeHtml(i.orderPanQty)}판</span>`).join('')}
     <span style="font-weight:600;color:${color}">총 ${escapeHtml(total)}판</span>
@@ -936,7 +921,7 @@ function renderPanRow(r) {
       <td>${escapeHtml(r.staffName || '-')}</td>
       <td>${contentHtml}</td>
       <td>
-        ${isConfirmed ? '<span style="color:#2d7a3a;font-size:12px">✅ 확인완료</span>' :
+        ${isConfirmed ? '<span class="ui-success" style="font-size:12px">✅ 확인완료</span>' :
           '<span style="color:#e67e22;font-size:12px">⏳ 대기중</span>'}
       </td>
       <td style="white-space:nowrap">${actionHtml}</td>
@@ -1293,7 +1278,7 @@ function bindWorkItemEvents(productSummary) {
         breadEl.max = '';
       } else {
         stockInfoEl.textContent = `현재 잔량 ${summary.total}개 (가장 오래된 lot ${summary.oldestRemaining}개)`;
-        stockInfoEl.style.color = '#2d7a3a';
+        stockInfoEl.style.color = 'var(--ui-success-color)';
         // default: 가장 오래된 lot의 잔량 (B안 — 99% batch 전체 사용)
         breadEl.value = summary.oldestRemaining;
         breadEl.max = summary.total;
@@ -1356,7 +1341,7 @@ function recalcRow(item) {
   diffEl.textContent = `${sign}${diff}`;
 
   if (diff === 0) {
-    diffEl.style.color = '#2d7a3a';
+    diffEl.style.color = 'var(--ui-success-color)';
   } else if (Math.abs(diff) <= 0.5) {
     diffEl.style.color = '#888';
   } else {

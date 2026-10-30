@@ -72,7 +72,7 @@ function esc(s) {
 function renderLayout() {
   const content = document.getElementById('mainContent');
   content.innerHTML = `
-    <div class="recipe-wrap">
+    <div class="recipe-wrap equipment-page">
       <div class="recipe-list-panel">
         <div class="panel-header">
           <span class="panel-title">기계 목록</span>
@@ -267,7 +267,7 @@ function renderPartRow(p, { showMachine = false } = {}) {
   const s = getPartStatus(p);
   const inactive = p.active === false;
   const rowBg = s.overdue ? 'background:#fef2f2;' : s.dueSoon ? 'background:#fffbeb;' : '';
-  const stockColor = s.low ? '#e53e3e' : '#1a1a1a';
+  const stockClass = Number(p.currentQty || 0) === 0 ? 'egg-status egg-status--empty' : s.low ? 'egg-status egg-status--low' : '';
   const canAct = !inactive;
   return `
     <tr class="eq-part-row ${selectedPartId === p.id ? 'eq-part-row-selected' : ''} ${inactive ? 'inactive-master' : ''}" data-part-id="${p.id}" style="${rowBg}cursor:pointer;">
@@ -278,7 +278,7 @@ function renderPartRow(p, { showMachine = false } = {}) {
       <td>${p.lastReplacedAt || '-'}</td>
       <td>${p.nextDueAt || '-'}</td>
       <td>${ddayPill(s.dday)}</td>
-      <td style="color:${stockColor};${s.low ? 'font-weight:600;' : ''}">${Number(p.currentQty || 0)} / ${Number(p.minimumQty || 0)}</td>
+      <td><span class="${stockClass}">${Number(p.currentQty || 0)} / ${Number(p.minimumQty || 0)}</span></td>
       <td style="white-space:nowrap;">
         ${canAct ? `
           <button class="eq-act" data-act="replace" data-part-id="${p.id}">교체</button>
@@ -321,7 +321,7 @@ function renderMachineDetail(detail, eq) {
         <button class="btn-secondary eq-filter ${filterDueOnly ? 'eq-filter-on' : ''}" id="btnFilterDue">임박만</button>
         <button class="btn-secondary eq-filter ${filterLowOnly ? 'eq-filter-on' : ''}" id="btnFilterLow">부족만</button>
         ${canManage() ? '<button class="btn-secondary" id="btnEditEquipment">기계 수정</button>' : ''}
-        ${canManage() && !inactive ? '<button class="btn-primary" id="btnNewPart">+ 부품 추가</button>' : ''}
+        ${canManage() && !inactive ? '<button class="btn-secondary" id="btnNewPart">+ 부품 추가</button>' : ''}
       </div>
     </div>
     <div class="detail-body">
@@ -443,7 +443,7 @@ async function renderPartHistory() {
                 <tr>
                   <td>${l.date || '-'}</td>
                   <td><span class="tag ${l.type === 'in' ? 'tag-raw' : l.type === 'replace' ? 'tag-freezeDry' : 'tag-cat'}">${TYPE_LABEL[l.type] || l.type}</span></td>
-                  <td style="color:${l.qty > 0 ? '#2d7a3a' : l.qty < 0 ? '#e53e3e' : '#666'}">${l.qty > 0 ? '+' : ''}${l.qty ?? 0}</td>
+                  <td class="${l.qty > 0 ? 'stock-quantity--increase' : l.qty < 0 ? 'stock-quantity--decrease' : ''}">${l.qty > 0 ? '+' : ''}${l.qty ?? 0}</td>
                   <td style="color:#888;">${l.before ?? '-'} → ${l.after ?? '-'}</td>
                   <td>${esc(l.staffName || '-')}</td>
                   <td>${esc(l.note || '-')}</td>
