@@ -1259,6 +1259,7 @@ function renderLogRow(log) {
     'log-row',
     isUnack ? 'log-row-unack' : '',
     isCritical ? 'log-row-critical' : '',
+    log.subAction === 'alert' && ['minStock', 'frozenStockLow'].includes(log.action) ? 'log-row-stock-warning' : '',
   ].filter(Boolean).join(' ');
 
   const ackBtn = isUnack
@@ -1787,6 +1788,7 @@ function renderModalLogRow(log) {
     'log-modal-row',
     isUnack ? 'log-row-unack' : '',
     isCritical ? 'log-row-critical' : '',
+    log.subAction === 'alert' && ['minStock', 'frozenStockLow'].includes(log.action) ? 'log-row-stock-warning' : '',
   ].filter(Boolean).join(' ');
 
   const ackBtn = isUnack

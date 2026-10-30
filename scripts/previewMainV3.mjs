@@ -1,0 +1,40 @@
+﻿import {readFile,writeFile,mkdir} from 'node:fs/promises';
+import vm from 'node:vm';
+import {pageEnvironment} from '../tests/helpers/pageDom.mjs';
+await mkdir('output',{recursive:true});
+const e=await pageEnvironment('main',{instantRoutes:['main'],instrument:'\nexport {renderInstantMain,renderLogRow};'});
+try {
+ const today=e.state.rows.eggStock[0]; today.currentQty=220;today.minimumQty=250;
+ const date='2026-09-14';
+ const ingredients=[{name:'닭가슴살',requiredQtyG:140000,weightDisplayUnit:'kg',isProductionUnit:true,unitName:'kg'}, {name:'닭정육',requiredQtyG:6000,weightDisplayUnit:'kg'}, {name:'닭간',requiredQtyG:7637,weightDisplayUnit:'g'}, {name:'닭염통',requiredQtyG:6363,weightDisplayUnit:'g'}, {name:'노른자',requiredQtyG:630,weightDisplayUnit:'g'}, {name:'정제수',requiredQtyG:23240,weightDisplayUnit:'g'}];
+ e.state.rows.productions=['고양이 치킨','고양이 본+치킨','강아지 치킨'].map((name,i)=>({id:'ui3-p'+i,date,recipeId:'r1',recipeName:name,category:'raw',target:i===2?'dog':'cat',sortOrder:i,status:'completed',color:['#E7C9D3','#D3BCE0','#BFD9DF'][i],productionUnitQty:[140,15,60][i],rawBoxQty:[94,44,53][i],ingredientsSnapshot:ingredients,received:i<2,receivedRevision:1,receivedPlates:23,receivedTotalPacks:2320,receivedBox:116,receivedLoosePacks:3}));
+ e.state.rows.activityLogs=[{id:'low1',date,action:'minStock',subAction:'alert',message:'고양이 치킨 영양제 부족 (현재 0개 / 최소 10개)',acknowledged:false,timestamp:{seconds:1789340400}},{id:'low2',date,action:'frozenStockLow',subAction:'alert',message:'닭가슴살 냉동 재고 부족',acknowledged:false,timestamp:{seconds:1789340300}},{id:'general',date,action:'production',subAction:'create',message:'강아지 치킨 생산 등록',acknowledged:false,timestamp:{seconds:1789340200}},{id:'office',date,action:'bag',subAction:'in',message:'봉투 입고 완료',acknowledged:true,timestamp:{seconds:1789340100}}];
+ await e.page.renderInstantMain();
+ const app=await readFile('src/app.js','utf8');
+ const MENUS=vm.runInNewContext(app.match(/export const MENUS = (\[[\s\S]*?\n\]);/)[1]);
+ const layout=await readFile('src/layout.js','utf8');
+ const template=layout.match(/document.getElementById\('app'\).innerHTML = (`[\s\S]*?`);/)[1];
+ const shell=vm.runInNewContext(template,{visibleMenus:MENUS.filter(m=>m.roles.includes('office')),currentMenu:'main',getUserBadgeText:()=> '합성 사용자 (사무실)'});
+ const {parseHTML}=await import('linkedom');const {document}=parseHTML('<html><body>'+shell+'</body></html>');
+ document.getElementById('mainContent').innerHTML=e.document.getElementById('mainContent').innerHTML;
+ const values={subToday:'📅 9/14(월)',sub18months:'⏳ 28/3/14',subEgg:'🥚 220개',subLowStock:'⚠️ 부족재고 2개',subSchedule:'📦 입고예정 0건',subUnread:'🔔 미확인로그 3건'};
+ for(const [id,text]of Object.entries(values))document.getElementById(id).textContent=text;
+ document.getElementById('subLowStock').classList.add('low-stock-warning');
+ const banner=document.getElementById('blockBanner');banner.removeAttribute('style');banner.textContent='⚠ 합성 미리보기 — 마감 후 미처리 항목 확인 필요';
+ const base=await readFile('src/style.css','utf8'),theme=await readFile('src/theme-warm.css','utf8');
+ const checks=`
+ const theme=document.getElementById('warmTheme');document.querySelectorAll('*').forEach(n=>n.style.transition='none');
+ const nodes=[...document.querySelectorAll('body *')].filter(n=>!['SCRIPT','STYLE'].includes(n.tagName));
+ const measure=n=>{const s=getComputedStyle(n);return {font:s.fontSize,height:n.getBoundingClientRect().height,width:n.getBoundingClientRect().width}};
+ const protectedNodes=[...document.querySelectorAll('.main-panel-1,.main-panel-right-top,.main-panel-right-bottom,.main-production-card,.alert-card,.main-received-stamp,.unit-row td:nth-child(2),.close-btn,.block-banner')];
+ const protectedMeasure=n=>{const r=n.getBoundingClientRect(),s=getComputedStyle(n);return {x:r.x,y:r.y,width:r.width,height:r.height,font:s.fontSize,background:s.backgroundColor,color:s.color,border:s.borderColor}};
+ theme.disabled=true;const before=nodes.map(measure),protectedBefore=protectedNodes.map(protectedMeasure);theme.disabled=false;
+ const preservedGeometry=protectedNodes.every((n,i)=>{const a=protectedMeasure(n),b=protectedBefore[i];return ['x','y','width','height','font'].every(k=>a[k]===b[k]);});
+ const preservedColors=protectedNodes.every((n,i)=>{if(!n.matches('.main-received-stamp,.unit-row td:nth-child(2),.close-btn,.block-banner'))return true;const a=protectedMeasure(n),b=protectedBefore[i];return ['background','color','border'].every(k=>a[k]===b[k]);});
+ const changedFonts=nodes.filter((n,i)=>measure(n).font!==before[i].font&&!n.matches('.log-action-btn')).map(n=>n.className);
+ const checks={preservedGeometry,preservedColors,actualMenus:document.querySelectorAll('.nav-btn').length===${MENUS.length},navbarHeight:getComputedStyle(document.querySelector('.navbar')).height==='36px',fontsPreserved:changedFonts.length===0,changedFonts,headerButtons:[...document.querySelectorAll('.log-action-btn')].every(n=>getComputedStyle(n).fontSize==='12px'&&getComputedStyle(n).whiteSpace==='nowrap'),shortageRows:document.querySelectorAll('.log-row-stock-warning').length===2,warningColor:getComputedStyle(document.querySelector('.log-row-stock-warning')).backgroundColor==='rgb(253, 243, 225)',noPageOverflow:document.documentElement.scrollWidth<=innerWidth,stampRetained:!!document.querySelector('.main-received-stamp'),headerOneLine:[...document.querySelectorAll('.log-section-actions')].every(n=>new Set([...n.children].map(b=>b.getBoundingClientRect().top)).size===1)};
+ document.getElementById('ui3Checks').textContent=JSON.stringify(checks);document.querySelectorAll('*').forEach(n=>n.style.transition='none');
+ `;
+ await writeFile('output/ui3-main.html',`<!doctype html><html lang="ko"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'"><title>UI3 합성 데이터</title><style>${base}</style><style id="warmTheme">${theme}</style><body>${document.body.innerHTML}<pre id="ui3Checks" hidden></pre><script>${checks}</script></body></html>`);
+ console.log('output/ui3-main.html: actual main renderer + actual MENUS and layout template; synthetic data only');
+}finally{await e.cleanup();}

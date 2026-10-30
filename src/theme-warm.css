@@ -1,0 +1,313 @@
+/* V3: palette overrides only; original typography, geometry and recipe/receipt colors stay in style.css. */
+.closing-flag-row {
+  background: #FAF7F2
+}
+.menu-staff-group-option {
+  border: 1px solid #E6DED3
+}
+.menu-staff-group-option:has(input:checked) {
+  border-color: #8B5E3C;
+  color: #8B5E3C
+}
+.system-value-input {
+  border: 1px solid #E6DED3
+}
+.system-value-input:focus {
+  border-color: #8B5E3C
+}
+.system-value-input:disabled {
+  background: #EFE8DF
+}
+.meat-price-current {
+  color: #8B5E3C
+}
+.nav-btn.active {
+  background: #8B5E3C
+}
+.logout-btn:hover {
+  background: #EFE8DF
+}
+.subbar {
+  background: #EFE8DF;
+  border-bottom: 1px solid #E6DED3
+}
+.main-content {
+  background: #F3EDE5
+}
+.settings-section-body {
+  border-top: 1px solid #E6DED3
+}
+.staff-group {
+  background: #FAF7F2
+}
+.btn-add-staff {
+  background: #8B5E3C
+}
+.btn-add-staff:hover {
+  background: #6B4529
+}
+.panel-header {
+  border-bottom: 1px solid #E6DED3
+}
+.recipe-list-item:hover {
+  background: #F3EDE5
+}
+.recipe-list-item.inactive-master {
+  background: #FAF7F2
+}
+.recipe-list-item.inactive-master:hover {
+  background: #EFE8DF
+}
+.tag-common { background: #EFE8DF
+}
+tr.inactive-master {
+  background: #FAF7F2
+}
+input:checked + .toggle-slider { background: #8B5E3C
+}
+.form-group input:focus,
+.form-group select:focus {
+  border-color: #8B5E3C
+}
+.btn-primary {
+  background: #8B5E3C
+}
+.btn-primary:hover { background: #6B4529
+}
+.btn-secondary {
+  background: #EFE8DF
+}
+.data-table th {
+  background: #F3EDE5
+}
+.data-table td {
+  border-bottom: 1px solid #E6DED3
+}
+.cell-input:focus {
+  border-color: #8B5E3C
+}
+.ingredient-weight-control .ing-weight-unit {
+  border: 1px solid #E6DED3
+}
+.supplement-filter-select {
+  border: 1px solid #E6DED3
+}
+.supplement-staff-select {
+  border: 1px solid #E6DED3
+}
+.supplement-reason-input {
+  border: 1px solid #E6DED3
+}
+.supplement-reason-input:focus {
+  border-color: #8B5E3C
+}
+.supplement-recipe-header .total-stock {
+  color: #8B5E3C
+}
+.supplement-table thead th {
+  background: #F3EDE5
+}
+.supplement-th-name {
+  background: #F3EDE5
+}
+.supplement-th-qty {
+  background: #F3EDE5
+}
+.supplement-th-date {
+  border-bottom: 1px solid #E6DED3
+}
+.supplement-cell--readonly {
+  background: #FAF7F2
+}
+.supplement-cell-input:hover {
+  border-color: #E6DED3
+}
+.supplement-cell-input:focus {
+  border-color: #8B5E3C
+}
+.supplement-cell-input:disabled {
+  background: #EFE8DF
+}
+.tab-group {
+  background: #EFE8DF
+}
+.tab-actions {
+  border-bottom: 1px solid #E6DED3
+}
+.btn-adjust {
+  background: #EFE8DF
+}
+.production-date-bar {
+  border-bottom: 1px solid #E6DED3
+}
+.production-card.active {
+  box-shadow: 0 0 0 2px #8B5E3C
+}
+.production-right {
+  background: #FAF7F2
+}
+.list-group-label--inactive {
+  border-top: 1px solid #E6DED3
+}
+.main-panel-right-top {
+  background: #FAF7F2
+}
+.main-panel-2 {
+  background: #FAF7F2
+}
+.main-panel-3 {
+  background: #FAF7F2
+}
+.main-panel-right-bottom {
+  background: #FAF7F2
+}
+.main-panel-header {
+  border-bottom: 1px solid #E6DED3
+}
+.main-production-meta {
+  background: #FAF7F2
+}
+
+.alert-card-info {
+  background: #F3EDE5;
+  color: #8B5E3C;
+  border: 1px solid #E6DED3
+}
+.modal-box .cell-input:focus {
+  border-color: #8B5E3C
+}
+.modal-box .cell-input[readonly] {
+  background: #F3EDE5
+}
+.modal-box .work-item {
+  background: #FAF7F2
+}
+.cal-toolbar {
+  border-bottom: 1px solid #E6DED3
+}
+.cal-nav-btn {
+  border: 1px solid #E6DED3
+}
+.cal-nav-btn:hover { background: #F3EDE5
+}
+.cal-today-btn {
+  border: 1px solid #E6DED3
+}
+.cal-today-btn:hover { background: #F3EDE5
+}
+.cal-weekday-row {
+  background: #FAF7F2
+}
+.cal-cell {
+  border-right: 1px solid #E6DED3;
+  border-bottom: 1px solid #E6DED3
+}
+.cal-modal-section-title {
+  border-bottom: 1px solid #E6DED3
+}
+.cal-modal-list-item {
+  border-bottom: 1px dashed #E6DED3
+}
+.cal-event-btn {
+  border: 1px solid #E6DED3
+}
+.cal-event-btn:hover { background: #F3EDE5
+}
+.log-section-header {
+  border-bottom: 1px solid #E6DED3
+}
+.log-action-btn {
+  border: 1px solid #E6DED3
+}
+.log-action-btn:hover:not(:disabled) { background: #F3EDE5
+}
+.log-row {
+  border-bottom: 1px solid #E6DED3
+}
+.log-modal-list {
+  border: 1px solid #E6DED3;
+  background: #FAF7F2
+}
+.log-modal-row {
+  border-bottom: 1px solid #E6DED3
+}
+.stats-v-track { background: #F3EDE5
+}
+.stats-v-track > span { background: #8B5E3C
+}
+.stats-v-day { background: #F3EDE5; color: #8B5E3C
+}
+.stats-v-calendar-selection { background: #F3EDE5
+}
+.stats-v-range-track { background: linear-gradient(to bottom,transparent 10px,#F3EDE5 10px,#F3EDE5 13px,transparent 13px)
+}
+.stats-v-range-track > span { background: #8B5E3C
+}
+.stats-chart-fold > summary { color: #8B5E3C
+}
+.stats-tab:hover {
+  color: #8B5E3C
+}
+.stats-tab.active {
+  color: #8B5E3C;
+  border-bottom-color: #8B5E3C
+}
+.stats-mode-btn:hover,
+.stats-agg-btn:hover {
+  border-color: #8B5E3C;
+  color: #8B5E3C
+}
+.stats-mode-btn.active,
+.stats-agg-btn.active {
+  background: #8B5E3C;
+  border-color: #8B5E3C
+}
+.stats-download-btn {
+  background: #8B5E3C
+}
+.stats-summary-row b {
+  color: #8B5E3C
+}
+.stats-table thead th {
+  background: #FAF7F2
+}
+.stats-table tbody td {
+  border-bottom: 1px solid #E6DED3
+}
+.stats-table tbody tr:hover {
+  background: #FAF7F2
+}
+.stats-recipe-chip {
+  background: #F3EDE5
+}
+.egg-fifo-source {
+  background: #F3EDE5
+}
+.eq-pill-gray { background: #EFE8DF
+}
+.eq-part-row-selected td { box-shadow: inset 3px 0 0 #8B5E3C
+}
+.eq-act:hover { background: #F3EDE5
+}
+.eq-filter-on {
+  border-color: #8B5E3C !important
+}
+
+.navbar { background: #2B2420; }
+.nav-btn, .logout-btn { color: #D9D2CA; }
+.nav-btn:hover { background: #6B4529; }
+.nav-btn.active { background: #8B5E3C; }
+.log-ack-btn { border-color: #8B5E3C; color: #8B5E3C; }
+.log-ack-btn:hover { background: #F3EDE5; }
+.alert-card-warning { background: #FCE7BF; border-color: #E0A33A; color: #5C3300; }
+.alert-card-blocker { background: #FBDAD6; border-color: #E5958B; color: #7F1D12; }
+.subbar-item.low-stock-warning { background: #FCE7BF; border: 1px solid #E0A33A; color: #5C3300; font-weight: 700; border-radius: 4px; padding: 2px 8px; }
+.log-row.log-row-stock-warning, .log-modal-row.log-row-stock-warning { background: #FDF3E1; }
+/* Explicit header control exception approved for V3. */
+.log-section-title, .log-action-btn { white-space: nowrap; }
+.log-action-btn { font-size: 12px; padding: 3px 7px; }
+.log-section-actions { flex-wrap: nowrap; }
+
+.user-badge { color: #D9D2CA; }
+.log-ack-done { color: #8B5E3C; }
+.main-completed-pill { background: #F3EDE5; color: #8B5E3C; border-color: #E6DED3; }
