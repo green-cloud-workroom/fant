@@ -6,7 +6,7 @@ import { registerModalDismiss } from '../utils/modalManager.js';
 const bound = new WeakSet();
 const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export function inventoryHandoffButton(receiptId) {
-  return `<button type="button" class="btn-secondary" data-inventory-handoff="${escape(receiptId)}" style="font-size:11px;padding:3px 7px;margin-left:5px">재고앱 인계 확인</button>`;
+  return `<button type="button" class="btn-secondary inventory-handoff-button" data-inventory-handoff="${escape(receiptId)}">재고앱 인계 확인</button>`;
 }
 async function call(data) {
   if (!auth.currentUser) throw Error('로그인하세요.');
@@ -21,10 +21,13 @@ export function bindInventoryHandoff(root = document) {
     event.preventDefault(); event.stopPropagation();
     if (button.disabled) return;
     button.disabled = true;
-    showHandoff(button.dataset.inventoryHandoff).catch(error => alert(error.message || String(error))).finally(() => { button.disabled = false; });
+    showHandoff(button.dataset.inventoryHandoff, { onConfirmed: () => {
+      button.textContent = '✓ 인계 확인됨';
+      button.classList.add('inventory-handoff-confirmed');
+    } }).catch(error => alert(error.message || String(error))).finally(() => { button.disabled = false; });
   }, true);
 }
-export async function showHandoff(receiptId) {
+export async function showHandoff(receiptId, { onConfirmed = () => {} } = {}) {
   const action = await openAction({refs:[`productTransferRequests/${receiptId}`]});
   const context = await call({action:'context', receiptId});
   if (!['pending','대기'].includes(context.receiptStatus)) throw Error('이미 처리된 입고입니다. 재고앱 이력을 확인하세요.');
@@ -57,9 +60,10 @@ export async function showHandoff(receiptId) {
         actualQuantity:raw?null:main,physicalLabel:label,
         arrivedAtMillis:new Date(arrived+'+09:00').getTime(),completed:true,remainingMain:0,remainingPacks:0,inTransitMain:0,inTransitPacks:0}));
       status.textContent='최종 인계 확인을 기록했습니다. 재고앱에서 입고 수량을 확인할 수 있습니다.';
+      onConfirmed();
     } catch(error) {
       // A callable response can be lost after the record commits. Read back this exact operation before offering a new record.
-      try {const actual=await call({action:'context',receiptId});status.textContent=actual.handoff?.operationId===operationId?'인계 확인 기록을 서버에서 확인했습니다.':'결과를 확인하지 못했습니다. 창을 닫고 기록을 다시 조회하세요.';}
+      try {const actual=await call({action:'context',receiptId});const confirmed=actual.handoff?.operationId===operationId;status.textContent=confirmed?'인계 확인 기록을 서버에서 확인했습니다.':'결과를 확인하지 못했습니다. 창을 닫고 기록을 다시 조회하세요.';if(confirmed)onConfirmed();}
       catch {status.textContent='결과 확인 중입니다. 다시 인계 기록을 만들기 전에 서버 결과를 확인하세요.';}
     } finally {busy=false;}
   };

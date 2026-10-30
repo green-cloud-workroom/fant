@@ -284,6 +284,7 @@ async function updateSubbar(scope = createReadScope()) {
       if (b.minimumQty && (b.currentQty || 0) < b.minimumQty) lowCount++;
     });
     document.getElementById('subLowStock').textContent = `⚠️ 부족재고 ${lowCount}개`;
+    document.getElementById('subLowStock').classList.toggle('subbar-stock-warning', lowCount > 0);
 
     const pendingSchedules = scheduleSnap.docs
       .map(d => d.data())
