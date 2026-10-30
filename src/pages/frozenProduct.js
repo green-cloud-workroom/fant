@@ -1,3 +1,4 @@
+import {openInventoryReceiptCorrection,INVENTORY_RECEIPT_CORRECTION_ENABLED,mountInventoryCorrectionRecovery} from '../services/inventoryReceiptCorrection.js';
 import {prepareFrozenSampleSetIncoming} from '../services/frozenSampleSetIncoming.js';
 import { escapeHtml } from '../utils/html.js';
 import { inventoryHandoffButton, bindInventoryHandoff } from '../services/inventoryHandoff.js';
@@ -39,6 +40,7 @@ export async function renderFrozenProduct({force=false}={}) {
  if(!data||!content.isConnected)return;
  frozenProducts=data.products;staffCache=data.staff;renderFrozenProductLayout();
  if(selectedProductId){const selected=frozenProducts.find(p=>p.id===selectedProductId);if(selected)await showProductDetail(selected);}
+ mountInventoryCorrectionRecovery({sourceCollection:'frozenLogs',role:currentUserRole,showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderFrozenProduct({force:true})});
 }
 
 async function loadFrozenProducts(scope={getDocs,getDoc}) {
@@ -141,7 +143,7 @@ function renderProductListByCategory() {
         <div class="frozen-product-category" data-category="${category.key}">
           <button type="button" class="frozen-product-category-header list-category-header" data-category="${category.key}"
             >
-            <span>${collapsed ? '▶' : '▼'} ${category.label}</span>
+            <span>입고 정정·취소는 대표·사무실 계정에서 가능합니다.</span>
             <span style="font-size:11px;color:#777;">${products.length}</span>
           </button>
           <div class="frozen-product-category-items" data-category="${category.key}" style="${collapsed ? 'display:none;' : ''}">
@@ -349,7 +351,7 @@ async function showProductDetail(product) {
                       ${canManageFrozenProduct ? `
                         <button class="btn-edit-row" data-logid="${escapeHtml(l.id)}" style="margin-right:4px;">수정</button>
                         <button class="btn-del-row" data-logid="${escapeHtml(l.id)}" data-qty="${escapeHtml(l.qty)}" data-bagqty="${escapeHtml(l.deductedBagQty || 0)}" data-bagid="${escapeHtml(product.bagTypeId || '')}">취소</button>
-                      ` : ''}
+                      ` : '<span>입고 정정·취소는 대표·사무실 계정에서 가능합니다.</span>'}
                     </td>
                   </tr>
                 `).join('')}
@@ -360,6 +362,7 @@ async function showProductDetail(product) {
     </div>
   `;
 
+  mountInventoryCorrectionRecovery({sourceCollection:'frozenLogs',role:currentUserRole,showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderFrozenProduct({force:true})});
   document.getElementById('btnAddIncoming')?.addEventListener('click', () => showIncomingModal(product));
   document.getElementById('btnEditProduct')?.addEventListener('click', () => showEditProductModal(product));
   document.getElementById('btnDeleteProduct')?.addEventListener('click', () => deleteFrozenProductIfNoLogs(product));
@@ -379,6 +382,17 @@ async function openIncomingAction(product,logId,kind) {
   if(!snap.exists())throw Error('입고 원본을 찾을 수 없습니다.');
   const log={...snap.data(),id:snap.id};
   if(log.productId!==product.id)throw Error('선택한 제품과 입고 원본이 다릅니다. 다시 불러와주세요.');
+  if(INVENTORY_RECEIPT_CORRECTION_ENABLED){
+    const receiptId=`frozenLogs:${log.id}:${log.receiptRevision??1}`;
+    const [receipt,handoff]=await Promise.all([getDoc(doc(db,'productTransferRequests',receiptId)),getDoc(doc(db,'receiptHandoffs',receiptId))]);
+    if(page&&!page.isCurrent())return;
+    if(['completed','입고완료'].includes(receipt.data()?.status)||handoff.exists()){
+      await openInventoryReceiptCorrection({sourceCollection:'frozenLogs',sourceId:log.id,mode:kind==='cancel'?'cancel':'edit',showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderFrozenProduct({force:true}),onMetadata:kind==='correct'?async()=>{
+        try{const metadata=await prepareFrozenSourceCommand(log.id,{expectedProductId:product.id});showEditIncomingModal(product,log,metadata,'correct');}catch(error){alert(error.message);}
+      }:undefined});
+      return;
+    }
+  }
   const flow=await prepareFrozenSourceCommand(log.id,{expectedProductId:product.id});
   if(page&&!page.isCurrent())return;
   if(!flow.eligible&&!(kind==='correct'&&flow.metadataEligible)){

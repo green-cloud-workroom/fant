@@ -1,3 +1,4 @@
+import {INVENTORY_RECEIPT_CORRECTION_ENABLED} from './inventoryReceiptCorrection.js';
 import { db } from '../firebase.js';
 import { doc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { fingerprint, openAction } from './actionGateway.js';
@@ -19,6 +20,7 @@ export async function saveProductReceipt({ action, refs, p, target, result, meth
       const completed = latest.slice(4).filter(item => item?.status === 'completed' || item?.status === '입고완료');
       let correction = {};
       if (completed.length) {
+        if(INVENTORY_RECEIPT_CORRECTION_ENABLED)throw new Error('재고 수신 완료 건은 재고 정정 명령으로 처리해주세요. 새 입고 차수는 만들지 않습니다.');
         const previous = [...completed].sort((a, b) => (b.revision || 0) - (a.revision || 0))[0];
         const previousId = previous.id;
         const chain = new Set();

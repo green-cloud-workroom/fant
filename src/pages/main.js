@@ -1,3 +1,4 @@
+import {openInventoryReceiptCorrection,INVENTORY_RECEIPT_CORRECTION_ENABLED,mountInventoryCorrectionRecovery} from '../services/inventoryReceiptCorrection.js';
 import { confirmAutoRepack } from '../services/autoRepackConfirm.js';
 import { escapeHtml, recipeColor } from '../utils/html.js';
 import { displaySupplementLogMessage } from '../utils/activityLogMessage.js';
@@ -511,6 +512,11 @@ function renderMainLayout() {
   `;
 
   document.getElementById('btnBigView')?.addEventListener('click', showBigView);
+  mountInventoryCorrectionRecovery({sourceCollection:'productions',role:currentUserRole,showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderMain()});
+  document.querySelectorAll('[data-receipt-edit]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();openProductReceiptModal(button.dataset.receiptEdit).catch(error=>alert(error.message));}));
+  document.querySelectorAll('[data-receipt-cancel]').forEach(button=>button.addEventListener('click',event=>{
+    event.stopPropagation();openInventoryReceiptCorrection({sourceCollection:'productions',sourceId:button.dataset.receiptCancel,mode:'cancel',showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderMain()}).catch(error=>alert(error.message));
+  }));
   document.getElementById('btnTodayReceiptSummary')?.addEventListener('click', () => showReceiptSummaryModal(activeProductions, displayDate));
   document.getElementById('btnTomorrowLoad')?.addEventListener('click', () => handleTomorrowLoad(isOverdueClosingMode ? overdueClosingDate : undefined));
   document.getElementById('btnCancelCompletion')?.addEventListener('click', handleCancelCompletion);
@@ -533,6 +539,7 @@ function renderMainLayout() {
           ...productions,
           ...nextProductions,
         ].find(p => p.id === card.dataset.id);
+        if(INVENTORY_RECEIPT_CORRECTION_ENABLED&&target?.category==='raw'&&target.received&&!['admin','office'].includes(currentUserRole)){alert('입고 수량 정정·취소는 대표·사무실 계정에서 가능합니다.');return;}
         if (target?.category === 'freezeDry') openFreezeDryReceiptModal(card.dataset.id);
         else openProductReceiptModal(card.dataset.id);
       });
@@ -2080,7 +2087,7 @@ function renderReceivedBadge(p) {
     return `<span class="main-received-badge">✅ 입고완료 ${escapeHtml(p.receivedFreezeQty || 0)}${unit}</span>`;
   }
   const handoff = p.receivedRevision ? inventoryHandoffButton(`productions:${p.id}:${p.receivedRevision}`) : '';
-  return `<span class="main-received-badge">✅ 입고완료 ${escapeHtml(p.receivedBox || 0)}박스${p.receivedRemainder ? ` +${escapeHtml(p.receivedRemainder)}낱개` : ''}</span>${handoff}`;
+  return `<span class="main-received-badge">✅ 입고완료 ${escapeHtml(p.receivedBox || 0)}박스${p.receivedRemainder ? ` +${escapeHtml(p.receivedRemainder)}낱개` : ''}</span>${handoff}${INVENTORY_RECEIPT_CORRECTION_ENABLED?(['admin','office'].includes(currentUserRole)?`<button class="btn-secondary" data-receipt-edit="${escapeHtml(p.id)}">수량 수정</button><button class="btn-secondary" data-receipt-cancel="${escapeHtml(p.id)}">입고 취소</button>`:'<span>입고 정정·취소는 대표·사무실 계정에서 가능합니다.</span>'):''}`;
 }
 
 function showReceiptSummaryModal(targetProductions, dateStr) {
@@ -2221,6 +2228,11 @@ async function openProductReceiptModal(productionId) {
   if (p.date > getToday()) {
     alert('미래 날짜의 제품 입고는 입력할 수 없습니다.');
     return;
+  }
+  // Received/handed-off raw receipts never enter the old new-revision writer
+  // when correction is enabled. The inventory command owns the stock delta.
+  if(p.received&&INVENTORY_RECEIPT_CORRECTION_ENABLED&&(action.values.slice(4).some(item=>['completed','입고완료'].includes(item?.status))||(await getDoc(doc(db,'receiptHandoffs',`productions:${productionId}:${p.receivedRevision}`))).exists())){
+    if(await openInventoryReceiptCorrection({sourceCollection:'productions',sourceId:productionId,showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderMain()}))return;
   }
   const closedGate = await gateClosedReceiptEdit(p.date);
   if (!closedGate.allowed) return;
