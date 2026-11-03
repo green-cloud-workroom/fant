@@ -22,6 +22,28 @@ import {pageRefresh} from '../utils/pageRefresh.js';
 import {getPageContext} from '../utils/pageLifecycle.js';
 import {canLeavePage} from '../utils/formDraft.js';
 const supplementResource=pageResource('supplement');
+let disposeRequests = null;
+let supplementSubTab = 'stock';
+
+async function openRequestsTab() {
+  const page=getPageContext();
+  const {mountSupplementRequests}=await import('./supplementRequests.js');
+  if(page&&!page.isCurrent())return;
+  const host=document.getElementById('supplementRequestsHost');
+  if(!host)return;
+  disposeRequests?.();
+  document.getElementById('supplementStockHost').hidden=true;
+  host.hidden=false;supplementSubTab='requests';
+  disposeRequests=mountSupplementRequests(host,{types:supplementTypes,staffOptions:renderStaffOptions('supplementStockIn'),
+    incoming:async(item,{date,staffName,selection,extraWrites})=>{
+      // Each previous incoming changes the stock/log baseline. Reload it without
+      // replacing the request form, then use the unchanged incoming command.
+      if(page&&!page.isCurrent()||!host.isConnected)throw Error('화면이 변경됐습니다.');
+      const model=await supplementResource.load(loadSupplementModel,{force:true});
+      if(!model||page&&!page.isCurrent()||!host.isConnected)throw Error('화면이 변경됐습니다.');
+      return saveIncomingCell(item.supplementTypeId,date,item.qty,staffName,selection,extraWrites);
+    },onStockChanged:()=>supplementResource.invalidate?.()});
+}
 
 // 표에 표시할 과거 일자 범위 (일). 오늘 포함 N일.
 const SUPPLEMENT_TABLE_DAYS = 14;
@@ -92,9 +114,13 @@ function getSupplementDateColumns() {
 
 function renderSupplementLayout() {
   const content = document.getElementById('mainContent');
+  disposeRequests?.();disposeRequests=null;
 
   content.innerHTML = `
     <div class="supplement-page">
+      <nav aria-label="영양제 하위 메뉴"><button class="btn-secondary" id="supplementStockTab">영양제 재고</button> <button class="btn-secondary" id="supplementRequestsTab">영양제 신청</button></nav>
+      <div id="supplementRequestsHost" hidden></div>
+      <div id="supplementStockHost">
       <div class="supplement-toolbar">
         <div class="supplement-toolbar-actions">
           <span class="supplement-toolbar-title">영양제 재고</span>
@@ -114,10 +140,17 @@ function renderSupplementLayout() {
       <div class="supplement-table-wrap" id="supplementTableWrap">
         ${renderSupplementTable()}
       </div>
+      </div>
     </div>
   `;
 
   bindSupplementEvents();
+  document.getElementById('supplementRequestsTab')?.addEventListener('click',()=>openRequestsTab().catch(error=>alert(error.message)));
+  document.getElementById('supplementStockTab')?.addEventListener('click',async()=>{
+    disposeRequests?.();disposeRequests=null;supplementSubTab='stock';
+    await renderSupplement({force:true});
+  });
+  if(supplementSubTab==='requests')openRequestsTab().catch(error=>alert(error.message));
 }
 
 function getStockQty(typeId) {
@@ -715,14 +748,14 @@ async function handleIncomingCellBlur(input) {
 }
 
 // 입고 저장 — 기존 saveSupplementIncoming 트랜잭션 로직 재사용.
-async function saveIncomingCell(supplementTypeId,date,qty,staffName,selection) {
-  return withReadCommand(supplementResource,command=>saveIncomingCellWithCommand(supplementTypeId,date,qty,staffName,command,selection),{roles:['admin','office','production']});
+async function saveIncomingCell(supplementTypeId,date,qty,staffName,selection,extraWrites) {
+  return withReadCommand(supplementResource,command=>saveIncomingCellWithCommand(supplementTypeId,date,qty,staffName,command,selection,extraWrites),{roles:['admin','office','production']});
 }
-async function saveIncomingCellWithCommand(supplementTypeId,date,qty,staffName,command,selection) {
+async function saveIncomingCellWithCommand(supplementTypeId,date,qty,staffName,command,selection,extraWrites) {
   if(!selection)throw Error('처리 구분을 선택해주세요.');
   const review=selection.kind==='test'?{approved:true}:await checkQuantityBeforeSave({itemId:'supplementLogs:'+supplementTypeId,date,qty,unit:'봉',stage:'영양제'},()=>!getPageContext()||getPageContext().isCurrent());
   if(!review.approved)throw Error('입고 저장을 취소했습니다.');
-  return saveManualMovement({db,command,name:'supplementLogs',stockId:supplementTypeId,selection,uid:currentUser?.uid||null,
+  return saveManualMovement({db,command,extraWrites,name:'supplementLogs',stockId:supplementTypeId,selection,uid:currentUser?.uid||null,
     supplementName:supplementTypes.find(t=>t.id===supplementTypeId)?.name,
     stockData:{id:supplementTypeId,supplementTypeId,currentQty:0},log:{type:'in',date,qty,supplementTypeId,staffName,...(review.review?{statsQuantityReview:review.review}:{})}});
 }

@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "test:supplement-requests": "node --experimental-vm-modules --test --experimental-test-isolation=none tests/supplementRequests.test.mjs tests/supplementRequestsR1R4.test.mjs tests/supplementRequests.emulator.test.mjs",
     "test:performance": "node --experimental-vm-modules --test tests/performance.test.mjs",
     "test:security-output": "node --experimental-vm-modules --test tests/xssOutput.test.mjs tests/settingsBagXss.test.mjs tests/meatXss.test.mjs tests/eggXss.test.mjs tests/frozenProductXss.test.mjs tests/frozenPanXss.test.mjs tests/panSummaryKeys.test.mjs tests/closingSnapshot.test.mjs",
     "test:stats": "node --experimental-vm-modules --test --test-isolation=none tests/statsCorrections.test.mjs tests/statsLogic.test.mjs tests/statsPage.test.mjs tests/statsReadpath.test.mjs",

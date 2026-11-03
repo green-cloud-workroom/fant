@@ -35,7 +35,7 @@ export async function listCancellationSources(db,name,filter) {
   return rows.filter(r=>cancellableMovement(r)&&!cancelled.has(r.id)).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||a.id.localeCompare(b.id));
 }
 
-export async function saveManualMovement({db,command,name,stockId,log,selection,stockData=null,expectedBefore,uid=null,scheduleChange=null,activity=null,supplementName=null}) {
+export async function saveManualMovement({db,command,name,stockId,log,selection,stockData=null,expectedBefore,uid=null,scheduleChange=null,activity=null,supplementName=null,extraWrites=null}) {
   const spec=specs[name],kind=selection?.kind;
   if (!spec||!MOVEMENT_LABELS[kind]||!selection?.operationId||!log.date||!Number.isFinite(movementAmount(log))||movementAmount(log)===0
     ||!(log.staff||log.staffName))throw Error('처리 구분·수량·날짜·담당자를 확인해주세요.');
@@ -98,6 +98,7 @@ export async function saveManualMovement({db,command,name,stockId,log,selection,
     assertCurrent();
     const [existing,stock,closing,source,schedule,quantityCorrection,correctionSnaps,proof,sourceProof]=await Promise.all([tx.get(logRef),tx.get(stockRef),tx.get(doc(db,'closings',log.date)),sourceRef?tx.get(sourceRef):null,scheduleRef?tx.get(scheduleRef):null,
       kind==='cancel'&&name==='meatLogs'?tx.get(doc(db,'meatLogs','incomingQuantity_v1_'+selection.cancelOf)):null,Promise.all(correctionRefs.map(r=>tx.get(r))),proofRef?tx.get(proofRef):null,sourceProofRef?tx.get(sourceProofRef):null]);
+    if(extraWrites && existing.exists())throw Error('입고 기록 ID가 이미 존재합니다. 신청 입고 상태를 확인해주세요.');
     if(existing.exists()){
       const result=validateReplay(existing,proof);
       if(name==='supplementLogs'){replayResult=result;throw verifiedReplay;}
@@ -150,6 +151,8 @@ export async function saveManualMovement({db,command,name,stockId,log,selection,
     }
     if(name==='meatLogs'&&kind==='test'&&!stock.exists())value.meatStockId=null;
     assertCurrent();
+    // Invoke before the first write so the callback can read its request guard.
+    if(extraWrites){await extraWrites(tx);assertCurrent();}
     if(kind!=='test'||name==='supplementLogs'){
       const patch={[spec.field]:after,updatedAt:serverTimestamp(),...(spec.field==='remaining'?{closed:after<=0}:{})};
       if(name==='supplementLogs')patch.lastMovementId=logRef.id;
@@ -179,7 +182,7 @@ export async function saveManualMovement({db,command,name,stockId,log,selection,
     // A competing immutable create can be denied before the SDK retries the
     // callback. Reconcile only an exact, trusted saved request using server
     // reads; never resend a write or turn an unreadable/mismatched result green.
-    if(name==='supplementLogs'&&permissionDenied(error)){
+    if(!extraWrites&&name==='supplementLogs'&&permissionDenied(error)){
       try {
         const [existing,proof]=await Promise.all([getDocFromServer(logRef),getDocFromServer(proofRef)]);
         const result=validateReplay(existing,proof);
