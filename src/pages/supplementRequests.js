@@ -2,11 +2,11 @@ import {markFieldsSaved,hasDirtyFields,canLeavePage} from '../utils/formDraft.js
 import {registerModalDismiss} from '../utils/modalManager.js';
 import {currentUserRole} from '../app.js';
 import {saveRequest,watchRequests,requestActor,stockInRequest,watchRequestEvents} from '../services/supplementRequests.js';
-import {requestStatuses,stockOperationId,canReopenRequest} from '../services/supplementRequestLogic.js';
+import {requestStatuses,requestDisplayStatus,stockOperationId,canReopenRequest} from '../services/supplementRequestLogic.js';
 import {getTodayKST} from '../utils/date.js';
 import {getPageContext,registerPageCleanup} from '../utils/pageLifecycle.js';
 
-const actionLabels={create:'신청 생성',editItems:'품목 수정',editNote:'메모 수정',changeRequest:'변경 요청',start:'준비 시작',adjustQty:'수량 조정',complete:'준비 완료',cancel:'취소',reopen:'다시 신청',stockIn:'입고'};
+const actionLabels={create:'신청 생성',editItems:'품목 수정',editNote:'메모 수정',changeRequest:'변경 요청',start:'준비 시작',adjustQty:'수량 조정',complete:'입고 요청',cancel:'취소',reopen:'다시 신청',stockIn:'입고'};
 export const matchesRequestSearch=(name,unit,query)=>query.trim().toLocaleLowerCase().split(/\s+/).every(word=>`${name} ${unit}`.toLocaleLowerCase().includes(word));
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export function mountSupplementRequests(host,{types,staffOptions,incoming,onStockChanged}) {
@@ -117,7 +117,7 @@ export function mountSupplementRequests(host,{types,staffOptions,incoming,onStoc
     const target=host.querySelector('[data-request-list]');
     const open=new Set([...target.querySelectorAll('details[open]')].map(el=>el.dataset.id));
     visibleRows=rows;
-    target.innerHTML=rows.filter(r=>filter==='all'||r.status===filter).map(r=>`<details class="supplement-request-row" data-id="${esc(r.id)}"><summary><span class="supplement-request-badge" data-state="${esc(r.status)}">${esc(requestStatuses[r.status]||r.status)}</span><span class="supplement-request-summary">${esc(r.requestedBy?.name)} · ${esc(r.requestedAt?.toDate?.().toLocaleString('ko-KR')||'저장 중')} · ${r.items.length}품목 · ${esc(r.items[0]?.recipeName)} ${esc(r.items[0]?.unit)}${r.items.length>1?` 외 ${r.items.length-1}품목`:''}</span><span class="supplement-request-actions">${writer&&r.status==='requested'?'<button class="btn-secondary" data-action="edit">수정</button><button class="btn-secondary" data-action="cancel">취소</button>':writer&&r.status==='done'?`<button class="btn-primary" data-action="stockIn" ${r.stockInCompletedAt?'disabled':''}>${r.stockInCompletedAt?'입고 완료':'전체 입고'}</button>`:'<span>상세</span>'}</span></summary><div class="supplement-request-detail"><p role="status" data-row-status>${esc(rowMessages.get(r.id)||'')}</p>
+    target.innerHTML=rows.filter(r=>filter==='all'||r.status===filter).map(r=>`<details class="supplement-request-row" data-id="${esc(r.id)}"><summary><span class="supplement-request-badge" data-state="${esc(r.status)}">${esc(requestDisplayStatus(r))}</span><span class="supplement-request-summary">${esc(r.requestedBy?.name)} · ${esc(r.requestedAt?.toDate?.().toLocaleString('ko-KR')||'저장 중')} · ${r.items.length}품목 · ${esc(r.items[0]?.recipeName)} ${esc(r.items[0]?.unit)}${r.items.length>1?` 외 ${r.items.length-1}품목`:''}</span><span class="supplement-request-actions">${writer&&r.status==='requested'?'<button class="btn-secondary" data-action="edit">수정</button><button class="btn-secondary" data-action="cancel">취소</button>':writer&&r.status==='done'?`<button class="btn-primary" data-action="stockIn" ${r.stockInCompletedAt?'disabled':''}>${r.stockInCompletedAt?'입고 완료':requestDisplayStatus(r)==='일부 입고'?'남은 품목 입고':'전체 입고'}</button>`:'<span>상세</span>'}</span></summary><div class="supplement-request-detail"><p role="status" data-row-status>${esc(rowMessages.get(r.id)||'')}</p>
       <ul>${r.items.map(i=>`<li>${esc(i.recipeName)} / ${esc(i.unit)}: ${esc(i.qty)}봉 ${r.stockIn?.[i.supplementTypeId]?'(입고됨)':''}</li>`).join('')}</ul>
       ${r.status==='done'&&!canReopenRequest(r)?'<p>입고 기록이 있어 신청 상태로 되돌릴 수 없습니다.</p>':''}
       ${[['메모',r.note],['변경 요청',r.changeRequestNote],['처리자 메모',r.handlerNote]].filter(([,value])=>value).map(([label,value])=>`<p>${label}: ${esc(value)}</p>`).join('')}
