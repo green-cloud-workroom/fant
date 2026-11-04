@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import {parseHTML} from 'linkedom';
 import {resolve} from 'node:path';
 import {pageEnvironment} from './helpers/pageDom.mjs';
-import {assertWriter,assertExpected,assertTransition,createRequest,requestItems,requestPatch,lockAvailable,assertOwnedLock,stockOperationId,stockInRemaining,assertStockInReplay,canReopenRequest} from '../src/services/supplementRequestLogic.js';
+import {assertWriter,assertExpected,assertTransition,createRequest,requestItems,requestPatch,lockAvailable,assertOwnedLock,stockOperationId,stockInRemaining,assertStockInReplay,canReopenRequest,requestDisplayStatus} from '../src/services/supplementRequestLogic.js';
 
 const by={uid:'office',name:'사무',injected:true};
 const item={supplementTypeId:'r_10',recipeId:'r',recipeName:'레시피',unit:10,qty:2,injected:true};
@@ -74,7 +74,7 @@ test('commit-gap recovery requires exact immutable stock proof and receipt paylo
     assert.throws(()=>assertStockInReplay(item,{...log,...patch},proof,operationId));
 });
 
-async function uiFixture(role,{staffOptions='<option value="사무">사무</option>',saveError=null}={}) {
+async function uiFixture(role,{staffOptions='<option value="사무">사무</option>',saveError=null,loadStocks}={}) {
   const {document,window}=parseHTML('<html><body><div id="requests"></div></body></html>');
   Object.defineProperty(window.HTMLSelectElement.prototype,'value',{configurable:true,get(){return [...this.options].find(o=>o.selected)?.value||this.options[0]?.value||'';},set(value){for(const o of this.options)o.removeAttribute('selected');[...this.options].find(o=>o.value===value)?.setAttribute('selected','');}});
   const context=vm.createContext({document,console,Date,Map,Set,Error,Object});let listener,stopped=0,eventStopped=0;const saves=[];const eventListeners=new Map();
@@ -83,14 +83,14 @@ async function uiFixture(role,{staffOptions='<option value="사무">사무</opti
     '../utils/modalManager.js':{registerModalDismiss:()=>()=>{}},
     '../app.js':{currentUserRole:role},
     '../services/supplementRequests.js':{saveRequest:async(...args)=>{saves.push(args);if(saveError)throw saveError;},watchRequestEvents:(id,next)=>{eventListeners.set(id,next);return ()=>eventStopped++;},watchRequests:next=>{listener=next;return ()=>stopped++;},requestActor:name=>({uid:'office',name}),stockInRequest:async()=>{}},
-    '../services/supplementRequestLogic.js':{requestStatuses:{requested:'신청',preparing:'준비중',done:'완료',cancelled:'취소'},stockOperationId,canReopenRequest},
+    '../services/supplementRequestLogic.js':{requestStatuses:{requested:'신청',preparing:'준비중',done:'완료',cancelled:'취소'},stockOperationId,canReopenRequest,requestDisplayStatus},
     '../utils/date.js':{getTodayKST:()=> '2026-11-03'},
     '../utils/pageLifecycle.js':{getPageContext:()=>null,registerPageCleanup:()=>()=>{}},
   };
   const module=new vm.SourceTextModule(readFileSync('src/pages/supplementRequests.js','utf8'),{context});
   await module.link(async name=>{if(name==='../utils/formDraft.js'){const draft=new vm.SourceTextModule(readFileSync('src/utils/formDraft.js','utf8'),{context});await draft.link(()=>new vm.SyntheticModule(['registerModalDismiss'],function(){this.setExport('registerModalDismiss',()=>()=>{});},{context}));return draft;}const exports=deps[name];assert.ok(exports,name);return new vm.SyntheticModule(Object.keys(exports),function(){for(const [k,v]of Object.entries(exports))this.setExport(k,v);},{context});});
   await module.evaluate();const host=document.getElementById('requests');
-  const dispose=module.namespace.mountSupplementRequests(host,{types:[{id:'later',recipeId:'r2',recipeName:'나중',unit:2,sortOrder:100,active:true},{id:'inactive',recipeId:'r',recipeName:'비활성',unit:3,sortOrder:-1,active:false},{id:'first',recipeId:'r',recipeName:'먼저',unit:1,sortOrder:0,active:true}],staffOptions,incoming:async()=>{},onStockChanged:()=>{}});
+  const dispose=module.namespace.mountSupplementRequests(host,{types:[{id:'later',recipeId:'r2',recipeName:'나중',unit:2,sortOrder:100,active:true},{id:'inactive',recipeId:'r',recipeName:'비활성',unit:3,sortOrder:-1,active:false},{id:'first',recipeId:'r',recipeName:'먼저',unit:1,sortOrder:0,active:true}],staffOptions,loadStocks,getStockQty:id=>id==='first'?17:0,incoming:async()=>{},onStockChanged:()=>{}});
   return {host,document,window,dispose,saves,matches:module.namespace.matchesRequestSearch,emit:rows=>listener(rows),emitEvents:(id,events)=>eventListeners.get(id)(events),stopped:()=>stopped,eventStopped:()=>eventStopped};
 }
 
@@ -134,6 +134,7 @@ test('request incoming adapter refreshes each stock baseline and passes atomic c
     const incoming=i=>options.incoming(i,{date:'2026-09-14',staffName:'fixture',selection:{kind:'receipt',reason:'',operationId:stockOperationId('req',i.supplementTypeId)},extraWrites:async tx=>tx.set(e.api.doc({},'atomicMarkers',i.supplementTypeId),{ok:true})});
     const saved=await incoming(first);await incoming(second);
     assert.deepEqual(e.state.rows.supplementStock.map(r=>r.currentQty),[22,23]);
+    assert.deepEqual(Array.from(await options.loadStocks(),r=>r.currentQty),[22,23]);
     const count=e.state.commits.length;
     await assert.rejects(incoming(first),/이미 존재/);
     assert.equal(e.state.commits.length,count);
@@ -185,33 +186,57 @@ test('status filter keeps modal draft and resumes normally after closing it',asy
  assert.equal(filter.value,'done');assert.equal(f.host.querySelector('details'),null);f.dispose();
 });
 
-test('search uses all whitespace-separated terms and restores collapsed state without losing saved quantities',async()=>{
+test('product switching, search and live updates preserve all quantities and submit hidden selections',async()=>{
  const f=await uiFixture('office');
  assert.equal(f.matches('고양이 치킨',60,' 치킨  60 '),true);
  assert.equal(f.matches('고양이 치킨',60,'치킨 100'),false);
  f.host.querySelector('[data-new]').click();const form=f.document.querySelector('form');
- const groups=[...form.querySelectorAll('[data-group]')];assert.equal(groups[0].querySelector('table').hidden,false);assert.equal(groups[1].querySelector('table').hidden,true);
- input(f,form.querySelector('[data-type="first"]'),'3');input(f,form.querySelector('[data-type="later"]'),'2');
- groups[0].querySelector('[data-toggle]').click();assert.equal(groups[0].querySelector('table').hidden,true);
- assert.equal(groups[0].querySelector('[data-count]').textContent,'1품목 입력');
- input(f,form.querySelector('[data-search]'),'나중 2');assert.equal(groups[0].hidden,true);assert.equal(groups[1].querySelector('table').hidden,false);
- input(f,form.querySelector('[data-search]'),'');assert.equal(groups[0].querySelector('table').hidden,true);assert.equal(groups[1].querySelector('table').hidden,true);
+ const groups=[...form.querySelectorAll('[data-group]')],first=form.querySelector('[data-type="first"]');
+ assert.equal(groups[0].hidden,false);assert.equal(groups[1].hidden,true);
+ assert.match(groups[0].textContent,/17봉/);
+ input(f,first,'3');form.querySelector('[data-pick-group="1"]').click();
+ assert.equal(groups[0].hidden,true);assert.equal(groups[1].hidden,false);
+ input(f,form.querySelector('[data-type="later"]'),'2');
+ assert.equal(form.querySelector('[data-pick-group="0"] [data-count]').textContent,'1 입력');
+ form.querySelector('[data-pick-group="0"]').click();assert.equal(first.value,'3');
+ input(f,form.querySelector('[data-search]'),'나중 2');assert.equal(groups[0].hidden,true);assert.equal(groups[1].hidden,false);
+ input(f,form.querySelector('[data-search]'),'');
  assert.equal(form.querySelector('[data-total]').textContent,'선택 2품목 · 합계 5봉');
+ assert.match(form.querySelector('[data-selected-review]').textContent,/먼저.*3봉.*나중.*2봉/);
+ const select=form.querySelector('[data-group-select]');select.value='0';select.dispatchEvent(new f.window.Event('change'));
+ assert.equal(groups[0].hidden,false);assert.equal(form.querySelector('[data-type="first"]'),first);
  input(f,form.querySelector('[data-search]'),'없음');
  form.querySelector('[name="staff"]').value='사무';
  f.emit([{...fresh(),id:'external'}]);assert.equal(f.document.querySelector('form'),form);
  form.dispatchEvent(new f.window.Event('submit',{bubbles:true,cancelable:true}));
- assert.ok([...form.querySelectorAll('input,button,textarea,select')].every(el=>el.disabled));await tick();
+ assert.ok([...form.querySelectorAll('input,button,textarea,select')].every(el=>el.disabled));
+ form.querySelector('[data-pick-group="0"]').click();assert.equal(groups[0].hidden,true);await tick();
  assert.equal(f.saves.length,1);assert.deepEqual(Array.from(f.saves[0][2].items,i=>[i.supplementTypeId,i.qty]),[['first',3],['later',2]]);
  assert.equal(f.document.querySelector('form'),null);f.dispose();
 });
-test('editing retains inactive and snapshot-only items and opens their groups',async()=>{
+
+test('editing preserves inactive and snapshot-only items while switching product panels',async()=>{
  const f=await uiFixture('office');const items=[{...item,supplementTypeId:'inactive',recipeId:'old',recipeName:'비활성',qty:4},{...item,supplementTypeId:'gone',recipeId:'gone',recipeName:'삭제된 스냅샷',qty:5}];
  f.emit([{...fresh(),id:'old-request',items}]);f.host.querySelector('[data-action="edit"]').click();
- const form=f.document.querySelector('form');for(const id of ['inactive','gone']){const el=form.querySelector(`[data-type="${id}"]`);assert.equal(el.closest('table').hidden,false);}
+ const form=f.document.querySelector('form');
+ for(const id of ['inactive','gone']){const el=form.querySelector(`[data-type="${id}"]`),index=el.closest('[data-group]').dataset.group;form.querySelector(`[data-pick-group="${index}"]`).click();assert.equal(el.closest('[data-group]').hidden,false);}
  form.querySelector('[name="staff"]').value='사무';form.dispatchEvent(new f.window.Event('submit',{cancelable:true}));await tick();
  assert.deepEqual(JSON.parse(JSON.stringify(f.saves[0][2].items)),items);f.dispose();
 });
+
+test('detail pagination leaves inline drafts and request snapshot untouched; history starts collapsed',async()=>{
+ const f=await uiFixture('office'),items=Array.from({length:23},(_,n)=>({...item,supplementTypeId:'sku'+n,unit:n+1}));
+ f.emit([{...fresh(),id:'long',status:'preparing',items}]);
+ const detail=f.host.querySelector('.supplement-request-row'),draft=detail.querySelector('[data-change]');
+ input(f,draft,'수량 확인 중');assert.equal(detail.querySelector('.supplement-request-history').hasAttribute('open'),false);
+ assert.equal([...detail.querySelectorAll('[data-detail-item]')].filter(el=>!el.hidden).length,10);
+ detail.querySelector('[data-item-page="2"]').click();
+ assert.equal([...detail.querySelectorAll('[data-detail-item]')].filter(el=>!el.hidden).length,3);
+ assert.equal(detail.querySelector('[data-change]'),draft);assert.equal(draft.value,'수량 확인 중');
+ f.emit([{...fresh(),id:'long',version:2,status:'done',items}]);
+ assert.equal(detail.querySelector('[data-change]'),draft);assert.equal(f.saves.length,0);f.dispose();
+});
+
 test('missing actor is visible at the list action and event codes are Korean',async()=>{
  const f=await uiFixture('office');f.emit([{...fresh(),id:'req',note:''}]);f.emitEvents('req',[{action:'create',by}]);
  assert.match(f.host.querySelector('ol').textContent,/신청 생성/);assert.doesNotMatch(f.host.textContent,/메모:/);
@@ -239,4 +264,37 @@ test('conflict resubscribes without replacing modal quantities and unlocks contr
 test('office empty guidance appears in list and modal; stock-in gets the same office options',async()=>{
  const f=await uiFixture('office',{staffOptions:''});assert.match(f.host.textContent,/등록된 사무 직원이 없습니다/);f.host.querySelector('[data-new]').click();assert.match(f.document.querySelector('form').textContent,/등록된 사무 직원이 없습니다/);f.dispose();
  const g=await uiFixture('office');g.emit([{...fresh(),id:'done',status:'done'}]);assert.deepEqual([...g.host.querySelector('[data-staff]').options].map(o=>o.value),['','사무']);g.dispose();
+});
+
+test('mobile product navigation without business edits closes without a discard prompt',async()=>{
+ const f=await uiFixture('office');f.host.querySelector('[data-new]').click();
+ const form=f.document.querySelector('form'),picker=form.querySelector('[data-group-select]');
+ picker.value='1';picker.dispatchEvent(new f.window.Event('change'));form.querySelector('[data-close]').click();await tick();
+ assert.equal(f.document.querySelector('#navigationConfirm'),null);assert.equal(form.isConnected,false);f.dispose();
+});
+test('request detail clamps its page after an external edit reduces the item count',async()=>{
+ const f=await uiFixture('office'),items=Array.from({length:23},(_,n)=>({...item,supplementTypeId:'s'+n}));
+ f.emit([{...fresh(),id:'req',items}]);f.host.querySelector('[data-item-page="2"]').click();
+ f.emit([{...fresh(),id:'req',version:2,items:items.slice(0,1)}]);
+ assert.equal(f.host.querySelectorAll('[data-detail-item]').length,1);
+ assert.equal(f.host.querySelector('[data-detail-item]').hidden,false);f.dispose();
+});
+
+test('fresh request stock display preserves in-flight input and distinguishes a missing stock document',async()=>{
+ let resolveStocks;const pending=new Promise(resolve=>resolveStocks=resolve);
+ const f=await uiFixture('office',{loadStocks:()=>pending});f.host.querySelector('[data-new]').click();
+ const form=f.document.querySelector('form'),qty=form.querySelector('[data-type="first"]');input(f,qty,'8');
+ assert.equal(form.querySelector('[data-stock-type="first"]').textContent,'조회 중');
+ resolveStocks([{id:'first',currentQty:25}]);await tick();
+ assert.equal(form.querySelector('[data-stock-type="first"]').textContent,'25봉');
+ assert.equal(form.querySelector('[data-stock-type="later"]').textContent,'재고 정보 없음');
+ assert.equal(form.querySelector('[data-type="first"]'),qty);assert.equal(qty.value,'8');assert.equal(f.saves.length,0);f.dispose();
+});
+test('late stock display response never overwrites a newer request form',async()=>{
+ let resolveStocks,calls=0;const pending=new Promise(resolve=>resolveStocks=resolve);
+ const f=await uiFixture('office',{loadStocks:()=>++calls===1?pending:Promise.resolve([{id:'first',currentQty:40}])});
+ f.host.querySelector('[data-new]').click();await tick();
+ f.document.querySelector('[data-close]').click();await tick();f.host.querySelector('[data-new]').click();await tick();
+ const form=f.document.querySelector('form');resolveStocks([{id:'first',currentQty:1}]);await tick();
+ assert.equal(form.querySelector('[data-stock-type="first"]').textContent,'40봉');f.dispose();
 });

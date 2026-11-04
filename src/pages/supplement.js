@@ -34,7 +34,12 @@ async function openRequestsTab() {
   disposeRequests?.();
   document.getElementById('supplementStockHost').hidden=true;
   host.hidden=false;supplementSubTab='requests';
-  disposeRequests=mountSupplementRequests(host,{types:supplementTypes,staffOptions:getSupplementStaffMembers(['office']).map(member=>`<option value="${escapeHtml(member.name)}">${escapeHtml(member.name)}</option>`).join(''),
+  updateSupplementTabs();
+  disposeRequests=mountSupplementRequests(host,{types:supplementTypes,loadStocks:async()=>{
+    const model=await supplementResource.load(loadSupplementModel,{force:true});
+    if(!model)throw Error('재고 조회가 변경되었습니다. 신청 창을 다시 열어주세요.');
+    return model.stocks;
+  },staffOptions:getSupplementStaffMembers(['office']).map(member=>`<option value="${escapeHtml(member.name)}">${escapeHtml(member.name)}</option>`).join(''),
     incoming:async(item,{date,staffName,selection,extraWrites})=>{
       // Each previous incoming changes the stock/log baseline. Reload it without
       // replacing the request form, then use the unchanged incoming command.
@@ -56,6 +61,8 @@ let supplementTypes = [];
 let supplementStocks = [];
 let supplementLogs = [];
 let supplementFilter = 'all';
+let supplementSearch = '';
+let selectedSupplementRecipe = '';
 let supplementStaffCache = {};
 let supplementMenuStaffGroups = null;
 
@@ -112,6 +119,11 @@ function getSupplementDateColumns() {
   return cols;
 }
 
+function updateSupplementTabs() {
+  document.getElementById('supplementStockTab')?.setAttribute('aria-pressed',String(supplementSubTab==='stock'));
+  document.getElementById('supplementRequestsTab')?.setAttribute('aria-pressed',String(supplementSubTab==='requests'));
+}
+
 function renderSupplementLayout() {
   const content = document.getElementById('mainContent');
   disposeRequests?.();disposeRequests=null;
@@ -123,7 +135,7 @@ function renderSupplementLayout() {
       <div id="supplementStockHost">
       <div class="supplement-toolbar">
         <div class="supplement-toolbar-actions">
-          <span class="supplement-toolbar-title">영양제 재고</span>
+          <label class="supplement-search-label">품목 검색 <input id="supplementSearch" type="search" value="${escapeHtml(supplementSearch)}" placeholder="제품명 또는 단위" /></label>
         </div>
         <div class="supplement-toolbar-actions">
           <select id="supplementFilter" class="supplement-filter-select" aria-label="영양제 재고 필터">
@@ -144,6 +156,7 @@ function renderSupplementLayout() {
     </div>
   `;
 
+  updateSupplementTabs();
   bindSupplementEvents();
   document.getElementById('supplementRequestsTab')?.addEventListener('click',()=>openRequestsTab().catch(error=>alert(error.message)));
   document.getElementById('supplementStockTab')?.addEventListener('click',async()=>{
@@ -310,51 +323,16 @@ function renderSupplementTypeRow(type) {
   return `
     <tr class="${inactive ? 'supplement-row--inactive' : ''}">
       <td class="supplement-td-name">
-        ${escapeHtml(type.name || type.id)}
+        <span title="${escapeHtml(type.name || type.id)}">${escapeHtml(type.unit ?? type.name ?? type.id)}</span>
         ${inactive ? '<span class="tag tag-inactive">비활성</span>' : ''}
       </td>
       <td class="supplement-td-qty ${qtyClass} ${qty === 0 ? 'supplement-qty--empty' : ''}">${qty}봉</td>
       <td class="supplement-td-status">${renderStockStatus(qty, inactive)}</td>
-      <td class="supplement-td-recent">${renderRecentChange(type.id)}</td>
       <td class="supplement-td-actions">
         ${!inactive && isStaffRole() ? `<button class="btn-secondary supplement-action-in" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">입고</button>` : ''}
         ${!inactive && isWriterRole() ? `<button class="btn-secondary supplement-action-adjust" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">수동조정</button>` : ''}
       </td>
     </tr>
-  `;
-}
-
-function renderSupplementGroup(group) {
-  const summary = getSupplementGroupSummary(group.types);
-  const hasAlert = summary.danger > 0 || summary.warning > 0;
-  const openAttr = supplementFilter === 'all' ? '' : ' open';
-
-  return `
-    <details class="supplement-recipe-group"${openAttr} data-recipe-id="${escapeHtml(group.recipeId)}">
-      <summary class="supplement-recipe-header ${hasAlert ? 'supplement-recipe-header--has-alert' : ''}">
-        <span class="recipe-name">${escapeHtml(group.recipeName)}</span>
-        <span class="preset-count">${group.types.length} 프리셋</span>
-        <span class="total-stock">합계 ${summary.totalStock}봉</span>
-        ${summary.danger > 0 ? `<span class="alert-summary egg-status egg-status--low">⚠ 부족 ${summary.danger}</span>` : ''}
-        ${summary.warning > 0 ? `<span class="alert-summary egg-status egg-status--warning">주의 ${summary.warning}</span>` : ''}
-      </summary>
-      <div class="supplement-list">
-        <table class="supplement-table">
-          <thead>
-            <tr>
-              <th class="supplement-th-name">영양제 SKU</th>
-              <th class="supplement-th-qty">현재 재고</th>
-              <th class="supplement-th-status">상태</th>
-              <th class="supplement-th-recent">최근 변동</th>
-              <th class="supplement-th-actions">작업</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${group.types.map(type => renderSupplementTypeRow(type)).join('')}
-          </tbody>
-        </table>
-      </div>
-    </details>
   `;
 }
 
@@ -421,19 +399,30 @@ function renderSupplementFlatTable() {
 
 // 한 SKU × 한 날짜의 3개 셀 (입고/수동조정/자동차감).
 function renderSupplementTable() {
-  const filtered = getFilteredSupplementTypes();
-  if (supplementTypes.length === 0) {
-    return '<div class="list-empty">등록된 영양제가 없습니다. 레시피 관리에서 생산단위 프리셋을 설정해주세요.</div>';
-  }
-  if (filtered.length === 0) {
-    return '<div class="list-empty">필터 조건에 맞는 영양제가 없습니다</div>';
-  }
-
-  return `
-    <div class="supplement-recipe-groups">
-      ${buildSupplementRecipeGroups(filtered).map(group => renderSupplementGroup(group)).join('')}
-    </div>
-  `;
+  const words=supplementSearch.trim().toLocaleLowerCase().split(/\s+/);
+  const filtered=getFilteredSupplementTypes().filter(type=>words.every(word=>`${type.recipeName||''} ${type.name||''} ${type.unit??''}`.toLocaleLowerCase().includes(word)));
+  if(!supplementTypes.length)return '<div class="list-empty">등록된 영양제가 없습니다. 레시피 관리에서 생산단위 프리셋을 설정해주세요.</div>';
+  if(!filtered.length)return '<div class="list-empty">검색·필터 조건에 맞는 영양제가 없습니다.</div>';
+  const groups=buildSupplementRecipeGroups(filtered);
+  const selected=groups.find(group=>group.recipeId===selectedSupplementRecipe)||groups[0];
+  selectedSupplementRecipe=selected.recipeId;
+  const summary=getSupplementGroupSummary(selected.types);
+  return `<div class="supplement-workspace">
+    <aside class="supplement-picker" aria-label="영양제 제품 선택">
+      <div class="supplement-panel-heading"><strong>제품</strong><span>${groups.length}개 · ${filtered.length}품목</span></div>
+      <select class="supplement-mobile-picker" data-recipe-select aria-label="작업할 제품">${groups.map(group=>`<option value="${escapeHtml(group.recipeId)}" ${group===selected?'selected':''}>${escapeHtml(group.recipeName)}</option>`).join('')}</select>
+      <div class="supplement-picker-grid">${groups.map(group=>{
+        const state=getSupplementGroupSummary(group.types),shortage=state.danger+state.warning;
+        return `<button type="button" class="supplement-pick" data-recipe="${escapeHtml(group.recipeId)}" aria-pressed="${group===selected}" title="${escapeHtml(group.recipeName)} · ${group.types.length}품목${shortage?` · 부족·주의 ${shortage}품목`:''}"><span>${escapeHtml(group.recipeName)}</span><small class="${shortage?'supplement-pick-alert':''}">${shortage?`! ${shortage}`:group.types.length}</small></button>`;
+      }).join('')}</div>
+      <p class="supplement-picker-note">숫자: 단위 수 · !: 부족·주의 단위 수</p>
+    </aside>
+    <section class="supplement-work-detail" aria-label="선택 제품 재고">
+      <div class="supplement-panel-heading"><strong>${escapeHtml(selected.recipeName)}</strong><span>${selected.types.length}품목 · 합계 ${summary.totalStock}봉</span></div>
+      <table class="supplement-table supplement-work-table"><thead><tr><th>생산 단위</th><th>현재 재고</th><th>상태</th><th>작업</th></tr></thead><tbody>${selected.types.map(renderSupplementTypeRow).join('')}</tbody></table>
+      <details class="supplement-recent-panel"><summary>최근 변동 · ${SUPPLEMENT_TABLE_DAYS}일</summary><div class="supplement-recent-list">${selected.types.map(type=>`<div><strong>${escapeHtml(type.unit??type.name)}</strong>${renderRecentChange(type.id)}</div>`).join('')}</div></details>
+    </section>
+  </div>`;
 }
 
 function renderDateCells(type, date, inactive) {
@@ -556,6 +545,12 @@ function bindSupplementEvents() {
   document.getElementById('btnSupplementRefresh')?.addEventListener('click', async () => {
     if(await canLeavePage())await renderSupplement({force:true});
   });
+  document.getElementById('supplementSearch')?.addEventListener('input',e=>{
+    supplementSearch=e.target.value;
+    e.target.defaultValue=e.target.value;
+    document.getElementById('supplementTableWrap').innerHTML=renderSupplementTable();
+    bindSupplementCellEvents();
+  });
   document.getElementById('supplementFilter')?.addEventListener('change', (e) => {
     supplementFilter = e.target.value;
     const wrap = document.getElementById('supplementTableWrap');
@@ -579,6 +574,18 @@ function bindSupplementEvents() {
 }
 
 function bindSupplementCellEvents() {
+  const selectRecipe=id=>{
+    selectedSupplementRecipe=id;
+    const wrap=document.getElementById('supplementTableWrap');
+    if(wrap){wrap.innerHTML=renderSupplementTable();bindSupplementCellEvents();}
+  };
+  document.querySelectorAll('[data-recipe]').forEach(button=>button.addEventListener('click',()=>{
+    selectRecipe(button.dataset.recipe);
+    [...document.querySelectorAll('[data-recipe]')].find(el=>el.dataset.recipe===selectedSupplementRecipe)?.focus();
+  }));
+  document.querySelector('[data-recipe-select]')?.addEventListener('change',e=>{
+    selectRecipe(e.target.value);document.querySelector('[data-recipe-select]')?.focus();
+  });
   document.querySelectorAll('.supplement-action-in').forEach(btn => {
     btn.addEventListener('click', () => openIncomingModal(btn.dataset.id, btn.dataset.name));
   });
