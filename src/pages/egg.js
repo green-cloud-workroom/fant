@@ -1,6 +1,6 @@
 import {movementNote} from '../utils/movementNote.js';
 import {showStatus} from '../utils/statusToast.js';
-import {movementLabel} from '../services/manualMovementLogic.js';
+import {movementLabel,movementReason} from '../services/manualMovementLogic.js';
 import {currentUser} from '../app.js';
 import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
 import {saveManualMovement} from '../services/manualMovements.js';
@@ -17,7 +17,8 @@ import { recordActivity } from '../services/activityLogs.js';
 import {pageResource} from '../state/pageResources.js';
 import {withReadCommand} from '../services/readCommand.js';
 import {pageRefresh} from '../utils/pageRefresh.js';
-import {getPageContext} from '../utils/pageLifecycle.js';
+import {getPageContext,registerPageCleanup} from '../utils/pageLifecycle.js';
+import {canLeavePage,markFieldsSaved} from '../utils/formDraft.js';
 const eggResource=pageResource('egg');
 
 async function saveEggChange(previous,patch,log=null,activity=null,date=null,selection=null) {
@@ -43,11 +44,15 @@ async function runEggSave(callback) {
 
 let eggFifoExpanded = false;
 let eggFifoLogs = null;
+let eggEntryType = 'out';
+let eggEntryStaff = '';
+let eggEntryDate = '';
 
 export async function renderEgg({force=false}={}) {
+  registerPageCleanup(()=>{eggEntryDate='';eggEntryStaff='';eggEntryType='out';});
   const content=document.getElementById('mainContent');
   content.innerHTML='<div style="padding:24px;"><p>계란 로딩 중...</p></div>';
-  const data=await eggResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(eggResource,renderEgg)});
+  const data=await eggResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(eggResource,renderEgg,{draftSelector:'.egg-entry-form'})});
   if(!data||!content.isConnected)return;
   eggFifoLogs = null;
   if (eggFifoExpanded) eggFifoLogs = await loadEggLogs({getDocs},null);
@@ -72,51 +77,39 @@ function renderEggLayout(eggStock, logs) {
   const isLow = currentQty < minimumQty;
   const fifo = eggFifoExpanded ? buildEggFifoBreakdown(eggFifoLogs, currentQty) : null;
   const recentLogs = sortEggLogsDesc(logs).slice(0, 50);
+  const todayLogs = recentLogs.filter(log=>log.date===getToday());
 
   content.innerHTML = `
-    <div class="page-wrap egg-page">
+    <div class="page-wrap egg-page egg-workspace-page">
       <div class="page-header">
-        <h2 class="page-title">계란</h2>
-        <div style="display:flex;gap:8px;">
-          <button class="btn-secondary" id="btnSetMinEgg">최소재고 설정</button>
+        <div class="egg-page-heading"><h2 class="page-title">계란</h2><span>오늘 ${escapeHtml(getToday())}</span></div>
+        <div class="egg-page-actions">
           <button class="btn-secondary" id="btnAdjustEgg">수동조정</button>
-          <button class="btn-secondary" id="btnEggOut">계란 출고</button>
-          <button class="btn-primary" id="btnEggIn">+ 계란 입고</button>
+          <details class="egg-other-actions"><summary>기타 입출고</summary><div>
+            <button class="btn-secondary" id="btnEggOut">계란 출고 · 실사·테스트</button>
+            <button class="btn-secondary" id="btnEggIn">계란 입고 · 테스트</button>
+          </div></details>
         </div>
       </div>
-
-      <!-- 요약 -->
-      <div class="form-section" style="background:white;border-radius:8px;padding:20px;margin-bottom:16px;border:1px solid #e8e8e8;">
-        <div class="stat-row">
-          <div class="stat-item">
-            <button class="egg-fifo-toggle" id="btnToggleEggFifo" type="button" aria-expanded="${eggFifoExpanded ? 'true' : 'false'}">
-              <span class="stat-label">현재 재고</span>
-              <span class="stat-value" style="font-size:24px;color:${isLow ? '#e53e3e' : '#1a1a1a'}">${currentQty}개</span>
-              <span class="egg-fifo-caret">${eggFifoExpanded ? '접기 ▲' : '잔량 보기 ▼'}</span>
-            </button>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">최소재고</span>
-            <span class="stat-value">${minimumQty}개</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">상태</span>
-            <span class="stat-value egg-status-line">
-              <span class="egg-status egg-status--${currentQty <= 0 ? 'empty' : isLow ? 'low' : 'normal'}">${currentQty <= 0 || isLow ? '부족' : '정상'}</span>
-              ${minimumQty > 0 ? `<span class="egg-minimum-diff">최소재고 대비 ${currentQty - minimumQty >= 0 ? '+' : ''}${currentQty - minimumQty}개</span>` : ''}
-            </span>
-          </div>
-        </div>
-        ${eggFifoExpanded ? renderEggFifoPanel(fifo, currentQty) : ''}
+      <div class="egg-workspace">
+        <section class="egg-current-card" aria-label="현재 계란 재고">
+          <div class="egg-current-label">현재 재고 <span class="egg-status egg-status--${currentQty <= 0 ? 'empty' : isLow ? 'low' : 'normal'}">${currentQty<=0?'재고 없음':isLow?'최소 미달':'정상'}</span></div>
+          <div class="egg-current-quantity"><strong>${escapeHtml(currentQty.toLocaleString())}</strong><span>개</span></div>
+          <div class="egg-minimum-line">최소재고 <b>${escapeHtml(formatEggQty(minimumQty))}</b><button type="button" class="egg-link" id="btnSetMinEgg">설정</button></div>
+          <p class="egg-threshold-text">${currentQty===minimumQty?'최소재고와 같음':`최소재고보다 ${escapeHtml(formatEggQty(Math.abs(currentQty-minimumQty)))} ${isLow?'부족':'많음'}`}</p>
+          <button class="egg-link egg-lots-button" id="btnToggleEggFifo" type="button" aria-controls="eggFifoHost" aria-expanded="${eggFifoExpanded}">${eggFifoExpanded?'입고별 잔량 접기 ▲':'입고별 잔량 · 참고 ▼'}</button>
+        </section>
+        <section class="egg-entry-card" id="eggEntryHost" aria-label="계란 사용·입고 입력"></section>
       </div>
-
-      <!-- 이력 테이블 -->
-      <div class="form-section" style="background:white;border-radius:8px;padding:20px;border:1px solid #e8e8e8;">
-        <div class="section-header">
-          <span class="section-title">입출고 이력</span>
-        </div>
+      <div id="eggFifoHost" ${eggFifoExpanded?'':'hidden'}>${eggFifoExpanded ? renderEggFifoPanel(fifo, currentQty) : ''}</div>
+      <section class="egg-today-card" aria-label="오늘 계란 기록">
+        <div class="egg-record-heading"><h3>오늘 기록</h3><span>최근 50건 중 오늘 날짜 기록 ${todayLogs.length}건</span><div id="eggTodayPaging"></div></div>
+        <div class="table-wrap"><table class="data-table egg-today-table"><thead><tr><th>구분</th><th>수량(개)</th><th>변경 전 → 후</th><th>담당자</th><th>비고</th></tr></thead><tbody id="eggTodayRows"></tbody></table></div>
+      </section>
+      <details class="egg-history-card">
+        <summary>입출고 이력 <span>최근 ${recentLogs.length}건 · 펼쳐보기</span></summary>
         <div class="table-wrap">
-          <table class="data-table">
+          <table class="data-table egg-history-table">
             <thead>
               <tr>
                 <th>날짜</th>
@@ -150,17 +143,25 @@ function renderEggLayout(eggStock, logs) {
             </tbody>
           </table>
         </div>
-      </div>
+      </details>
     </div>
   `;
 
-  document.getElementById('btnEggIn').addEventListener('click', () => showEggModal('in', eggStock));
-  document.getElementById('btnEggOut').addEventListener('click', () => showEggModal('out', eggStock));
-  document.getElementById('btnAdjustEgg').addEventListener('click', () => showEggAdjustModal(eggStock));
-  document.getElementById('btnSetMinEgg').addEventListener('click', () => showSetMinModal(eggStock));
+  renderEggEntry(eggStock);
+  renderEggTodayRecords(todayLogs,logs);
+  const openDialog=async callback=>{
+    const page=getPageContext();
+    if(!await canLeavePage() || page&&!page.isCurrent())return;
+    renderEggEntry(eggStock);
+    callback();
+  };
+  document.getElementById('btnEggIn').addEventListener('click', () => openDialog(()=>showEggModal('in', eggStock)));
+  document.getElementById('btnEggOut').addEventListener('click', () => openDialog(()=>showEggModal('out', eggStock)));
+  document.getElementById('btnAdjustEgg').addEventListener('click', () => openDialog(()=>showEggAdjustModal(eggStock)));
+  document.getElementById('btnSetMinEgg').addEventListener('click', () => openDialog(()=>showSetMinModal(eggStock)));
   document.getElementById('btnToggleEggFifo').addEventListener('click', async event => {
+    const button=event.currentTarget;
     if (!eggFifoExpanded) {
-      const button=event.currentTarget;
       if (button.disabled) return;
       button.disabled=true;
       const page=getPageContext();
@@ -175,8 +176,84 @@ function renderEggLayout(eggStock, logs) {
         return;
       }
     } else eggFifoExpanded=false;
-    renderEggLayout(eggStock, logs);
+    const host=document.getElementById('eggFifoHost');
+    host.hidden=!eggFifoExpanded;
+    host.innerHTML=eggFifoExpanded?renderEggFifoPanel(buildEggFifoBreakdown(eggFifoLogs,currentQty),currentQty):'';
+    button.disabled=false;
+    button.setAttribute('aria-expanded',String(eggFifoExpanded));
+    button.textContent=eggFifoExpanded?'입고별 잔량 접기 ▲':'입고별 잔량 · 참고 ▼';
   });
+}
+
+function renderEggTodayRecords(todayLogs,logs) {
+  let page=0;
+  const draw=()=>{
+    document.getElementById('eggTodayRows').innerHTML=todayLogs.length?todayLogs.slice(page*5,page*5+5).map(log=>`<tr>
+      <td><span class="tag stock-movement-badge" data-movement-label="${escapeHtml(movementLabel(log,log.type==='in'?'입고':log.type==='out'?'출고':'수동조정'))}">${escapeHtml(movementLabel(log,log.type==='in'?'입고':log.type==='out'?'출고':'수동조정'))}</span></td>
+      <td class="stock-quantity--${log.qty>0?'increase':log.qty<0?'decrease':'zero'}">${log.qty>0?'+':''}${escapeHtml(log.qty)}</td>
+      <td>${escapeHtml(log.before??'-')} → <b>${escapeHtml(log.after??'-')}</b></td>
+      <td>${escapeHtml(log.staffName||'-')}</td><td>${escapeHtml(movementNote(log.note||log.reason||'-','eggLogs',logs,row=>row.type==='in'?'입고':row.type==='out'?'출고':'수동조정'))}</td>
+    </tr>`).join(''):'<tr><td colspan="5" class="egg-empty-records">최근 조회한 이력에 오늘 기록이 없습니다.</td></tr>';
+    const pager=document.getElementById('eggTodayPaging');
+    pager.innerHTML=todayLogs.length>5?`<button type="button" class="btn-secondary" data-egg-prev ${page===0?'disabled':''}>이전</button><span>${page+1} / ${Math.ceil(todayLogs.length/5)}</span><button type="button" class="btn-secondary" data-egg-next ${(page+1)*5>=todayLogs.length?'disabled':''}>다음</button>`:'';
+    pager.querySelector('[data-egg-prev]')?.addEventListener('click',()=>{page--;draw();});
+    pager.querySelector('[data-egg-next]')?.addEventListener('click',()=>{page++;draw();});
+  };
+  draw();
+}
+
+function renderEggEntry(eggStock) {
+  const host=document.getElementById('eggEntryHost');
+  const isIn=eggEntryType==='in',currentQty=Number(eggStock.currentQty||0);
+  host.innerHTML=`<div class="egg-entry-heading"><h3 id="eggEntryTitle">오늘 입력</h3><div class="egg-entry-tabs" role="group" aria-label="입력 종류">
+    <button type="button" data-egg-mode="out" aria-pressed="${!isIn}">사용 기록</button><button type="button" data-egg-mode="in" aria-pressed="${isIn}">입고 기록</button>
+  </div></div>
+  <form class="egg-entry-form">
+    <div class="egg-entry-fields">
+      <div class="form-group"><label for="eggEntryQty">이번 ${isIn?'입고량':'사용량'} (개) *</label><input id="eggEntryQty" type="number" min="1" step="1" inputmode="numeric" placeholder="개수 입력" autocomplete="off" required></div>
+      <div class="form-group"><label for="eggEntryDate">기록 날짜 *</label><input id="eggEntryDate" type="date" value="${escapeHtml(eggEntryDate||getToday())}" required></div>
+      <div class="form-group"><label for="eggEntryStaff">담당자 *</label><select id="eggEntryStaff" required><option value="">담당자 선택</option>${getStaffOptions(['senior','office'])}</select></div>
+    </div>
+    <p class="egg-entry-help">${isIn?'실제로 들어온 개수만 입력':'이미 기록한 수량을 제외하고, 추가로 사용한 개수만 입력'}</p>
+    <div class="egg-entry-savebar"><div id="eggEntryPreview" aria-live="polite"></div><button type="submit" class="btn-primary" id="btnSaveEggEntry">${isIn?'입고':'사용'} 기록 저장</button></div>
+    <details class="egg-entry-note"><summary>비고 추가 (선택)</summary><div class="form-group"><label for="eggEntryNote">비고</label><input id="eggEntryNote" maxlength="200" placeholder="필요한 경우에만 입력해주세요"></div></details>
+  </form>`;
+  const form=host.querySelector('form'),qty=document.getElementById('eggEntryQty'),date=document.getElementById('eggEntryDate'),staff=document.getElementById('eggEntryStaff'),note=document.getElementById('eggEntryNote'),button=document.getElementById('btnSaveEggEntry');
+  if([...staff.options].some(option=>option.value===eggEntryStaff))staff.value=eggEntryStaff;
+  const operationId=doc(collection(db,'eggLogs')).id;
+  let saving=false;
+  const update=()=>{
+    const amount=Number(qty.value),after=currentQty+(isIn?amount:-amount);
+    const valid=qty.value!==''&&Number.isInteger(amount)&&amount>0&&after>=0;
+    document.getElementById('eggEntryTitle').textContent=date.value===getToday()?'오늘 입력':'기록 입력';
+    document.getElementById('eggEntryPreview').innerHTML=`<span>저장 후 현재 재고</span><div>${escapeHtml(formatEggQty(currentQty))} → <strong>${valid?escapeHtml(formatEggQty(after)):'—'}</strong></div>${qty.value!==''&&!valid?'<small class="egg-entry-warning">수량을 확인해주세요.</small>':valid&&after<Number(eggStock.minimumQty||0)?'<small class="egg-entry-warning">최소재고 미만</small>':''}`;
+    button.disabled=saving||!valid||!date.value||!staff.value;
+  };
+  for(const input of [qty,date,staff]){input.addEventListener('input',update);input.addEventListener('change',update);}
+  for(const tab of host.querySelectorAll('[data-egg-mode]'))tab.addEventListener('click',async()=>{
+    if(saving||tab.dataset.eggMode===eggEntryType)return;
+    const page=getPageContext();
+    if(!await canLeavePage()||page&&!page.isCurrent()||!host.isConnected)return;
+    eggEntryStaff=staff.value;eggEntryDate=date.value;eggEntryType=tab.dataset.eggMode;renderEggEntry(eggStock);
+  });
+  const save=async event=>{
+    event.preventDefault();if(saving||button.disabled)return;
+    saving=true;update();
+    const controls=[...host.querySelectorAll('input,select,button'),...document.querySelectorAll('.egg-page-actions button,#btnSetMinEgg')];
+    controls.forEach(control=>control.disabled=true);
+    try {
+      // Normalize number-input exponent notation before the legacy receipt parser.
+      await runEggSave(()=>saveEggEntry({type:eggEntryType,eggStock,selection:{kind:isIn?'receipt':'usage',reason:movementReason(isIn?'receipt':'usage',note.value),cancelOf:null,operationId},qtyValue:Number(qty.value).toLocaleString('en-US',{useGrouping:false,maximumFractionDigits:0}),date:date.value,staff:staff.value,note:note.value,onSaved:()=>{
+        eggEntryStaff=staff.value;eggEntryDate=date.value;
+      }}));
+    } finally {
+      saving=false;
+      if(form.isConnected){controls.forEach(control=>control.disabled=false);update();}
+    }
+  };
+  form.addEventListener('submit',save);
+  button.addEventListener('click',save);
+  update();markFieldsSaved(form);
 }
 
 function buildEggFifoBreakdown(logs, currentQty) {
@@ -361,27 +438,35 @@ function showEggModal(type, eggStock) {
 
   const getMovement=bindMovementForm({db,name:'eggLogs',filter:{},onCancel:delta=>{document.getElementById('m_qty').value=Math.abs(delta);const direction=document.getElementById('m_adjustType');if(direction)direction.value=delta>0?'plus':'minus';},reasonInput:document.getElementById('m_note')});
   document.getElementById('btnSaveEgg').addEventListener('click', () => runEggSave(async () => {
-    const page=getPageContext();
     const selection=readMovementForm(getMovement);if(!selection)return;
+    return saveEggEntry({type,eggStock,selection,
+      qtyValue:document.getElementById(isIn?'m_qty':'m_usageQty')?.value,
+      remainingValue:document.getElementById('m_remaining')?.value,
+      date:document.getElementById('m_date').value,
+      staff:document.getElementById('m_staff').value,
+      note:document.getElementById('m_note').value,
+    });
+  }));
+}
+
+// Both entry surfaces use the same validation, closing guard and stock command.
+async function saveEggEntry({type,eggStock,selection,qtyValue,remainingValue,date,staff,note,onSaved}) {
+    const isIn=type==='in',currentQty=Number(eggStock.currentQty||0),page=getPageContext();
     let qty;
     if (isIn) {
-      qty = parseInt(document.getElementById('m_qty').value);
+      qty = parseInt(qtyValue);
       if (!qty) { alert('수량을 입력해주세요.'); return; }
     } else if(selection.kind==='usage') {
-      qty=Number(document.getElementById('m_usageQty').value);
+      qty=Number(qtyValue);
       if(!Number.isInteger(qty)||qty<=0){alert('사용량은 1 이상의 정수로 입력해주세요.');return;}
       if(qty>currentQty){alert(`사용량이 현재 재고(${currentQty}개)보다 많을 수 없습니다.`);return;}
     } else {
-      const remaining = parseInt(document.getElementById('m_remaining').value);
+      const remaining = parseInt(remainingValue);
       if (isNaN(remaining) || remaining < 0) { alert('남은 재고를 입력해주세요.'); return; }
       if (remaining > currentQty) { alert(`남은 재고가 현재 재고(${currentQty}개)보다 많을 수 없습니다.`); return; }
       qty = currentQty - remaining;
       if (qty === 0) { alert('변동이 없습니다. (출고량 0개)'); return; }
     }
-    const date = document.getElementById('m_date').value;
-    const staff = document.getElementById('m_staff').value;
-    const note = document.getElementById('m_note').value;
-
     if (!date) { alert('날짜는 필수입니다.'); return; }
     if (!staff) { alert('담당자는 필수입니다.'); return; }
     if (await blockIfClosed(date)) return;
@@ -430,10 +515,9 @@ function showEggModal(type, eggStock) {
 
     if(!await saveEggChange(eggStock,patch,log,activity,date,selection))return;
     if(page&&!page.isCurrent())return;
-    closeModal();
+    if(onSaved)onSaved();else closeModal();
     await renderEgg({force:true});
     showStatus(`${isIn ? '입고' : '출고'} 완료!`);
-  }));
 }
 
 

@@ -3955,3 +3955,97 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
 .supplement-request-history > summary::before { content:'▸'; margin-right:6px; }
 .supplement-request-history[open] > summary::before { content:'▾'; }
 .supplement-page .supplement-work-table .supplement-td-qty { text-align:center; font-weight:700; }
+
+/* Egg workspace: current stock and the existing entry command in one view. */
+.egg-workspace-page.page-wrap { padding:16px; }
+.egg-workspace-page .page-header { margin-bottom:12px; gap:10px; }
+.egg-page-heading { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+.egg-page-heading > span { color:#786e64; font-size:12px; }
+.egg-page-actions { display:flex; align-items:center; gap:8px; }
+.egg-other-actions { position:relative; font-size:12px; }
+.egg-other-actions > summary { padding:7px 9px; cursor:pointer; }
+.egg-other-actions > div { position:absolute; right:0; top:100%; z-index:5; display:grid; gap:6px; min-width:190px; padding:10px; background:#fff; border:1px solid #e1d7ca; border-radius:6px; box-shadow:0 4px 15px #30282018; }
+.egg-workspace { display:grid; grid-template-columns:252px minmax(0,1fr); gap:12px; }
+.egg-current-card,.egg-entry-card,.egg-today-card,.egg-history-card { background:#fff; border:1px solid #e1d7ca; border-radius:7px; min-width:0; }
+.egg-current-card { padding:16px; display:flex; flex-direction:column; align-items:flex-start; }
+.egg-current-label { display:flex; align-items:center; gap:8px; font-size:12px; color:#786e64; }
+.egg-current-label .egg-status { font-size:11px; }
+.egg-current-quantity { display:flex; align-items:baseline; gap:5px; margin:8px 0; }
+.egg-current-quantity strong { font-size:40px; line-height:1.2; font-variant-numeric:tabular-nums; letter-spacing:-1px; }
+.egg-current-quantity > span { font-size:16px; }
+.egg-minimum-line { display:flex; align-items:center; gap:8px; font-size:12px; color:#786e64; }
+.egg-link { padding:0; border:0; background:none; color:#8b5e3c; font:inherit; font-size:12px; cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
+.egg-threshold-text { font-size:12px; margin:5px 0 0; color:#5a4e46; }
+.egg-lots-button { margin-top:auto; padding-top:20px; text-decoration:none; }
+.egg-entry-card { padding:14px 16px; }
+.egg-entry-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:12px; }
+.egg-workspace-page h3 { font-size:14px; margin:0; }
+.egg-entry-tabs { display:flex; gap:3px; border-radius:6px; background:#f8f4ee; padding:3px; }
+.egg-entry-tabs button { border:0; border-radius:4px; background:transparent; color:#786e64; font-size:12px; padding:6px 12px; cursor:pointer; }
+.egg-entry-tabs button[aria-pressed="true"] { color:#302820; background:#fff; font-weight:600; box-shadow:0 1px 3px #3028201a; }
+.egg-entry-fields { display:grid; grid-template-columns:1.1fr 1fr 1fr; gap:10px; }
+.egg-entry-card .form-group { margin:0; min-width:0; }
+.egg-entry-card .form-group label { font-size:12px; margin-bottom:5px; }
+.egg-entry-card .form-group :is(input,select) { width:100%; min-width:0; box-sizing:border-box; height:38px; padding:7px 9px; border-color:#d3c8ba; background:#fff; }
+.egg-entry-card #eggEntryQty { font-size:17px; font-weight:600; }
+.egg-entry-card #eggEntryQty::placeholder { font-size:13px; font-weight:400; }
+.egg-entry-help { margin:6px 0 0; font-size:11px; color:#786e64; }
+.egg-entry-savebar { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-top:10px; margin-top:10px; border-top:1px solid #e6ded3; }
+#eggEntryPreview { font-size:12px; font-variant-numeric:tabular-nums; }
+#eggEntryPreview > span { font-size:11px; color:#786e64; }
+#eggEntryPreview strong { font-size:17px; }
+.egg-entry-warning { color:#9e3326; display:block; }
+.egg-entry-savebar .btn-primary { min-height:36px; padding:8px 14px; }
+.egg-entry-card button:disabled { opacity:.5; cursor:default; }
+.egg-entry-note { margin-top:8px; color:#786e64; font-size:12px; }
+.egg-entry-note summary { cursor:pointer; }
+.egg-entry-note .form-group { margin-top:7px; }
+.egg-today-card { margin-top:12px; padding:12px 14px 5px; }
+.egg-record-heading { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px; }
+.egg-record-heading > span { font-size:11px; color:#786e64; }
+#eggTodayPaging { margin-left:auto; display:flex; align-items:center; gap:8px; font-size:11px; }
+#eggTodayPaging button { padding:3px 8px; font-size:11px; }
+.egg-workspace-page .egg-today-table { table-layout:fixed; width:100%; }
+.egg-workspace-page .egg-today-table th:nth-child(1) { width:15%; }
+.egg-workspace-page .egg-today-table th:nth-child(2) { width:12%; }
+.egg-workspace-page .egg-today-table th:nth-child(3) { width:22%; }
+.egg-workspace-page .egg-today-table th:nth-child(4) { width:14%; }
+.egg-workspace-page .egg-today-table :is(th,td) { padding:7px 9px; font-size:12px; overflow-wrap:anywhere; }
+.egg-workspace-page .egg-today-table :is(th,td):nth-child(2),.egg-workspace-page .egg-today-table :is(th,td):nth-child(3) { text-align:right; font-variant-numeric:tabular-nums; }
+.egg-workspace-page.egg-page .egg-today-table :is(th,td):nth-child(4),.egg-workspace-page.egg-page .egg-today-table :is(th,td):nth-child(5) { text-align:left; }
+.egg-empty-records { text-align:center; padding:14px !important; color:#786e64; }
+.egg-history-card { margin-top:10px; padding:0 14px; }
+.egg-history-card > summary { padding:12px 0; cursor:pointer; font-size:13px; font-weight:600; }
+.egg-history-card > summary span { margin-left:10px; color:#786e64; font-size:11px; font-weight:400; }
+.egg-history-card > .table-wrap { margin-bottom:10px; }
+.egg-workspace-page [hidden] { display:none !important; }
+.egg-workspace-page #eggFifoHost .egg-fifo-panel { margin-top:10px; padding:12px 14px; background:#fff; border:1px solid #e1d7ca; border-radius:7px; }
+@media (min-width:1500px) {
+  .egg-workspace { grid-template-columns:300px minmax(0,1fr); }
+  .egg-entry-fields { grid-template-columns:1.1fr 1fr 1fr; max-width:900px; }
+}
+@media (max-width:760px) {
+  .egg-workspace { grid-template-columns:210px minmax(0,1fr); }
+  .egg-entry-fields { grid-template-columns:1fr 1fr; }
+  .egg-entry-fields > :first-child { grid-column:1/-1; }
+}
+@media (max-width:580px) {
+  .egg-workspace-page.page-wrap { padding:12px 10px; }
+  .egg-workspace-page .page-header { align-items:flex-start; flex-wrap:wrap; }
+  .egg-workspace { grid-template-columns:minmax(0,1fr); gap:10px; }
+  .egg-current-card { display:grid; grid-template-columns:1fr auto; gap:3px 12px; padding:12px; }
+  .egg-current-quantity { grid-column:2; grid-row:1/4; margin:0; }
+  .egg-current-quantity strong { font-size:34px; }
+  .egg-threshold-text,.egg-minimum-line { grid-column:1; }
+  .egg-lots-button { grid-column:1/-1; padding-top:8px; text-align:left; }
+  .egg-entry-card { padding:12px; }
+  .egg-entry-card .form-group :is(input,select) { height:40px; font-size:16px; }
+  .egg-entry-heading { flex-wrap:wrap; }
+  .egg-today-card { padding:10px 8px 4px; }
+  .egg-workspace-page .egg-today-table { min-width:540px; }
+  .egg-workspace-page .egg-history-table { min-width:700px; }
+}
+@media (max-width:390px) {
+  .egg-entry-fields { grid-template-columns:minmax(0,1fr); }
+  .egg-minimum-line { flex-wrap:wrap; gap:4px 6px; }
+}

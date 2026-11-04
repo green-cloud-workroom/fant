@@ -8,7 +8,7 @@ export async function captureEggViews({sourceFiles,role='office',text=attackText
  const modal=()=>serializeView(e.document.querySelector('#modalOverlay'));
  try{
   for(const[field,col]of [['date',1],['qty',3],['before',4],['after',5],['staffName',6],['note',7],['reason',7]]){
-   e.page.renderEggLayout(stock,[{...log,[field]:text}]);add('history-'+field,serializeView(e.document.querySelector('#mainContent')),'tbody td:nth-child('+col+')');
+   e.page.renderEggLayout(stock,[{...log,[field]:text}]);add('history-'+field,serializeView(e.document.querySelector('#mainContent')),'.egg-history-table tbody td:nth-child('+col+')');
   }
   e.page.showEggAdjustModal({...stock,currentQty:text});add('adjust-currentQty',modal(),'.modal-box p:has(+ .form-row)');
   e.page.showSetMinModal({...stock,minimumQty:text});add('settings-minimumQty',modal(),'#m_minQty',text,'value');

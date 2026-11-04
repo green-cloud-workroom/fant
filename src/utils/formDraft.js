@@ -17,7 +17,7 @@ export function hasChanged(field) {
 }
 export function hasDirtyFields(root=document){const saved=baselines.get(root);return saved?values(root)!==saved.values||JSON.stringify(saved.extra?.())!==saved.extraValue:controls(root).some(hasChanged);}
 export async function canLeavePage() {
-  const roots = document.querySelectorAll('.modal-overlay,.recipe-detail-panel,#productionForm,.settings-section,.supplement-page');
+  const roots = document.querySelectorAll('.modal-overlay,.recipe-detail-panel,#productionForm,.settings-section,.supplement-page,.egg-entry-form');
   if (![...roots].some(hasDirtyFields)) return true;
   // Keep the form and its values mounted until the user chooses to leave.
   return new Promise(resolve => {
