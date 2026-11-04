@@ -909,6 +909,28 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   background: #f9f9f9;
 }
 
+.supplement-subnav {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 10px 16px;
+}
+
+.supplement-subnav > button {
+  margin: 0;
+}
+
+#supplementStockHost:not([hidden]) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#supplementStockHost > .supplement-toolbar {
+  flex-shrink: 0;
+}
+
 .supplement-toolbar {
   display: flex;
   align-items: center;
@@ -3766,3 +3788,45 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   z-index: 1;
 }
 
+/* 신청 탭 전용: 재고 표의 고정 레이아웃은 유지한다. */
+.supplement-request-host { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; }
+.supplement-request-host[hidden] { display: none; }
+.supplement-request-header, .supplement-request-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.supplement-request-header { justify-content: space-between; }
+.supplement-request-header h3 { margin: 0; }
+.supplement-request-hint { color: #777; font-size: 12px; }
+.supplement-request-actor { display: block; margin-bottom: 12px; }
+.supplement-request-host select, .supplement-request-modal select, .supplement-request-modal input, .supplement-request-host input, .supplement-request-host textarea, .supplement-request-modal textarea { border: 1px solid #ddd; border-radius: 4px; padding: 8px; font: inherit; box-sizing: border-box; max-width: 100%; }
+.supplement-request-row { border: 1px solid #e8e8e8; border-radius: 6px; background: white; margin-bottom: 10px; }
+.supplement-request-row summary { display: flex; align-items: center; gap: 12px; padding: 14px; cursor: pointer; flex-wrap: wrap; }
+.supplement-request-summary { flex: 1; min-width: 160px; overflow-wrap: anywhere; }
+.supplement-request-badge { border-radius: 12px; padding: 4px 10px; background: #eee; font-size: 12px; white-space: nowrap; }
+.supplement-request-badge[data-state="requested"] { background: #e8f1ff; color: #245da5; }
+.supplement-request-badge[data-state="preparing"] { background: #fff3d4; color: #856000; }
+.supplement-request-badge[data-state="done"] { background: #e5f4e9; color: #28713c; }
+.supplement-request-detail { padding: 0 16px 16px; overflow-wrap: anywhere; }
+.supplement-request-detail label { display: block; margin: 10px 0; }
+.supplement-request-detail textarea { display: block; width: 100%; }
+.supplement-request-host [role="status"], .supplement-request-modal [role="status"] { color: #a33; white-space: pre-wrap; }
+.supplement-request-host [role="status"]:empty, .supplement-request-modal [role="status"]:empty { display: none; }
+.supplement-request-modal.modal-box { width: 680px; max-width: calc(100vw - 24px); max-height: calc(100dvh - 24px); display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.supplement-request-modal > .modal-title { padding: 18px 20px; margin: 0; flex-shrink: 0; border-bottom: 1px solid #eee; }
+.supplement-request-body { overflow-y: auto; min-height: 0; padding: 16px 20px; }
+.supplement-request-body > label { display: block; margin-bottom: 14px; }
+.supplement-request-body input[type="search"], .supplement-request-body textarea { display: block; width: 100%; margin-top: 6px; }
+.supplement-request-body input[type="number"] { width: 100px; }
+.supplement-request-group { border: 1px solid #e8e8e8; border-radius: 4px; margin: 8px 0; overflow: hidden; }
+.supplement-request-group-toggle { display: flex; justify-content: space-between; gap: 8px; width: 100%; border: 0; background: #f4f5f6; padding: 12px; text-align: left; cursor: pointer; font: inherit; font-weight: 600; }
+.supplement-request-group-toggle::before { content: '▸'; }
+.supplement-request-group-toggle[aria-expanded="true"]::before { content: '▾'; }
+.supplement-request-group-toggle span { margin-left: auto; color: #28713c; font-size: 12px; }
+.supplement-request-group table { width: 100%; }
+.supplement-request-group [hidden], .supplement-request-group[hidden] { display: none; }
+.supplement-request-total { padding: 12px; background: #eef6ef; font-weight: 600; }
+.supplement-request-footer { flex-shrink: 0; padding: 12px 20px; border-top: 1px solid #eee; background: white; }
+.supplement-request-footer .modal-actions { margin: 0; }
+@media (max-width: 480px) {
+  .supplement-request-host { padding: 10px; }
+  .supplement-request-body, .supplement-request-footer { padding: 12px; }
+  .supplement-request-row summary { gap: 8px; padding: 10px; }
+}

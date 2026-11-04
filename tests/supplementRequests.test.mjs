@@ -74,21 +74,24 @@ test('commit-gap recovery requires exact immutable stock proof and receipt paylo
     assert.throws(()=>assertStockInReplay(item,{...log,...patch},proof,operationId));
 });
 
-async function uiFixture(role) {
+async function uiFixture(role,{staffOptions='<option value="사무">사무</option>',saveError=null}={}) {
   const {document,window}=parseHTML('<html><body><div id="requests"></div></body></html>');
-  const context=vm.createContext({document,console,Date,Map,Set,Error,Object});let listener,stopped=0,eventStopped=0;const eventListeners=new Map();
+  Object.defineProperty(window.HTMLSelectElement.prototype,'value',{configurable:true,get(){return [...this.options].find(o=>o.selected)?.value||this.options[0]?.value||'';},set(value){for(const o of this.options)o.removeAttribute('selected');[...this.options].find(o=>o.value===value)?.setAttribute('selected','');}});
+  const context=vm.createContext({document,console,Date,Map,Set,Error,Object});let listener,stopped=0,eventStopped=0;const saves=[];const eventListeners=new Map();
   const deps={
+    '../utils/formDraft.js':{markFieldsSaved:()=>{},hasDirtyFields:()=>false,canLeavePage:async()=>true},
+    '../utils/modalManager.js':{registerModalDismiss:()=>()=>{}},
     '../app.js':{currentUserRole:role},
-    '../services/supplementRequests.js':{saveRequest:async()=>{},watchRequestEvents:(id,next)=>{eventListeners.set(id,next);return ()=>eventStopped++;},watchRequests:next=>{listener=next;return ()=>stopped++;},requestActor:name=>({uid:'office',name}),stockInRequest:async()=>{}},
+    '../services/supplementRequests.js':{saveRequest:async(...args)=>{saves.push(args);if(saveError)throw saveError;},watchRequestEvents:(id,next)=>{eventListeners.set(id,next);return ()=>eventStopped++;},watchRequests:next=>{listener=next;return ()=>stopped++;},requestActor:name=>({uid:'office',name}),stockInRequest:async()=>{}},
     '../services/supplementRequestLogic.js':{requestStatuses:{requested:'신청',preparing:'준비중',done:'완료',cancelled:'취소'},stockOperationId,canReopenRequest},
     '../utils/date.js':{getTodayKST:()=> '2026-11-03'},
     '../utils/pageLifecycle.js':{getPageContext:()=>null,registerPageCleanup:()=>()=>{}},
   };
   const module=new vm.SourceTextModule(readFileSync('src/pages/supplementRequests.js','utf8'),{context});
-  await module.link(async name=>{const exports=deps[name];assert.ok(exports,name);return new vm.SyntheticModule(Object.keys(exports),function(){for(const [k,v]of Object.entries(exports))this.setExport(k,v);},{context});});
+  await module.link(async name=>{if(name==='../utils/formDraft.js'){const draft=new vm.SourceTextModule(readFileSync('src/utils/formDraft.js','utf8'),{context});await draft.link(()=>new vm.SyntheticModule(['registerModalDismiss'],function(){this.setExport('registerModalDismiss',()=>()=>{});},{context}));return draft;}const exports=deps[name];assert.ok(exports,name);return new vm.SyntheticModule(Object.keys(exports),function(){for(const [k,v]of Object.entries(exports))this.setExport(k,v);},{context});});
   await module.evaluate();const host=document.getElementById('requests');
-  const dispose=module.namespace.mountSupplementRequests(host,{types:[{id:'later',recipeId:'r',recipeName:'나중',unit:2,sortOrder:100,active:true},{id:'inactive',recipeId:'r',recipeName:'비활성',unit:3,sortOrder:-1,active:false},{id:'first',recipeId:'r',recipeName:'먼저',unit:1,sortOrder:0,active:true}],staffOptions:'<option value="사무">사무</option>',incoming:async()=>{},onStockChanged:()=>{}});
-  return {host,document,window,dispose,emit:rows=>listener(rows),emitEvents:(id,events)=>eventListeners.get(id)(events),stopped:()=>stopped,eventStopped:()=>eventStopped};
+  const dispose=module.namespace.mountSupplementRequests(host,{types:[{id:'later',recipeId:'r2',recipeName:'나중',unit:2,sortOrder:100,active:true},{id:'inactive',recipeId:'r',recipeName:'비활성',unit:3,sortOrder:-1,active:false},{id:'first',recipeId:'r',recipeName:'먼저',unit:1,sortOrder:0,active:true}],staffOptions,incoming:async()=>{},onStockChanged:()=>{}});
+  return {host,document,window,dispose,saves,matches:module.namespace.matchesRequestSearch,emit:rows=>listener(rows),emitEvents:(id,events)=>eventListeners.get(id)(events),stopped:()=>stopped,eventStopped:()=>eventStopped};
 }
 
 test('events render separately, preserve an inline draft, and unsubscribe on disposal',async()=>{
@@ -108,7 +111,9 @@ test('production role sees live requests and escaped details but no write contro
 });
 test('writer form orders active SKUs and exposes only status-appropriate controls',async()=>{
   const f=await uiFixture('office');
-  assert.deepEqual([...f.host.querySelectorAll('[data-type]')].map(el=>el.dataset.type),['first','later']);
+  assert.equal(f.host.querySelector('form'),null);f.host.querySelector('[data-new]').click();
+  assert.deepEqual([...f.document.querySelectorAll('[data-type]')].map(el=>el.dataset.type),['first','later']);
+  f.document.querySelector('[data-close]').click();
   f.emit(['requested','preparing','done','cancelled'].map(status=>({...fresh(),id:status,status})));
   const actions=id=>[...f.host.querySelector(`[data-id="${id}"]`).querySelectorAll('button[data-action]')].map(el=>el.dataset.action);
   assert.ok(actions('requested').includes('edit'));assert.ok(actions('requested').includes('cancel'));
@@ -135,4 +140,103 @@ test('request incoming adapter refreshes each stock baseline and passes atomic c
     assert.equal(e.state.rows.supplementLogs.length,2);
     assert.ok(e.state.rows.supplementLogs.every(r=>r.type==='in'&&r.manualMovement.kind==='receipt'));
   } finally {await e.cleanup();}
+});
+
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+function input(f,el,value){el.value=value;el.dispatchEvent(new f.window.Event('input',{bubbles:true}));}
+test('status filter preserves inline change request and restores the previous filter until saved',async()=>{
+ const f=await uiFixture('office');
+ f.emit([{...fresh(),id:'req',status:'preparing'},{...fresh(),id:'done',status:'done'}]);
+ const filter=f.host.querySelector('[data-request-filter]');
+ const changeFilter=value=>{filter.value=value;filter.dispatchEvent(new f.window.Event('change',{bubbles:true}));};
+ changeFilter('preparing');
+ const detail=f.host.querySelector('details'),draft=detail.querySelector('[data-change]');detail.open=true;
+ input(f,draft,'변경 요청 작성 중');
+ changeFilter('done');
+ assert.equal(filter.value,'preparing');assert.equal(f.host.querySelector('[data-change]'),draft);
+ assert.equal(draft.value,'변경 요청 작성 중');assert.equal(detail.open,true);
+ assert.match(f.host.querySelector('[data-request-status]').textContent,/저장하거나 닫은 뒤/);
+ f.host.querySelector('[data-list-staff]').value='사무';
+ f.host.querySelector('[data-list-staff]').dispatchEvent(new f.window.Event('change'));
+ detail.querySelector('[data-action="changeRequest"]').click();await tick();
+ assert.equal(f.saves[0][2].changeRequestNote,'변경 요청 작성 중');
+ changeFilter('done');assert.equal(filter.value,'done');assert.equal(f.host.querySelector('details').dataset.id,'done');f.dispose();
+});
+
+test('status filter keeps opened stock-in form, date, staff and DOM intact',async()=>{
+ const f=await uiFixture('office');f.emit([{...fresh(),id:'done',status:'done'}]);
+ f.host.querySelector('[data-action="stockIn"]').click();
+ const form=f.host.querySelector('[data-stock-form]'),detail=form.closest('details');
+ form.querySelector('[data-date]').value='2026-11-01';form.querySelector('[data-staff]').value='사무';
+ const filter=f.host.querySelector('[data-request-filter]');filter.value='requested';filter.dispatchEvent(new f.window.Event('change'));
+ assert.equal(filter.value,'all');assert.equal(f.host.querySelector('[data-stock-form]'),form);
+ assert.equal(form.hidden,false);assert.equal(detail.open,true);
+ assert.equal(form.querySelector('[data-date]').value,'2026-11-01');assert.equal(form.querySelector('[data-staff]').value,'사무');
+ assert.equal(f.saves.length,0);f.dispose();
+});
+
+test('status filter keeps modal draft and resumes normally after closing it',async()=>{
+ const f=await uiFixture('office');f.emit([{...fresh(),id:'req'}]);f.host.querySelector('[data-new]').click();
+ const form=f.document.querySelector('form'),filter=f.host.querySelector('[data-request-filter]');
+ filter.value='done';filter.dispatchEvent(new f.window.Event('change'));
+ assert.equal(filter.value,'all');assert.equal(f.document.querySelector('form'),form);
+ form.querySelector('[data-close]').click();await tick();
+ filter.value='done';filter.dispatchEvent(new f.window.Event('change'));
+ assert.equal(filter.value,'done');assert.equal(f.host.querySelector('details'),null);f.dispose();
+});
+
+test('search uses all whitespace-separated terms and restores collapsed state without losing saved quantities',async()=>{
+ const f=await uiFixture('office');
+ assert.equal(f.matches('고양이 치킨',60,' 치킨  60 '),true);
+ assert.equal(f.matches('고양이 치킨',60,'치킨 100'),false);
+ f.host.querySelector('[data-new]').click();const form=f.document.querySelector('form');
+ const groups=[...form.querySelectorAll('[data-group]')];assert.equal(groups[0].querySelector('table').hidden,false);assert.equal(groups[1].querySelector('table').hidden,true);
+ input(f,form.querySelector('[data-type="first"]'),'3');input(f,form.querySelector('[data-type="later"]'),'2');
+ groups[0].querySelector('[data-toggle]').click();assert.equal(groups[0].querySelector('table').hidden,true);
+ assert.equal(groups[0].querySelector('[data-count]').textContent,'1품목 입력');
+ input(f,form.querySelector('[data-search]'),'나중 2');assert.equal(groups[0].hidden,true);assert.equal(groups[1].querySelector('table').hidden,false);
+ input(f,form.querySelector('[data-search]'),'');assert.equal(groups[0].querySelector('table').hidden,true);assert.equal(groups[1].querySelector('table').hidden,true);
+ assert.equal(form.querySelector('[data-total]').textContent,'선택 2품목 · 합계 5봉');
+ input(f,form.querySelector('[data-search]'),'없음');
+ form.querySelector('[name="staff"]').value='사무';
+ f.emit([{...fresh(),id:'external'}]);assert.equal(f.document.querySelector('form'),form);
+ form.dispatchEvent(new f.window.Event('submit',{bubbles:true,cancelable:true}));
+ assert.ok([...form.querySelectorAll('input,button,textarea,select')].every(el=>el.disabled));await tick();
+ assert.equal(f.saves.length,1);assert.deepEqual(Array.from(f.saves[0][2].items,i=>[i.supplementTypeId,i.qty]),[['first',3],['later',2]]);
+ assert.equal(f.document.querySelector('form'),null);f.dispose();
+});
+test('editing retains inactive and snapshot-only items and opens their groups',async()=>{
+ const f=await uiFixture('office');const items=[{...item,supplementTypeId:'inactive',recipeId:'old',recipeName:'비활성',qty:4},{...item,supplementTypeId:'gone',recipeId:'gone',recipeName:'삭제된 스냅샷',qty:5}];
+ f.emit([{...fresh(),id:'old-request',items}]);f.host.querySelector('[data-action="edit"]').click();
+ const form=f.document.querySelector('form');for(const id of ['inactive','gone']){const el=form.querySelector(`[data-type="${id}"]`);assert.equal(el.closest('table').hidden,false);}
+ form.querySelector('[name="staff"]').value='사무';form.dispatchEvent(new f.window.Event('submit',{cancelable:true}));await tick();
+ assert.deepEqual(JSON.parse(JSON.stringify(f.saves[0][2].items)),items);f.dispose();
+});
+test('missing actor is visible at the list action and event codes are Korean',async()=>{
+ const f=await uiFixture('office');f.emit([{...fresh(),id:'req',note:''}]);f.emitEvents('req',[{action:'create',by}]);
+ assert.match(f.host.querySelector('ol').textContent,/신청 생성/);assert.doesNotMatch(f.host.textContent,/메모:/);
+ f.host.querySelector('[data-action="cancel"]').click();f.host.querySelector('[data-action="cancelSave"]').click();await tick();
+ assert.match(f.host.querySelector('[data-row-status]').textContent,/신청자.*선택/);assert.equal(f.saves.length,0);f.dispose();
+});
+test('request staff options use the office group independently of stock-in menu configuration',async()=>{
+ const e=await pageEnvironment('supplement',{instrument:'\nexport {openRequestsTab};\nexport function setRequestStaffFixture(){supplementStaffCache={office:[{name:"사무1"},{name:"사무2"}],senior:[{name:"선임"}]};supplementMenuStaffGroups={supplementStockIn:["senior"]};}'});let options;
+ e.synthetic(resolve('src/pages/supplementRequests.js'),{mountSupplementRequests:(_host,input)=>{options=input;return ()=>{};}});
+ try{await e.page.renderSupplement();e.page.setRequestStaffFixture();await e.page.openRequestsTab();assert.match(options.staffOptions,/사무1/);assert.match(options.staffOptions,/사무2/);assert.doesNotMatch(options.staffOptions,/선임/);}finally{await e.cleanup();}
+});
+
+test('dirty close uses the existing stay/leave dialog and preserves input while staying',async()=>{
+ const f=await uiFixture('office');f.host.querySelector('[data-new]').click();const form=f.document.querySelector('form');
+ input(f,form.querySelector('[data-type="first"]'),'7');form.querySelector('[data-close]').click();
+ assert.ok(f.document.querySelector('#navigationConfirm'));f.document.querySelector('[data-stay]').click();await tick();
+ assert.equal(form.querySelector('[data-type="first"]').value,'7');assert.equal(form.isConnected,true);
+ form.querySelector('[data-close]').click();f.document.querySelector('[data-leave]').click();await tick();assert.equal(form.isConnected,false);f.dispose();
+});
+test('conflict resubscribes without replacing modal quantities and unlocks controls',async()=>{
+ const error=Object.assign(new Error('충돌'),{code:'supplement-request-conflict'});const f=await uiFixture('office',{saveError:error});
+ f.host.querySelector('[data-new]').click();const form=f.document.querySelector('form');input(f,form.querySelector('[data-type="first"]'),'9');form.querySelector('[name="staff"]').value='사무';
+ form.dispatchEvent(new f.window.Event('submit',{cancelable:true}));await tick();assert.equal(f.stopped(),1);assert.equal(f.document.querySelector('form'),form);assert.equal(form.querySelector('[data-type="first"]').value,'9');assert.equal(form.querySelector('button[type="submit"]').disabled,false);assert.match(form.querySelector('[data-form-status]').textContent,/충돌/);f.dispose();assert.equal(form.isConnected,false);
+});
+test('office empty guidance appears in list and modal; stock-in gets the same office options',async()=>{
+ const f=await uiFixture('office',{staffOptions:''});assert.match(f.host.textContent,/등록된 사무 직원이 없습니다/);f.host.querySelector('[data-new]').click();assert.match(f.document.querySelector('form').textContent,/등록된 사무 직원이 없습니다/);f.dispose();
+ const g=await uiFixture('office');g.emit([{...fresh(),id:'done',status:'done'}]);assert.deepEqual([...g.host.querySelector('[data-staff]').options].map(o=>o.value),['','사무']);g.dispose();
 });

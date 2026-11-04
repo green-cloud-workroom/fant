@@ -34,7 +34,7 @@ async function openRequestsTab() {
   disposeRequests?.();
   document.getElementById('supplementStockHost').hidden=true;
   host.hidden=false;supplementSubTab='requests';
-  disposeRequests=mountSupplementRequests(host,{types:supplementTypes,staffOptions:renderStaffOptions('supplementStockIn'),
+  disposeRequests=mountSupplementRequests(host,{types:supplementTypes,staffOptions:getSupplementStaffMembers(['office']).map(member=>`<option value="${escapeHtml(member.name)}">${escapeHtml(member.name)}</option>`).join(''),
     incoming:async(item,{date,staffName,selection,extraWrites})=>{
       // Each previous incoming changes the stock/log baseline. Reload it without
       // replacing the request form, then use the unchanged incoming command.
@@ -118,7 +118,7 @@ function renderSupplementLayout() {
 
   content.innerHTML = `
     <div class="supplement-page">
-      <nav aria-label="영양제 하위 메뉴"><button class="btn-secondary" id="supplementStockTab">영양제 재고</button> <button class="btn-secondary" id="supplementRequestsTab">영양제 신청</button></nav>
+      <nav class="supplement-subnav" aria-label="영양제 하위 메뉴"><button class="btn-secondary" id="supplementStockTab">영양제 재고</button><button class="btn-secondary" id="supplementRequestsTab">영양제 신청</button></nav>
       <div id="supplementRequestsHost" hidden></div>
       <div id="supplementStockHost">
       <div class="supplement-toolbar">
