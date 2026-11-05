@@ -33,16 +33,44 @@ const FROZEN_PRODUCT_CATEGORIES = [
   { key: 'sample-set', label: '샘플세트', target: null, kind: 'sampleSet' },
 ];
 
+const FROZEN_KIND_LABELS={product:'일반제품',sample:'샘플',sampleSet:'샘플세트'};
+let selectedKind='product';
+let productQuery='';
+let manageProducts=false;
+let entryPage=null;
+const entryDrafts=new Map();
+const entryDefaults=new Map();
+const pendingSetChecks=new Map();
+
 export async function renderFrozenProduct({force=false}={}) {
-  frozenCorrectionRecoveryCache.promise=null;
   bindInventoryHandoff();
- const content=document.getElementById('mainContent');
- content.innerHTML='<p style="padding:24px">동결제품 입고 로딩 중...</p>';
- const data=await frozenProductResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(frozenProductResource,renderFrozenProduct)});
- if(!data||!content.isConnected)return;
- frozenProducts=data.products;staffCache=data.staff;renderFrozenProductLayout();
- if(selectedProductId){const selected=frozenProducts.find(p=>p.id===selectedProductId);if(selected)await showProductDetail(selected);}
- mountInventoryCorrectionRecovery({sourceCollection:'frozenLogs',role:currentUserRole,recoveryCache:frozenCorrectionRecoveryCache,showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderFrozenProduct({force:true})});
+  const content=document.getElementById('mainContent');
+  const existing=content.querySelector('.frozen-workspace');
+  const previousModel=frozenProductResource.model;
+  const page=getPageContext();
+  if(page!==entryPage){
+    entryPage=page;
+    registerPageCleanup(()=>{
+      entryDrafts.clear();
+      entryDefaults.clear();
+      pendingSetChecks.clear();
+      selectedProductId=null;
+      selectedKind='product';
+      productQuery='';
+      manageProducts=false;
+      entryPage=null;
+    });
+  }
+  if(!existing) content.innerHTML='<p class="list-empty">동결제품을 불러오는 중입니다.</p>';
+  const data=await frozenProductResource.load(loadInitialModel,{
+    force,onChange:pageRefresh(frozenProductResource,renderFrozenProduct,{draftSelector:'.frozen-inline-entry'}),
+  });
+  if(!data||!content.isConnected) return;
+  if(!force&&existing?.isConnected&&existing.dataset.role===currentUserRole&&previousModel===frozenProductResource.model) return;
+  frozenCorrectionRecoveryCache.promise=null;
+  frozenProducts=data.products;
+  staffCache=data.staff;
+  await renderFrozenProductLayout();
 }
 
 async function loadFrozenProducts(scope={getDocs,getDoc}) {
@@ -52,40 +80,64 @@ async function loadFrozenProducts(scope={getDocs,getDoc}) {
 }
 
 async function loadFrozenLogs(productId) {
-  const q = query(collection(db, 'frozenLogs'), orderBy('timestamp', 'desc'));
-  const snap = await getDocs(q);
-  return snap.docs
-    .map(d => ({ ...d.data(), id: d.id }))
-    .filter(l => l.productId === productId && l.status !== 'deleted')
-    .slice(0, 30);
+  const snap=await getDocs(query(collection(db,'frozenLogs'),where('productId','==',productId)));
+  const time=log=>log.timestamp?.toMillis?.()??(Number.isFinite(log.timestamp?.seconds)
+    ?log.timestamp.seconds*1000+(log.timestamp.nanoseconds||0)/1e6
+    :new Date(log.timestamp).getTime()||0);
+  return snap.docs.map(doc=>({...doc.data(),id:doc.id}))
+    .filter(log=>log.status!=='deleted'&&log.timestamp!==undefined)
+    .sort((a,b)=>time(b)-time(a)||b.id.localeCompare(a.id))
+    .slice(0,30);
 }
 
 function renderFrozenProductLayout() {
-  const content = document.getElementById('mainContent');
-  const canManageFrozenProduct = currentUserRole === 'admin' || currentUserRole === 'office';
-  content.innerHTML = `
-    <div class="recipe-wrap frozen-product-page">
-      <!-- 왼쪽: 제품 목록 -->
-      <div class="recipe-list-panel">
-        <div class="panel-header">
-          <span class="panel-title">제품 목록</span>
-          ${canManageFrozenProduct ? '<button class="btn-secondary" id="btnNewProduct">+ 추가</button>' : ''}
-        </div>
-        <div class="recipe-list" id="productList">
-          ${renderProductList()}
-        </div>
-      </div>
-
-      <!-- 오른쪽: 입고 이력 -->
-      <div class="recipe-detail-panel" id="productDetail">
-        <div class="detail-empty">제품을 선택해주세요</div>
-      </div>
-    </div>
-  `;
-
+  const content=document.getElementById('mainContent');
+  const canManage=['admin','office'].includes(currentUserRole);
+  const matching=frozenProducts.filter(p=>getFrozenProductKind(p)===selectedKind);
+  const selected=matching.find(p=>p.id===selectedProductId)||matching[0];
+  selectedProductId=selected?.id??null;
+  content.innerHTML=`<section class="frozen-workspace ${manageProducts&&canManage?'is-managing':''}" data-role="${escapeHtml(currentUserRole)}" data-has-drafts="${entryDrafts.size>0}">
+    <header class="frozen-workspace-heading"><h2>동결제품 입고</h2><span>${frozenProducts.length}개 제품</span>
+      ${canManage?`<button type="button" class="btn-secondary" id="btnFrozenManage" aria-pressed="${manageProducts}">${manageProducts?'관리 끝내기':'제품 관리'}</button>`:''}
+    </header>
+    <div class="frozen-columns"><aside class="frozen-picker" aria-label="제품 목록">
+      <div class="frozen-kind-filters" role="group" aria-label="제품 종류">${Object.entries(FROZEN_KIND_LABELS).map(([kind,label])=>
+        `<button type="button" data-frozen-kind="${kind}" aria-pressed="${kind===selectedKind}">${label} <b>${frozenProducts.filter(p=>getFrozenProductKind(p)===kind).length}</b></button>`).join('')}</div>
+      ${manageProducts&&canManage?'<button type="button" class="btn-secondary" id="btnNewProduct">+ 제품 추가</button>':`<input type="search" id="frozenProductSearch" aria-label="제품명 검색" placeholder="제품명 검색" value="${escapeHtml(productQuery)}">`}
+      <div id="productList">${renderProductList()}</div><p id="frozenNoMatches" hidden>검색 결과가 없습니다.</p>
+    </aside><section id="productDetail" aria-label="선택 제품 입고와 최근 기록"></section></div></section>`;
   bindProductListEvents();
-  initFrozenProductSortable();
-  document.getElementById('btnNewProduct')?.addEventListener('click', showNewProductModal);
+  if(manageProducts&&canManage) initFrozenProductSortable();
+  document.getElementById('btnNewProduct')?.addEventListener('click',showNewProductModal);
+  document.getElementById('btnFrozenManage')?.addEventListener('click',()=>{
+    manageProducts=!manageProducts;
+    productQuery='';
+    return renderFrozenProductLayout();
+  });
+  applyProductFilter();
+  if(selected) return showProductDetail(selected);
+  document.getElementById('productDetail').textContent='이 종류에 등록된 제품이 없습니다.';
+  mountFrozenRecovery();
+}
+
+function applyProductFilter() {
+  const list=document.getElementById('productList');
+  if(!list) return;
+  const search=productQuery.trim().toLowerCase();
+  let matches=0;
+  for(const group of list.querySelectorAll('.frozen-product-category')){
+    const sameKind=group.dataset.kind===selectedKind;
+    let count=0;
+    for(const item of group.querySelectorAll('.recipe-list-item')){
+      item.hidden=Boolean(search)&&!item.querySelector('.recipe-name').textContent.toLowerCase().includes(search);
+      if(!item.hidden) count++;
+    }
+    group.hidden=!sameKind||count===0;
+    if(sameKind) matches+=count;
+    const body=group.querySelector('.frozen-product-category-items');
+    body.hidden=!search&&group.dataset.collapsed==='true';
+  }
+  document.getElementById('frozenNoMatches').hidden=matches>0;
 }
 
 function getFrozenProductTarget(product) {
@@ -123,16 +175,11 @@ function setFrozenProductCategoryCollapsed(categoryKey, collapsed) {
 }
 
 function renderProductListItemCompact(p) {
-  const canReorder = currentUserRole === 'admin' || currentUserRole === 'office';
-  return `
-    <div class="recipe-list-item ${selectedProductId === p.id ? 'active' : ''}"
-      data-id="${escapeHtml(p.id)}" style="padding:3px 8px 3px 13px;min-height:28px;">
-      ${canReorder ? '<span class="drag-handle" title="순서 변경" aria-label="순서 변경">☰</span>' : ''}
-      <div class="recipe-list-info" style="gap:0;">
-        <span class="recipe-name" style="font-size:12.5px;line-height:1.2;">${escapeHtml(p.name)}</span>
-      </div>
-    </div>
-  `;
+  const selected=selectedProductId===p.id;
+  return `<div class="recipe-list-item${selected?' active':''}" data-id="${escapeHtml(p.id)}">
+    ${manageProducts&&['admin','office'].includes(currentUserRole)?'<span class="drag-handle" title="순서 변경" aria-label="순서 변경">☰</span>':''}
+    <button type="button" class="frozen-pick" aria-pressed="${selected}"><span class="recipe-name">${escapeHtml(p.name)}</span>${p.active===false?' <small>비활성</small>':''}</button>
+  </div>`;
 }
 
 function renderProductListByCategory() {
@@ -142,13 +189,13 @@ function renderProductListByCategory() {
       const products = frozenProducts.filter(p => getProductCategoryKey(p) === category.key);
       const collapsed = collapsedState[category.key] === true;
       return `
-        <div class="frozen-product-category" data-category="${category.key}">
+        <div class="frozen-product-category" data-category="${category.key}" data-kind="${category.kind}" data-collapsed="${collapsed}">
           <button type="button" class="frozen-product-category-header list-category-header" data-category="${category.key}"
             >
-            <span>${collapsed?'▶':'▼'} ${category.label}</span>
+            <span><span data-arrow>${collapsed?'▶':'▼'}</span> ${category.label}</span>
             <span style="font-size:11px;color:#777;">${products.length}</span>
           </button>
-          <div class="frozen-product-category-items" data-category="${category.key}" style="${collapsed ? 'display:none;' : ''}">
+          <div class="frozen-product-category-items" data-category="${category.key}">
             ${products.length === 0
               ? '<div style="padding:4px 8px;color:#aaa;font-size:11.5px;">등록된 제품 없음</div>'
               : products.map(renderProductListItemCompact).join('')}
@@ -212,40 +259,49 @@ async function persistFrozenProductOrder() {
     alert('순번 저장 실패: ' + (err.message || err));
     frozenProducts = await loadFrozenProducts();
     if(!command.isCurrent())return;
-    renderFrozenProductLayout();
-    if (selectedProductId) {
-      const selected = frozenProducts.find(p => p.id === selectedProductId);
-      if (selected) await showProductDetail(selected);
-    }
+    await renderFrozenProductLayout();
   }
 
  },{roles:['admin','office']});
 }
 
 function bindProductListEvents() {
-  document.querySelectorAll('.frozen-product-category-header').forEach(header => {
-    header.addEventListener('click', () => {
-      const categoryKey = header.dataset.category;
-      const body = document.querySelector(`.frozen-product-category-items[data-category="${categoryKey}"]`);
-      if (!categoryKey || !body) return;
-      const collapsed = body.style.display !== 'none';
-      setFrozenProductCategoryCollapsed(categoryKey, collapsed);
-      renderFrozenProductLayout();
-      if (selectedProductId) {
-        const selected = frozenProducts.find(p => p.id === selectedProductId);
-        if (selected) showProductDetail(selected);
-      }
+  const list=document.getElementById('productList');
+  document.querySelectorAll('[data-frozen-kind]').forEach(button=>{
+    button.addEventListener('click',()=>{
+      if(selectedKind===button.dataset.frozenKind) return;
+      selectedKind=button.dataset.frozenKind;
+      productQuery='';
+      return renderFrozenProductLayout();
     });
   });
-
-  document.querySelectorAll('.recipe-list-item').forEach(item => {
-    item.addEventListener('click', async (e) => {
-      if (e.target.closest('.drag-handle')) return;
-      selectedProductId = item.dataset.id;
-      document.querySelectorAll('.recipe-list-item').forEach(i => i.classList.remove('active'));
-      item.classList.add('active');
-      const product = frozenProducts.find(p => p.id === selectedProductId);
-      await showProductDetail(product);
+  document.getElementById('frozenProductSearch')?.addEventListener('input',event=>{
+    productQuery=event.target.value;
+    applyProductFilter();
+  });
+  list.querySelectorAll('.frozen-product-category-header').forEach(header=>{
+    header.addEventListener('click',()=>{
+      const group=header.closest('.frozen-product-category');
+      const collapsed=group.dataset.collapsed!=='true';
+      group.dataset.collapsed=String(collapsed);
+      setFrozenProductCategoryCollapsed(header.dataset.category,collapsed);
+      header.querySelector('[data-arrow]').textContent=collapsed?'▶':'▼';
+      applyProductFilter();
+    });
+  });
+  list.querySelectorAll('.recipe-list-item').forEach(item=>{
+    item.addEventListener('click',event=>{
+      if(event.target.closest('.drag-handle')||selectedProductId===item.dataset.id) return;
+      const product=frozenProducts.find(p=>p.id===item.dataset.id);
+      if(!product) return;
+      selectedProductId=product.id;
+      for(const row of list.querySelectorAll('.recipe-list-item')){
+        row.classList.toggle('active',row===item);
+        row.querySelector('.frozen-pick').setAttribute('aria-pressed',String(row===item));
+      }
+      const ready=showProductDetail(product);
+      if(window.matchMedia?.('(max-width:700px)').matches) document.getElementById('productDetail').scrollIntoView({block:'start'});
+      return ready;
     });
   });
 }
@@ -298,83 +354,91 @@ async function deleteFrozenProductIfNoLogs(product) {
   frozenProducts = frozenProducts.filter(p => p.id !== product.id);
   if (selectedProductId === product.id) selectedProductId = null;
   if(!command.isCurrent())return;
-  renderFrozenProductLayout();
+  await renderFrozenProductLayout();
   alert('삭제 완료!');
 
  },{roles:['admin','office']});
 }
 
+function mountFrozenRecovery(){
+  return mountInventoryCorrectionRecovery({
+    sourceCollection:'frozenLogs',role:currentUserRole,recoveryCache:frozenCorrectionRecoveryCache,
+    showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderFrozenProduct({force:true}),
+  });
+}
+
+function renderReceiptHistory(host,product,logs) {
+  const canManage=['admin','office'].includes(currentUserRole);
+  const unit=getFrozenProductKind(product)==='sampleSet'?'세트':'봉';
+  let page=0;
+  const size=5;
+  host.innerHTML=`<div class="frozen-history-heading"><h3>최근 기록</h3><span>최근 ${logs.length}건</span></div>
+    <table class="frozen-history-table"><thead><tr><th>입고일</th><th>유통기한</th><th>수량</th><th>담당자</th><th>작업</th></tr></thead><tbody></tbody></table>
+    <div class="frozen-paging"><span aria-live="polite"></span><button type="button" class="btn-secondary" data-prev>이전</button><button type="button" class="btn-secondary" data-next>다음</button></div>`;
+  const previous=host.querySelector('[data-prev]'), next=host.querySelector('[data-next]');
+  function draw(){
+    const start=page*size, rows=logs.slice(start,start+size);
+    host.querySelector('tbody').innerHTML=rows.map((log,i)=>{
+      const id=escapeHtml(log.id);
+      const revision=Number.isSafeInteger(log.receiptRevision)&&log.receiptRevision>0?log.receiptRevision:1;
+      const deduction=log.sampleSetLogId||Number(log.qty)<0;
+      return `<tr><td data-log-date>${escapeHtml(log.date||'—')}</td><td data-log-expiry>${escapeHtml(log.expiryDate||'—')}</td>
+        <td class="frozen-log-qty" data-log-qty>${escapeHtml(log.qty??'—')}${unit}${deduction?'<small>구성품 차감</small>':''}</td>
+        <td data-log-staff>${escapeHtml(log.staffName||'—')}</td><td><button type="button" class="frozen-detail-link" data-log-details="${i}" aria-expanded="false">상세</button></td></tr>
+        <tr class="frozen-log-details" data-detail-index="${i}" hidden><td colspan="5">
+        <div>차감 봉투 <b data-log-bags>${escapeHtml(log.deductedBagQty??'—')}장</b> · 비고 <span data-log-note>${escapeHtml(log.note||'—')}</span></div>
+        <div class="frozen-log-actions">${inventoryHandoffButton(`frozenLogs:${log.id}:${revision}`)}
+        ${canManage?`<button type="button" class="btn-secondary btn-edit-row" data-logid="${id}">수정</button>
+          <button type="button" class="btn-secondary btn-del-row" data-logid="${id}" data-qty="${escapeHtml(log.qty)}" data-bagqty="${escapeHtml(log.deductedBagQty||0)}" data-bagid="${escapeHtml(product.bagTypeId||'')}">입고 취소</button>`:
+          (INVENTORY_RECEIPT_CORRECTION_ENABLED?'<span>입고 정정·취소는 대표·사무실 계정에서 가능합니다.</span>':'')}
+        </div></td></tr>`;
+    }).join('')||'<tr><td colspan="5">최근 기록이 없습니다.</td></tr>';
+    host.querySelector('.frozen-paging span').textContent=rows.length?`${start+1}–${start+rows.length} / ${logs.length}건`:'0건';
+    previous.disabled=page===0;
+    next.disabled=start+rows.length>=logs.length;
+    for(const btn of host.querySelectorAll('[data-log-details]')){
+      btn.addEventListener('click',()=>{
+        const detail=host.querySelector(`[data-detail-index="${btn.dataset.logDetails}"]`);
+        detail.hidden=!detail.hidden;
+        btn.setAttribute('aria-expanded',String(!detail.hidden));
+        btn.textContent=detail.hidden?'상세':'접기';
+      });
+    }
+    for(const btn of host.querySelectorAll('[data-logid]')){
+      btn.addEventListener('click',()=>openIncomingAction(product,btn.dataset.logid,btn.classList.contains('btn-del-row')?'cancel':'correct').catch(error=>alert(error.message)));
+    }
+  }
+  previous.addEventListener('click',()=>{page--;draw();});
+  next.addEventListener('click',()=>{page++;draw();});
+  draw();
+}
+
 async function showProductDetail(product) {
-  const detail = document.getElementById('productDetail');
-  const logs = await loadFrozenLogs(product.id);
-  if(!detail?.isConnected||selectedProductId!==product.id)return;
-  const canManageFrozenProduct = currentUserRole === 'admin' || currentUserRole === 'office';
-
-  detail.innerHTML = `
-    <div class="detail-header">
-      <span class="detail-title">${escapeHtml(product.name)}</span>
-      <div class="detail-actions">
-        ${canManageFrozenProduct ? '<button class="btn-secondary" id="btnEditProduct">수정</button>' : ''}
-        ${canManageFrozenProduct ? '<button class="btn-secondary" id="btnDeleteProduct">삭제</button>' : ''}
-        <button class="btn-primary" id="btnAddIncoming">+ \uC785\uACE0 \uB4F1\uB85D</button>
-      </div>
+  const detail=document.getElementById('productDetail');
+  if(!detail?.isConnected||selectedProductId!==product.id) return;
+  const canManage=manageProducts&&['admin','office'].includes(currentUserRole);
+  detail.innerHTML=`<div class="frozen-selected"><span>${FROZEN_KIND_LABELS[getFrozenProductKind(product)]}</span>
+    <h3 class="detail-title">${escapeHtml(product.name)}</h3>
+    ${canManage?'<div class="frozen-master-actions"><button class="btn-secondary" id="btnEditProduct">수정</button><button class="btn-danger" id="btnDeleteProduct">삭제</button></div>':''}
     </div>
-    <div class="detail-body">
-      <!-- 입고 이력 -->
-      <div class="form-section">
-        <div class="section-header">
-          <span class="section-title">입고 이력</span>
-        </div>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>날짜</th>
-                <th>유통기한</th>
-                <th>수량(개)</th>
-                <th>차감봉투(장)</th>
-                <th>담당자</th>
-                <th>비고</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${logs.length === 0 ? `<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
-                logs.map(l => `
-                  <tr>
-                    <td>${escapeHtml(l.date || '-')}</td>
-                    <td>${escapeHtml(l.expiryDate || '-')}</td>
-                    <td>${escapeHtml(l.qty)}</td>
-                    <td>${escapeHtml(l.deductedBagQty || '-')}</td>
-                    <td>${escapeHtml(l.staffName || '-')}</td>
-                    <td>${escapeHtml(l.note || '-')}</td>
-                    <td>
-                      ${inventoryHandoffButton(`frozenLogs:${l.id}:${Number.isSafeInteger(l.receiptRevision)&&l.receiptRevision>0?l.receiptRevision:1}`)}
-                      ${canManageFrozenProduct ? `
-                        <button class="btn-edit-row" data-logid="${escapeHtml(l.id)}" style="margin-right:4px;">수정</button>
-                        <button class="btn-del-row" data-logid="${escapeHtml(l.id)}" data-qty="${escapeHtml(l.qty)}" data-bagqty="${escapeHtml(l.deductedBagQty || 0)}" data-bagid="${escapeHtml(product.bagTypeId || '')}">취소</button>
-                      ` : (INVENTORY_RECEIPT_CORRECTION_ENABLED?'<span>입고 정정·취소는 대표·사무실 계정에서 가능합니다.</span>':'')}
-                    </td>
-                  </tr>
-                `).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  `;
-
-  mountInventoryCorrectionRecovery({sourceCollection:'frozenLogs',role:currentUserRole,recoveryCache:frozenCorrectionRecoveryCache,showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderFrozenProduct({force:true})});
-  document.getElementById('btnAddIncoming')?.addEventListener('click', () => showIncomingModal(product));
-  document.getElementById('btnEditProduct')?.addEventListener('click', () => showEditProductModal(product));
-  document.getElementById('btnDeleteProduct')?.addEventListener('click', () => deleteFrozenProductIfNoLogs(product));
-
-  document.querySelectorAll('.btn-edit-row').forEach(btn => {
-    btn.addEventListener('click', () => openIncomingAction(product,btn.dataset.logid,'correct').catch(error=>alert(error.message)));
-  });
-  document.querySelectorAll('.btn-del-row').forEach(btn => {
-    btn.addEventListener('click', () => openIncomingAction(product,btn.dataset.logid,'cancel').catch(error=>alert(error.message)));
-  });
+    <section class="frozen-inline-entry" aria-label="입고 입력"><p role="status">입고 정보를 불러오는 중입니다.</p></section>
+    <section class="frozen-history" aria-label="선택 제품 최근 기록"><p role="status">기록을 불러오는 중입니다.</p></section>`;
+  detail.querySelector('#btnEditProduct')?.addEventListener('click',()=>showEditProductModal(product));
+  detail.querySelector('#btnDeleteProduct')?.addEventListener('click',()=>deleteFrozenProductIfNoLogs(product));
+  const entry=detail.querySelector('.frozen-inline-entry'),history=detail.querySelector('.frozen-history');
+  async function loadHistory(){
+    try{
+      const logs=await loadFrozenLogs(product.id);
+      if(history.isConnected&&product.id===selectedProductId) renderReceiptHistory(history,product,logs);
+    } catch(error){
+      if(!history.isConnected) return;
+      history.innerHTML='<p>이력을 불러오지 못했습니다. <button type="button" class="btn-secondary">다시 불러오기</button></p>';
+      history.querySelector('button').addEventListener('click',loadHistory);
+    }
+  }
+  mountFrozenRecovery();
+  if(product.active===false) entry.textContent='비활성 제품입니다.';
+  await Promise.all([loadHistory(),product.active===false?null:showIncomingModal(product,entry)]);
 }
 
 async function openIncomingAction(product,logId,kind) {
@@ -704,7 +768,7 @@ async function showProductModal(product) {
     if(!command.isCurrent())return;
     closeModal();
     if(!command.isCurrent())return;
-    renderFrozenProductLayout();
+    await renderFrozenProductLayout();
     alert(isNew ? '추가 완료!' : '수정 완료!');
 
  },{roles:['admin','office']});
@@ -723,220 +787,306 @@ async function getFrozenStockByProduct() {
   return map;
 }
 
-async function showIncomingModal(product) {
+function syncDraftMarker(){
+  const workspace=document.querySelector('.frozen-workspace');
+  if(workspace) workspace.dataset.hasDrafts=String(entryDrafts.size>0);
+}
+
+function mountSetResultCheck(host,product,flow) {
+  host.innerHTML=`<h3>세트 입고</h3><p role="status">이전 입고 요청의 결과를 확인해주세요.</p>
+    <button type="button" class="btn-secondary">원래 작업 결과 확인</button>`;
+  const inspect=host.querySelector('button');
+  inspect.addEventListener('click',async()=>{
+    inspect.disabled=true;
+    try{
+      const result=await flow.inspectResult();
+      if(result.confirmed){
+        pendingSetChecks.delete(product.id);
+        entryDrafts.delete(product.id);
+        syncDraftMarker();
+        if(host.isConnected) await renderFrozenProduct({force:true});
+      }else if(host.isConnected) host.querySelector('p').textContent='아직 서버 결과를 확인하지 못했습니다. 잠시 후 다시 확인해주세요.';
+    }catch(error){if(host.isConnected) host.querySelector('p').textContent=error.message;}
+    finally{inspect.disabled=false;}
+  });
+}
+
+async function showIncomingModal(product,host=null) {
   const page=getPageContext();
-  const today = getToday();
-  const futureStr = addMonthsKST(18);
-  let previewBag=null;
+  const current=()=> (!page||page.isCurrent())&&(!host||host.isConnected&&product.id===selectedProductId);
+  if(host&&pendingSetChecks.has(product.id)){
+    mountSetResultCheck(host,product,pendingSetChecks.get(product.id));
+    return;
+  }
+  const today=getToday(), futureStr=addMonthsKST(18);
+  const isSampleSet=getFrozenProductKind(product)==='sampleSet';
+  const components=isSampleSet?normalizeComponents(product.components):[];
+  let previewBag=null,sampleSetServerFlow=null,stockMap={};
   if(product.bagTypeId){
-    try{const snap=await getDoc(doc(db,'bagTypes',product.bagTypeId));
-      if(snap.exists()&&Number.isFinite(Number(snap.data().currentQty)))previewBag={name:snap.data().name||'연결 봉투',qty:Number(snap.data().currentQty)};
-    }catch{/* Preview is optional; the existing save-time server check remains authoritative. */}
+    try{
+      const snap=await getDoc(doc(db,'bagTypes',product.bagTypeId));
+      if(snap.exists()&&Number.isFinite(Number(snap.data().currentQty))) previewBag={name:snap.data().name||'연결 봉투',qty:Number(snap.data().currentQty)};
+    }catch{/* 저장할 때 트랜잭션이 최신 봉투를 다시 확인한다. */}
   }
-
-  // 샘플세트: 구성품 자동차감 준비
-  const isSampleSet = getFrozenProductKind(product) === 'sampleSet';
-  const components = isSampleSet ? normalizeComponents(product.components) : [];
-  let sampleSetServerFlow=null;
-  if(isSampleSet){try{sampleSetServerFlow=await prepareFrozenSampleSetIncoming(product.id);}catch(error){alert(error.message);return;}}
-  const stockMap = components.length > 0 ? await getFrozenStockByProduct() : {};
-  if(page&&!page.isCurrent())return;
-  const getComponentName = (id) => frozenProducts.find(p => p.id === id)?.name || '(삭제된 제품)';
-
-  showModal(`
-    <h3 class="modal-title">입고 등록 — ${escapeHtml(product.name)}</h3>
-    <div class="form-group">
-      <label>날짜 *</label>
-      <input type="date" id="m_date" value="${today}" max="${today}" />
-    </div>
-    <div class="form-group">
-      <label>유통기한 *</label>
-      <input type="date" id="m_expiry" value="${futureStr}" />
-    </div>
-    <div class="form-group">
-      <label>봉지수 *</label>
-      <input type="number" id="m_qty" placeholder="봉지수 입력" />
-    </div>
-    ${product.bagTypeId?'<p id="m_bagPreview" role="status" aria-live="polite" style="font-size:12px;margin:8px 0"></p>':''}
-    ${components.length > 0 ? `
-      <div class="form-group" id="m_compPreview" style="background:#f7f7f7;border-radius:6px;padding:10px 12px;font-size:12.5px;color:#555;">
-        세트 수량을 입력하면 구성품 차감 내역이 표시됩니다.
-      </div>
-    ` : ''}
-    <div class="form-group">
-      <label>담당자 *</label>
-      <select id="m_staff">
-        <option value="">선택</option>
-        ${sampleSetServerFlow ? (sampleSetServerFlow.actor.sharedQc ? sampleSetServerFlow.actor.staffOptions : [{employeeId:sampleSetServerFlow.actor.employeeId,name:sampleSetServerFlow.actor.name}]).map(s=>`<option value="${escapeAttribute(s.employeeId)}">${escapeHtml(s.name)}</option>`).join('') : getStaffOptions(['senior', 'lead', 'office'])}
-      </select>
-    </div>
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="closeModal()">취소</button>
-      <button class="btn-primary" id="btnSaveIncoming">입고</button>
-    </div>
-  `);
-
-  const updateBagPreview=()=>{
-    const el=document.getElementById('m_bagPreview');if(!el)return;
-    if(!previewBag){el.textContent='봉투 재고를 확인하지 못했습니다. 저장 시 다시 확인합니다.';return;}
-    const qty=parsePositiveWholeQty(document.getElementById('m_qty').value) || 0;
-    el.textContent=qty>0?`${previewBag.name} · 현재 ${previewBag.qty}장 · 필요 ${qty}장 · 예상 잔량 ${previewBag.qty-qty}장${qty>previewBag.qty?' (부족)':''}`:`${previewBag.name} · 현재 ${previewBag.qty}장 (저장 시 최신 재고 재확인)`;
-    el.style.color=qty>previewBag.qty?'#b33333':'#555';
-  };
-  document.getElementById('m_qty').addEventListener('input',updateBagPreview);
-  updateBagPreview();
-
-  // 구성품 차감 미리보기
-  if (components.length > 0) {
-    document.getElementById('m_qty').addEventListener('input', (e) => {
-      const setQty = parsePositiveWholeQty(e.target.value) || 0;
-      const el = document.getElementById('m_compPreview');
-      if (!el) return;
-      if (setQty <= 0) {
-        el.innerHTML = '세트 수량을 입력하면 구성품 차감 내역이 표시됩니다.';
-        el.style.color = '#555';
-        return;
-      }
-      el.innerHTML = components.map(c => {
-        const need = setQty * c.qty;
-        const cur = stockMap[c.frozenProductId] || 0;
-        const after = cur - need;
-        const short = after < 0;
-        return `<div style="margin-bottom:2px;${short ? 'color:#e53e3e;font-weight:600;' : ''}">
-          ${escapeHtml(getComponentName(c.frozenProductId))} -${need}개 (현재 ${cur} → ${after})${short ? ' ⚠️ 재고 부족' : ''}
-        </div>`;
-      }).join('');
-    });
-  }
-
-  document.getElementById('btnSaveIncoming').addEventListener('click', async () => {
- return runPageCommand(frozenProductResource,async command=>{
-  const {runTransaction}=commandWrites(command);
-
-    const date = document.getElementById('m_date').value;
-    const expiry = document.getElementById('m_expiry').value;
-    const qty = parsePositiveWholeQty(document.getElementById('m_qty').value);
-    const staff = document.getElementById('m_staff').value;
-    const note = '';
-
-    if (!date) { alert('날짜를 입력해주세요.'); return; }
-    if (date > today) { alert('미래 날짜는 입력할 수 없습니다.'); return; }
-    if (!expiry) { alert('유통기한을 입력해주세요.'); return; }
-    if (expiry < date) { alert('유통기한이 입고일보다 빠릅니다.'); return; }
-    if (!Number.isSafeInteger(qty) || qty <= 0) { alert('봉지수는 1봉 이상의 안전한 정수로 입력해주세요.'); return; }
-    if (!staff) { alert('담당자는 필수입니다.'); return; }
-    if (await blockIfClosed(date, command)) return;
-
-    if(sampleSetServerFlow){
-      try{await sampleSetServerFlow.submit({date,expiry,quantity:qty,employeeId:staff,command});if(!command.isCurrent())return;closeModal();await showProductDetail(product);showStatus('샘플세트 입고 완료!');}
-      catch(error){alert(error.message);if(sampleSetServerFlow.dispatched){document.getElementById('btnSaveIncoming').disabled=true;const inspect=document.createElement('button');inspect.className='btn-secondary';inspect.textContent='원래 작업 결과 확인';inspect.addEventListener('click',async()=>{try{const result=await sampleSetServerFlow.inspectResult();if(result.confirmed&&command.isCurrent()){closeModal();await showProductDetail(product);}else alert('아직 결과를 확인하지 못했습니다. 자동 재전송하지 않습니다.');}catch(e){alert(e.message);}});document.getElementById('btnSaveIncoming').after(inspect);}}
+  if(!current()) return;
+  if(isSampleSet){
+    try{
+      sampleSetServerFlow=await prepareFrozenSampleSetIncoming(product.id);
+      if(current()&&components.length) stockMap=await getFrozenStockByProduct();
+    }catch(error){
+      if(!current()) return;
+      if(!host){alert(error.message);return;}
+      host.innerHTML='<h3>세트 입고</h3><p role="status"></p><button type="button" class="btn-secondary">다시 확인</button>';
+      host.querySelector('p').textContent=error.message;
+      host.querySelector('button').addEventListener('click',event=>{
+        event.currentTarget.disabled=true;
+        return showIncomingModal(product,host);
+      });
       return;
     }
-
-    if (components.length > 440 || components.some(c => !Number.isSafeInteger(qty * c.qty))) {
-      throw new Error('구성품 수량 또는 거래 크기가 허용 범위를 벗어났습니다.');
-    }
-
-    const frozenLogRef = doc(collection(db, 'frozenLogs'));
-    const activityRef = doc(collection(db, 'activityLogs'));
-    const componentRefs = components.map(() => doc(collection(db, 'frozenLogs')));
-    const bagLogRef = product.bagTypeId ? doc(collection(db, 'bagLogs')) : null;
-    const ledgerRef = product.bagTypeId ? doc(collection(db, 'stockLedger')) : null;
-    const transfer = frozenProductReceiptTransfer({ product, frozenLogId: frozenLogRef.id, date, expiry, qty, staff });
-    const transferRef = transfer ? doc(db, 'productTransferRequests', transfer.idempotencyKey) : null;
-    const productRef = doc(db, 'frozenProducts', product.id);
-    const closingRef = doc(db, 'closings', date);
-    const bagRef = product.bagTypeId ? doc(db, 'bagTypes', product.bagTypeId) : null;
-    const createdAt = new Date();
-    const expectedProduct = JSON.stringify({
-      name: product.name, kind: getFrozenProductKind(product), bagTypeId: product.bagTypeId || null,
-      recipeTitleRef: product.recipeTitleRef || null, components,
-    });
-    // All document reads precede all writes. Generated IDs are stable across SDK retries.
-    await runTransaction(db, async tx => {
-      const [productSnap, closingSnap, bagSnap, ...newSnaps] = await Promise.all([
-        tx.get(productRef), tx.get(closingRef),
-        bagRef ? tx.get(bagRef) : Promise.resolve(null),
-        ...[frozenLogRef, ...componentRefs, bagLogRef, ledgerRef, transferRef, activityRef]
-          .filter(Boolean).map(ref => tx.get(ref)),
-      ]);
-      if (newSnaps.some(snap => snap.exists())) throw new Error('입고 문서 ID가 이미 사용 중입니다. 저장을 중단했습니다.');
-      if (closingSnap.exists() && closingSnap.data().status === 'closed') throw new Error(`${date}는 이미 마감된 날짜입니다.`);
-      if (!productSnap.exists() || productSnap.data().active === false) throw new Error('제품이 변경되거나 비활성화되었습니다. 다시 불러와주세요.');
-      const liveProduct = productSnap.data();
-      if (JSON.stringify({
-        name: liveProduct.name, kind: getFrozenProductKind(liveProduct), bagTypeId: liveProduct.bagTypeId || null,
-        recipeTitleRef: liveProduct.recipeTitleRef || null,
-        components: getFrozenProductKind(liveProduct) === 'sampleSet' ? normalizeComponents(liveProduct.components) : [],
-      }) !== expectedProduct) throw new Error('제품 구성이 변경되었습니다. 다시 불러와주세요.');
-      if (bagRef && !bagSnap?.exists()) throw new Error('연결된 봉투 문서가 없습니다. 입고를 중단하고 봉투 마스터를 확인해주세요.');
-      let deductedBagQty = 0;
-      if (bagSnap?.exists()) {
-        const bagData = bagSnap.data();
-        const currentBag = Number(bagData.currentQty ?? 0);
-        if (!Number.isFinite(currentBag) || currentBag < qty) throw new Error(`봉투 재고가 부족하거나 유효하지 않습니다. 현재 ${bagData.currentQty}장, 필요 ${qty}장`);
-        const newQty = currentBag - qty;
-        tx.update(bagRef, { currentQty: newQty, updatedAt: createdAt });
-        tx.set(bagLogRef, {
-          date, timestamp: createdAt, bagTypeId: product.bagTypeId, bagNameSnapshot: bagData.name,
-          type: 'autoDeduct', qty: -qty, before: currentBag, after: newQty, staffName: staff,
-          note: `동결제품 입고 자동차감 - ${product.name}`,
-        });
-        tx.set(ledgerRef, {
-          actionType: 'frozenProductIncoming', actionId: frozenLogRef.id, timestamp: createdAt,
-          date, status: 'active', items: [{
-            collection: 'bagTypes', docId: product.bagTypeId, field: 'currentQty', delta: -qty,
-            before: currentBag, after: newQty, label: `${bagData.name} 봉투`,
-            stockUpdatedAtSnapshot: createdAt, bagLogId: bagLogRef.id,
-          }],
-        });
-        deductedBagQty = qty;
+  }
+  if(!current()) return;
+  const getComponentName=id=>frozenProducts.find(p=>p.id===id)?.name||'(삭제된 제품)';
+  const fid=id=>host?'frozen_inline_'+id:id;
+  const staffOptions=sampleSetServerFlow
+    ? (sampleSetServerFlow.actor.sharedQc?(sampleSetServerFlow.actor.staffOptions||[]):[sampleSetServerFlow.actor])
+      .map(staff=>`<option value="${escapeAttribute(staff.employeeId)}">${escapeHtml(staff.name)}</option>`).join('')
+    : getStaffOptions(['senior','lead','office']);
+  const formMarkup=`
+    <h3 class="${host?'':'modal-title'}">${host?'입고 입력':'입고 등록 — '+escapeHtml(product.name)}</h3>
+    <div class="frozen-entry-fields">
+      <div class="form-group"><label for="${fid('m_qty')}">${isSampleSet?'세트 수량':'입고 수량 (봉)'} *</label>
+        <input type="number" id="${fid('m_qty')}" min="1" step="1" inputmode="numeric" placeholder="${isSampleSet?'세트 수':'봉지수'} 입력"></div>
+      <div class="form-group"><label for="${fid('m_staff')}">담당자 *</label>
+        <select id="${fid('m_staff')}"><option value="">담당자 선택</option>${staffOptions}</select></div>
+      <div class="form-group"><label for="${fid('m_date')}">입고일 *</label>
+        <input type="date" id="${fid('m_date')}" value="${today}" max="${today}"></div>
+      <div class="form-group"><label for="${fid('m_expiry')}">유통기한 *</label>
+        <input type="date" id="${fid('m_expiry')}" value="${futureStr}"></div>
+    </div>
+    ${product.bagTypeId?`<p id="${fid('m_bagPreview')}" class="frozen-bag-preview" role="status" aria-live="polite"></p>`:''}
+    ${components.length?`<div id="${fid('m_compPreview')}" class="frozen-component-preview" aria-live="polite">세트 수량을 입력하면 구성품 차감 내역이 표시됩니다.</div>`:''}
+    <div class="${host?'frozen-entry-actions':'modal-actions'}">
+      ${host?'<span>입고 등록 후 재고앱 인계 확인</span>':'<button class="btn-secondary" onclick="closeModal()">취소</button>'}
+      <button type="button" class="btn-primary" id="${fid('btnSaveIncoming')}">입고 등록</button>
+    </div>`;
+  if(host) host.innerHTML=formMarkup;
+  else showModal(formMarkup);
+  const form=host||document.getElementById('modalOverlay');
+  const field=id=>form.querySelector('#'+fid(id));
+  const updatePreview=()=>{
+    const qty=parsePositiveWholeQty(field('m_qty').value)||0;
+    const el=field('m_bagPreview');
+    if(el){
+      if(!previewBag) el.textContent='봉투 재고를 확인하지 못했습니다. 저장 시 다시 확인합니다.';
+      else{
+        el.textContent=qty?`${previewBag.name} · 현재 ${previewBag.qty}장 · 필요 ${qty}장 · 예상 잔량 ${previewBag.qty-qty}장${qty>previewBag.qty?' (부족)':''}`:`${previewBag.name} · 현재 ${previewBag.qty}장 (저장 시 최신 재고 재확인)`;
+        el.classList.toggle('frozen-shortage',qty>previewBag.qty);
       }
-      tx.set(frozenLogRef, {
-        date, timestamp: createdAt, productId: product.id, productNameSnapshot: product.name,
-        componentsSnapshot: getFrozenProductKind(product) === 'sampleSet' ? components : null, expiryDate: expiry, qty,
-        bagTypeId: product.bagTypeId || null, deductedBagQty, staffName: staff, note,
-        status: 'active', ledgerId: deductedBagQty ? ledgerRef.id : null,
-        ...(componentRefs.length ? { componentDeductLogIds: componentRefs.map(ref => ref.id) } : {}),
+    }
+    if(components.length){
+      field('m_compPreview').innerHTML=qty?components.map(c=>{
+        const need=qty*c.qty,cur=stockMap[c.frozenProductId]||0,after=cur-need;
+        return `<div class="${after<0?'frozen-shortage':''}">${escapeHtml(getComponentName(c.frozenProductId))} -${need}개 (현재 ${cur} → ${after})${after<0?' · 재고 부족':''}</div>`;
+      }).join(''):'세트 수량을 입력하면 구성품 차감 내역이 표시됩니다.';
+    }
+    if(host) field('btnSaveIncoming').disabled=!qty||!field('m_staff').value||!field('m_date').value||!field('m_expiry').value;
+  };
+  const fields=['m_qty','m_date','m_expiry','m_staff'];
+  if(host){
+    const defaults=entryDefaults.get(product.id);
+    if(defaults) for(const [id,value] of Object.entries(defaults)) field(id).value=value;
+    markFieldsSaved(form);
+    const draft=entryDrafts.get(product.id);
+    if(draft) for(const id of fields) field(id).value=draft[id];
+  }
+  const onEdit=()=>{
+    if(host){
+      if(hasDirtyFields(host)) entryDrafts.set(product.id,Object.fromEntries(fields.map(id=>[id,field(id).value])));
+      else entryDrafts.delete(product.id);
+      syncDraftMarker();
+    }
+    updatePreview();
+  };
+  for(const id of fields){
+    field(id).addEventListener('input',onEdit);
+    field(id).addEventListener('change',onEdit);
+  }
+  updatePreview();
+  function finish(){
+    entryDrafts.delete(product.id);
+    pendingSetChecks.delete(product.id);
+    syncDraftMarker();
+    if(!host){closeModal();return;}
+    entryDefaults.set(product.id,Object.fromEntries(['m_date','m_expiry','m_staff'].map(id=>[id,field(id).value])));
+    field('m_qty').value='';
+    markFieldsSaved(host);
+    updatePreview();
+  }
+  const save=field('btnSaveIncoming');
+  let submitting=false;
+  save.addEventListener('click',async()=>{
+    if(submitting||!current()||sampleSetServerFlow?.dispatched) return;
+    const date=field('m_date').value,expiry=field('m_expiry').value;
+    const qty=parsePositiveWholeQty(field('m_qty').value),staff=field('m_staff').value;
+    const workspace=host?.closest('.frozen-workspace');
+    submitting=true;
+    save.disabled=true;
+    if(workspace){workspace.inert=true;workspace.dataset.entrySaving='true';}
+    try{
+      await runPageCommand(frozenProductResource,async command=>{
+        if(!current()) return;
+        if (!date) { alert('날짜를 입력해주세요.'); return; }
+        if (date > today) { alert('미래 날짜는 입력할 수 없습니다.'); return; }
+        if (!expiry) { alert('유통기한을 입력해주세요.'); return; }
+        if (expiry < date) { alert('유통기한이 입고일보다 빠릅니다.'); return; }
+        if (!Number.isSafeInteger(qty) || qty <= 0) { alert('봉지수는 1봉 이상의 안전한 정수로 입력해주세요.'); return; }
+        if (!staff) { alert('담당자는 필수입니다.'); return; }
+        if (await blockIfClosed(date, command)) return;
+
+        if(sampleSetServerFlow){
+          try{
+            await sampleSetServerFlow.submit({date,expiry,quantity:qty,employeeId:staff,command});
+            if(!command.isCurrent()) return;
+            finish();
+            showStatus('샘플세트 입고 완료!');
+          }catch(error){
+            if(!current()) return;
+            alert(error.message);
+            if(sampleSetServerFlow.dispatched){
+              if(host) pendingSetChecks.set(product.id,sampleSetServerFlow);
+              if(host) mountSetResultCheck(host,product,sampleSetServerFlow);
+              else{
+                const inspect=document.createElement('button');
+                inspect.className='btn-secondary';
+                inspect.textContent='원래 작업 결과 확인';
+                inspect.addEventListener('click',async()=>{
+                  try{
+                    const result=await sampleSetServerFlow.inspectResult();
+                    if(result.confirmed&&command.isCurrent()){finish();await renderFrozenProduct({force:true});}
+                    else alert('아직 결과를 확인하지 못했습니다. 자동 재전송하지 않습니다.');
+                  }catch(e){alert(e.message);}
+                });
+                save.after(inspect);
+              }
+            }
+          }
+          return;
+        }
+        await commitFrozenReceipt(command,{product,date,expiry,qty,staff,components,getComponentName});
+        if(!command.isCurrent()) return;
+        finish();
+        showStatus('입고 등록 완료!');
+      },{roles:['admin','office','production']});
+    }finally{
+      submitting=false;
+      if(workspace){workspace.inert=false;delete workspace.dataset.entrySaving;}
+      if(form.isConnected&&current()&&(!host||host.contains(save))&&!sampleSetServerFlow?.dispatched){
+        save.disabled=false;
+        updatePreview();
+      }
+    }
+  });
+}
+
+async function commitFrozenReceipt(command,{product,date,expiry,qty,staff,components,getComponentName}) {
+  const {runTransaction}=commandWrites(command);
+  const note='';
+  if (components.length > 440 || components.some(c => !Number.isSafeInteger(qty * c.qty))) {
+    throw new Error('구성품 수량 또는 거래 크기가 허용 범위를 벗어났습니다.');
+  }
+
+  const frozenLogRef = doc(collection(db, 'frozenLogs'));
+  const activityRef = doc(collection(db, 'activityLogs'));
+  const componentRefs = components.map(() => doc(collection(db, 'frozenLogs')));
+  const bagLogRef = product.bagTypeId ? doc(collection(db, 'bagLogs')) : null;
+  const ledgerRef = product.bagTypeId ? doc(collection(db, 'stockLedger')) : null;
+  const transfer = frozenProductReceiptTransfer({ product, frozenLogId: frozenLogRef.id, date, expiry, qty, staff });
+  const transferRef = transfer ? doc(db, 'productTransferRequests', transfer.idempotencyKey) : null;
+  const productRef = doc(db, 'frozenProducts', product.id);
+  const closingRef = doc(db, 'closings', date);
+  const bagRef = product.bagTypeId ? doc(db, 'bagTypes', product.bagTypeId) : null;
+  const createdAt = new Date();
+  const expectedProduct = JSON.stringify({
+    name: product.name, kind: getFrozenProductKind(product), bagTypeId: product.bagTypeId || null,
+    recipeTitleRef: product.recipeTitleRef || null, components,
+  });
+  // All document reads precede all writes. Generated IDs are stable across SDK retries.
+  await runTransaction(db, async tx => {
+    const [productSnap, closingSnap, bagSnap, ...newSnaps] = await Promise.all([
+      tx.get(productRef), tx.get(closingRef),
+      bagRef ? tx.get(bagRef) : Promise.resolve(null),
+      ...[frozenLogRef, ...componentRefs, bagLogRef, ledgerRef, transferRef, activityRef]
+        .filter(Boolean).map(ref => tx.get(ref)),
+    ]);
+    if (newSnaps.some(snap => snap.exists())) throw new Error('입고 문서 ID가 이미 사용 중입니다. 저장을 중단했습니다.');
+    if (closingSnap.exists() && closingSnap.data().status === 'closed') throw new Error(`${date}는 이미 마감된 날짜입니다.`);
+    if (!productSnap.exists() || productSnap.data().active === false) throw new Error('제품이 변경되거나 비활성화되었습니다. 다시 불러와주세요.');
+    const liveProduct = productSnap.data();
+    if (JSON.stringify({
+      name: liveProduct.name, kind: getFrozenProductKind(liveProduct), bagTypeId: liveProduct.bagTypeId || null,
+      recipeTitleRef: liveProduct.recipeTitleRef || null,
+      components: getFrozenProductKind(liveProduct) === 'sampleSet' ? normalizeComponents(liveProduct.components) : [],
+    }) !== expectedProduct) throw new Error('제품 구성이 변경되었습니다. 다시 불러와주세요.');
+    if (bagRef && !bagSnap?.exists()) throw new Error('연결된 봉투 문서가 없습니다. 입고를 중단하고 봉투 마스터를 확인해주세요.');
+    let deductedBagQty = 0;
+    if (bagSnap?.exists()) {
+      const bagData = bagSnap.data();
+      const currentBag = Number(bagData.currentQty ?? 0);
+      if (!Number.isFinite(currentBag) || currentBag < qty) throw new Error(`봉투 재고가 부족하거나 유효하지 않습니다. 현재 ${bagData.currentQty}장, 필요 ${qty}장`);
+      const newQty = currentBag - qty;
+      tx.update(bagRef, { currentQty: newQty, updatedAt: createdAt });
+      tx.set(bagLogRef, {
+        date, timestamp: createdAt, bagTypeId: product.bagTypeId, bagNameSnapshot: bagData.name,
+        type: 'autoDeduct', qty: -qty, before: currentBag, after: newQty, staffName: staff,
+        note: `동결제품 입고 자동차감 - ${product.name}`,
       });
-      components.forEach((c, index) => {
-        tx.set(componentRefs[index], {
-          date, timestamp: createdAt, productId: c.frozenProductId,
-          productNameSnapshot: getComponentName(c.frozenProductId), componentsSnapshot: null,
-          expiryDate: null, qty: -(qty * c.qty), bagTypeId: null, deductedBagQty: 0,
-          staffName: staff, note: `샘플세트 제작 자동차감 - ${product.name} ${qty}세트`,
-          status: 'active', ledgerId: null, sampleSetLogId: frozenLogRef.id,
-        });
+      tx.set(ledgerRef, {
+        actionType: 'frozenProductIncoming', actionId: frozenLogRef.id, timestamp: createdAt,
+        date, status: 'active', items: [{
+          collection: 'bagTypes', docId: product.bagTypeId, field: 'currentQty', delta: -qty,
+          before: currentBag, after: newQty, label: `${bagData.name} 봉투`,
+          stockUpdatedAtSnapshot: createdAt, bagLogId: bagLogRef.id,
+        }],
       });
-      if (transferRef) tx.set(transferRef, transfer);
-      await recordActivity({
-      action: 'frozenProduct',
-      subAction: 'incoming',
-      date,
-      staff,
-      message: `동결제품 입고 — ${product.name} +${qty}봉 / 담당: ${staff}`,
-      details: {
-        frozenLogId: frozenLogRef.id,
-        productId: product.id,
-        productName: product.name,
-        componentsSnapshot: getFrozenProductKind(product) === 'sampleSet' ? normalizeComponents(product.components) : null,
-        qty,
-        expiryDate: expiry || null,
-        deductedBagQty,
-        bagTypeId: product.bagTypeId || null,
-        note: note || null,
-      },
-      }, { batch: tx, ref: activityRef });
+      deductedBagQty = qty;
+    }
+    tx.set(frozenLogRef, {
+      date, timestamp: createdAt, productId: product.id, productNameSnapshot: product.name,
+      componentsSnapshot: getFrozenProductKind(product) === 'sampleSet' ? components : null, expiryDate: expiry, qty,
+      bagTypeId: product.bagTypeId || null, deductedBagQty, staffName: staff, note,
+      status: 'active', ledgerId: deductedBagQty ? ledgerRef.id : null,
+      ...(componentRefs.length ? { componentDeductLogIds: componentRefs.map(ref => ref.id) } : {}),
     });
-
-    if(!command.isCurrent())return;
-    closeModal();
-    if(!command.isCurrent())return;
-    await showProductDetail(product);
-    showStatus('입고 등록 완료!');
-
- },{roles:['admin','office','production']});
-});
+    components.forEach((c, index) => {
+      tx.set(componentRefs[index], {
+        date, timestamp: createdAt, productId: c.frozenProductId,
+        productNameSnapshot: getComponentName(c.frozenProductId), componentsSnapshot: null,
+        expiryDate: null, qty: -(qty * c.qty), bagTypeId: null, deductedBagQty: 0,
+        staffName: staff, note: `샘플세트 제작 자동차감 - ${product.name} ${qty}세트`,
+        status: 'active', ledgerId: null, sampleSetLogId: frozenLogRef.id,
+      });
+    });
+    if (transferRef) tx.set(transferRef, transfer);
+    await recordActivity({
+    action: 'frozenProduct',
+    subAction: 'incoming',
+    date,
+    staff,
+    message: `동결제품 입고 — ${product.name} +${qty}봉 / 담당: ${staff}`,
+    details: {
+      frozenLogId: frozenLogRef.id,
+      productId: product.id,
+      productName: product.name,
+      componentsSnapshot: getFrozenProductKind(product) === 'sampleSet' ? normalizeComponents(product.components) : null,
+      qty,
+      expiryDate: expiry || null,
+      deductedBagQty,
+      bagTypeId: product.bagTypeId || null,
+      note: note || null,
+    },
+    }, { batch: tx, ref: activityRef });
+  });
 }
 
 // 유틸
@@ -990,7 +1140,8 @@ registerCloseModal('frozenProduct', function() {
 
 import {pageResource} from '../state/pageResources.js';
 import {pageRefresh} from '../utils/pageRefresh.js';
-import {getPageContext} from '../utils/pageLifecycle.js';
+import {getPageContext,registerPageCleanup} from '../utils/pageLifecycle.js';
+import {markFieldsSaved,hasDirtyFields} from '../utils/formDraft.js';
 import {loadPageStaff} from '../services/pageStaff.js';
 const frozenProductResource=pageResource('frozenProduct');
 frozenProductResource.refresh=renderFrozenProduct;

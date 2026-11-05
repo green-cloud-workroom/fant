@@ -8,7 +8,7 @@ export async function captureFrozenProductViews({sourceFiles,role='office',text=
  try{
   for(const field of ['name','id'])add('list-'+field,e.page.renderProductListItemCompact({...base,[field]:field==='id'?id:text}),field==='name'?'.recipe-name':'.recipe-list-item',field==='id'?id:text,field==='id'?'data-id':undefined);
   await detail('detail-name',{...base,name:text},null,'.detail-title');
-  for(const[field,col]of [['date',1],['expiryDate',2],['qty',3],['deductedBagQty',4],['staffName',5],['note',6]])await detail('history-'+field,base,{[field]:text},'tbody td:nth-child('+col+')');
+  for(const[field,attr]of [['date','date'],['expiryDate','expiry'],['qty','qty'],['deductedBagQty','bags'],['staffName','staff'],['note','note']])await detail('history-'+field,base,{[field]:text},'[data-log-'+attr+']');
   if(role!=='production'){
    for(const[field,attr]of [['id','data-logid'],['qty','data-qty'],['deductedBagQty','data-bagqty']])await detail('row-'+field,base,{[field]:field==='id'?id:text},'.btn-del-row',field==='id'?id:text,attr);
    await detail('row-bag-id',{...base,bagTypeId:id},{},'.btn-del-row',id,'data-bagid');
