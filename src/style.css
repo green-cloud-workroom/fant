@@ -4125,6 +4125,7 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
 }
 
 .frozen-workspace { padding:8px 12px 12px; color:#302820; }
+.frozen-workspace :is(input,select,button) { box-sizing:border-box; }
 .frozen-workspace [hidden] { display:none !important; }
 .frozen-workspace-heading,.frozen-selected,.frozen-master-actions,.frozen-history-heading,.frozen-entry-actions,.frozen-paging,.frozen-log-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .frozen-workspace-heading { margin-bottom:8px; }

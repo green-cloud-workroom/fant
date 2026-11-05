@@ -880,7 +880,8 @@ async function showIncomingModal(product,host=null) {
     if(el){
       if(!previewBag) el.textContent='봉투 재고를 확인하지 못했습니다. 저장 시 다시 확인합니다.';
       else{
-        el.textContent=qty?`${previewBag.name} · 현재 ${previewBag.qty}장 · 필요 ${qty}장 · 예상 잔량 ${previewBag.qty-qty}장${qty>previewBag.qty?' (부족)':''}`:`${previewBag.name} · 현재 ${previewBag.qty}장 (저장 시 최신 재고 재확인)`;
+        const current=previewBag.qty.toLocaleString('ko-KR');
+        el.textContent=qty?`${previewBag.name} · 현재 ${current}장 · 필요 ${qty.toLocaleString('ko-KR')}장 · 예상 잔량 ${(previewBag.qty-qty).toLocaleString('ko-KR')}장${qty>previewBag.qty?' (부족)':''}`:`${previewBag.name} · 현재 ${current}장 (저장 시 최신 재고 재확인)`;
         el.classList.toggle('frozen-shortage',qty>previewBag.qty);
       }
     }
