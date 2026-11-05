@@ -33,9 +33,8 @@ export async function captureSettingsBagViews({sourceFiles,role='office',text=at
   e.page.__bagFixture([bag],{lead:[{name:'담당'}],office:[]},bag.id);
   for(const field of ['name','id','category','currentQty']){
    const value=field==='id'?idText:text,row={...bag,[field]:value};
-   // Invalid category strings are tested for injection only. DOM classList may
-   // normalize duplicate whitespace/tokens; real enum classes have separate tests.
-   add('bag-list-'+field,e.page.renderBagItem(row),field==='category'?'.tag':'.recipe-list-item',field==='category'?null:value,field==='id'?'data-id':undefined);
+   const attribute={category:'data-category',id:'data-id'}[field];
+   add('bag-list-'+field,e.page.renderBagItem(row),'.bag-row',value,attribute);
   }
   const root=e.document.querySelector('#mainContent');
   async function detail(name,row,log,selector,expected=text){

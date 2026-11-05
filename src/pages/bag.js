@@ -39,96 +39,107 @@ let bagTypes = [];
 
 export async function renderBag({force=false}={}) {
   const content=document.getElementById('mainContent');
-  content.innerHTML='<div style="padding:24px;"><p>봉투 재고 로딩 중...</p></div>';
-  const data=await bagResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(bagResource,renderBag)});
-  if(!data||!content.isConnected)return;
-  bagTypes=data.bags;staffCache=data.staff;renderBagLayout();
+  const existing=content.querySelector('.bag-workspace');
+  const previousModel=bagResource.model;
+  if(!existing) content.innerHTML='<p class="list-empty">봉투 재고를 불러오는 중입니다.</p>';
+  const data=await bagResource.load(loadInitialModel,{force,onChange:pageRefresh(bagResource,renderBag)});
+  if(!data||!content.isConnected) return;
+  if(!force&&existing?.isConnected&&existing.dataset.role===currentUserRole&&previousModel===bagResource.model) return;
+  bagTypes=data.bags;
+  staffCache=data.staff;
+  await renderBagLayout();
 }
 async function loadBagTypes(scope={getDocs}) {
   const snap=await scope.getDocs(query(collection(db,'bagTypes'),orderBy('sortOrder')));
   return snap.docs.map(d=>({id:d.id,...d.data()}));
 }
 
-let selectedBagId = null;
+let selectedBagId=null;
+let bagCategory='all';
+let bagManaging=false;
+let detailRequest=0;
 
-function renderBagLayout() {
-  const content = document.getElementById('mainContent');
-  const canManageBagTypes = currentUserRole === 'admin' || currentUserRole === 'office';
-  content.innerHTML = `
-    <div class="recipe-wrap bag-page">
-      <!-- 왼쪽: 봉투 목록 -->
-      <div class="recipe-list-panel">
-        <div class="panel-header">
-          <span class="panel-title">봉투 목록</span>
-          ${canManageBagTypes ? '<button class="btn-primary" id="btnNewBag">+ 추가</button>' : ''}
-        </div>
-        <div class="recipe-list" id="bagList">
-          ${renderBagList()}
-        </div>
+function visibleBags(filter=bagCategory) {
+  return bagTypes.filter(bag=>filter==='inactive'?bag.active===false:
+    bag.active!==false&&(filter==='all'||bag.category===filter));
+}
+
+function formatBagNumber(value) {
+  const number=Number(value);
+  return value!=null&&Number.isFinite(number)?number.toLocaleString('ko-KR'):String(value??'—');
+}
+
+function renderBagLayout({keepDetail=false}={}) {
+  const content=document.getElementById('mainContent');
+  const canManage=['admin','office'].includes(currentUserRole);
+  const rows=visibleBags();
+  const selected=rows.find(bag=>bag.id===selectedBagId)||rows[0];
+  const previousDetail=keepDetail&&selected&&selected.id===selectedBagId?document.getElementById('bagDetail'):null;
+  selectedBagId=selected?.id??null;
+  const filters=[['all','전체'],['raw','생식'],['freezeDry','동결건조'],['inactive','비활성']];
+  content.innerHTML=`
+    <section class="bag-workspace" data-role="${escapeHtml(currentUserRole)}">
+      <header class="bag-page-heading"><h2>봉투 재고</h2>
+        ${canManage?`<button type="button" id="btnBagManage" class="btn-secondary" aria-pressed="${bagManaging}">${bagManaging?'관리 끝내기':'품목 관리'}</button>`:''}
+      </header>
+      <div class="bag-columns">
+        <aside class="bag-catalog" aria-label="봉투 목록">
+          <div class="bag-filters" role="group" aria-label="봉투 종류">
+            ${filters.map(([key,label])=>`<button type="button" data-bag-filter="${key}" aria-pressed="${key===bagCategory}">${label} <b>${visibleBags(key).length}</b></button>`).join('')}
+          </div>
+          <div class="bag-catalog-heading"><strong>봉투명</strong><span>현재 재고 (장)</span></div>
+          ${canManage&&bagManaging?'<div class="bag-manage-tools"><span>품목 관리</span><button type="button" class="btn-secondary" id="btnNewBag">+ 추가</button></div>':''}
+          <div id="bagList">${renderBagList(rows)}</div>
+        </aside>
+        <section id="bagDetail" aria-label="선택 봉투 이력">
+          ${selected?'':'<p class="list-empty">이 종류에 등록된 봉투가 없습니다.</p>'}
+        </section>
       </div>
-
-      <!-- 오른쪽: 입고 이력 -->
-      <div class="recipe-detail-panel" id="bagDetail">
-        <div class="detail-empty">봉투를 선택해주세요</div>
-      </div>
-    </div>
-  `;
-
+    </section>`;
+  if(previousDetail) document.getElementById('bagDetail').replaceWith(previousDetail);
+  for(const button of content.querySelectorAll('[data-bag-filter]')){
+    button.addEventListener('click',()=>{
+      if(bagCategory===button.dataset.bagFilter) return;
+      bagCategory=button.dataset.bagFilter;
+      const ready=renderBagLayout({keepDetail:true});
+      content.querySelector('[data-bag-filter][aria-pressed="true"]').focus({preventScroll:true});
+      return ready;
+    });
+  }
+  document.getElementById('btnBagManage')?.addEventListener('click',()=>{
+    bagManaging=!bagManaging;
+    return renderBagLayout();
+  });
+  document.getElementById('btnNewBag')?.addEventListener('click',showNewBagModal);
   bindBagListEvents();
-  initBagSortables();
-  document.getElementById('btnNewBag')?.addEventListener('click', showNewBagModal);
+  if(canManage&&bagManaging) initBagSortables();
+  if(selected&&!previousDetail) return showBagDetail(selected);
 }
 
-function renderBagList() {
-  if (bagTypes.length === 0) return '<div class="list-empty">등록된 봉투 없음</div>';
-
-  // 활성/비활성 분리: 활성은 카테고리별 sortable 섹션, 비활성은 하단 별도 섹션.
-  const active = bagTypes.filter(b => b.active !== false);
-  const inactive = bagTypes.filter(b => b.active === false);
-  const rawActive = active.filter(b => b.category === 'raw');
-  const freezeActive = active.filter(b => b.category === 'freezeDry');
-
-  let html = '';
-  if (rawActive.length > 0) {
-    html += `<div class="list-group-label">생식</div>`;
-    html += `<div class="sortable-master-list" id="bagListRaw" data-category="raw">${rawActive.map(b => renderBagItem(b)).join('')}</div>`;
-  }
-  if (freezeActive.length > 0) {
-    html += `<div class="list-group-label">동결건조</div>`;
-    html += `<div class="sortable-master-list" id="bagListFreezeDry" data-category="freezeDry">${freezeActive.map(b => renderBagItem(b)).join('')}</div>`;
-  }
-  if (inactive.length > 0) {
-    html += `<div class="list-group-label list-group-label--inactive">비활성</div>`;
-    html += `<div class="master-inactive-list">${inactive.map(b => renderBagItem(b)).join('')}</div>`;
-  }
-  return html;
+function renderBagList(rows) {
+  if(!rows.length) return '<p class="list-empty">표시할 봉투가 없습니다.</p>';
+  if(bagCategory==='inactive') return rows.map(renderBagItem).join('');
+  return [['raw','생식','bagListRaw'],['freezeDry','동결건조','bagListFreezeDry']].map(([key,label,id])=>{
+    const group=rows.filter(bag=>bag.category===key);
+    if(!group.length) return '';
+    return `<div class="bag-group-name">${label} <span>${group.length}</span></div>
+      <div id="${id}" class="sortable-master-list" data-category="${key}">${group.map(renderBagItem).join('')}</div>`;
+  }).join('');
 }
 
-function renderBagItem(b) {
-  const isLow = b.currentQty < (b.minimumQty || 0);
-  const inactive = b.active === false;
-  const canReorder = currentUserRole === 'admin' || currentUserRole === 'office';
-  return `
-    <div class="recipe-list-item ${selectedBagId === b.id ? 'active' : ''} ${inactive ? 'inactive-master' : ''}" data-id="${escapeHtml(b.id)}">
-      ${canReorder ? '<span class="drag-handle" title="순서 변경" aria-label="순서 변경">≡</span>' : ''}
-      <div class="recipe-list-info">
-        <span class="recipe-name" style="color:${inactive ? '#999' : isLow ? '#e53e3e' : '#1a1a1a'}">${escapeHtml(b.name)}</span>
-        <div class="recipe-tags">
-          <span class="tag tag-${escapeHtml(b.category)}">${b.category === 'raw' ? '생식' : '동결'}</span>
-          ${inactive ? '<span class="tag tag-inactive">비활성</span>' : ''}
-          <span style="font-size:11px;color:${isLow ? '#e53e3e' : '#888'}">
-            ${Math.floor((b.currentQty || 0) / (b.piecesPerBox || 1))}박스 (${escapeHtml(b.currentQty || 0)}장)
-          </span>
-        </div>
-      </div>
-      ${currentUserRole === 'admin' || currentUserRole === 'office' ? `
-        <label class="toggle-switch" title="${inactive ? '비활성' : '활성'}" onclick="event.stopPropagation()">
-          <input type="checkbox" class="bag-active-toggle" data-id="${escapeHtml(b.id)}" ${inactive ? '' : 'checked'}>
-          <span class="toggle-slider"></span>
-        </label>
-      ` : ''}
-    </div>
-  `;
+function renderBagItem(bag) {
+  const manage=bagManaging&&['admin','office'].includes(currentUserRole);
+  const active=bag.active!==false;
+  const selected=bag.id===selectedBagId;
+  const low=Number(bag.currentQty)<Number(bag.minimumQty||0);
+  return `<div class="recipe-list-item bag-row${selected?' active':''}" data-id="${escapeHtml(bag.id)}" data-category="${escapeHtml(bag.category)}">
+    ${manage&&active?'<span class="drag-handle" aria-label="순서 변경" title="순서 변경">≡</span>':''}
+    <button type="button" class="bag-pick" aria-pressed="${selected}">
+      <span class="bag-item-name">${escapeHtml(bag.name)}</span>
+      <strong class="bag-item-qty${low?' bag-low':''}" aria-label="현재 ${escapeHtml(formatBagNumber(bag.currentQty))}장">${escapeHtml(formatBagNumber(bag.currentQty))}</strong>
+    </button>
+    ${manage?`<label class="toggle-switch" title="${active?'활성':'비활성'}" onclick="event.stopPropagation()"><input type="checkbox" class="bag-active-toggle" aria-label="${escapeHtml(bag.name)} 활성" data-id="${escapeHtml(bag.id)}" ${active?'checked':''}><span class="toggle-slider"></span></label>`:''}
+  </div>`;
 }
 
 function initBagSortables() {
@@ -187,25 +198,28 @@ async function persistBagOrderWithCommand(category,command) {
     const latest=await loadBagTypes();
     if(!command.isCurrent())return;
     bagTypes=latest;
-    renderBagLayout();
-    if (selectedBagId) {
-      const selected = bagTypes.find(b => b.id === selectedBagId);
-      if (selected) await showBagDetail(selected);
-    }
+    await renderBagLayout();
   }
 }
 
 function bindBagListEvents() {
-  document.querySelectorAll('.recipe-list-item').forEach(item => {
-    item.addEventListener('click', (e) => {
-      if (e.target.closest('.drag-handle')) return;
-      selectedBagId = item.dataset.id;
-      const bag = bagTypes.find(b => b.id === selectedBagId);
-      showBagDetail(bag);
-      document.querySelectorAll('.recipe-list-item').forEach(i => i.classList.remove('active'));
-      item.classList.add('active');
+const list=document.getElementById('bagList');
+  for(const button of list.querySelectorAll('.bag-pick')){
+    button.addEventListener('click',()=>{
+      const item=button.closest('.bag-row');
+      const bag=bagTypes.find(row=>row.id===item.dataset.id);
+      if(!bag||selectedBagId===bag.id) return;
+      selectedBagId=bag.id;
+      for(const row of list.querySelectorAll('.bag-row')){
+        const selected=row===item;
+        row.classList.toggle('active',selected);
+        row.querySelector('.bag-pick').setAttribute('aria-pressed',String(selected));
+      }
+      const ready=showBagDetail(bag);
+      if(window.matchMedia?.('(max-width:700px)').matches) document.getElementById('bagDetail').scrollIntoView({block:'start'});
+      return ready;
     });
-  });
+  }
 
   document.querySelectorAll('.bag-active-toggle').forEach(cb => {
     cb.addEventListener('click', (e) => e.stopPropagation());
@@ -244,10 +258,6 @@ function bindBagListEvents() {
         if (target) target.active = active;
         if(page&&!page.isCurrent())return;
         await renderBag({force:true});
-        if (selectedBagId) {
-          const selected = bagTypes.find(b => b.id === selectedBagId);
-          if (selected) await showBagDetail(selected);
-        }
         });
       } catch (err) {
         console.error('[bag] active save failed:', err);
@@ -276,100 +286,105 @@ async function loadBagDetailLogs(bagTypeId, read=getDocs) {
     .sort((a,b)=>ms(b.timestamp)-ms(a.timestamp)||b.id.localeCompare(a.id)).slice(0,30);
 }
 
-const bagMovementLabel = row => movementLabel(row, row.type === 'incoming' ? '입고' : row.type === 'autoDeduct' ? '자동차감' : '수동조정');
+function bagMovementLabel(row) {
+  const fallback={incoming:'입고',in:'입고',out:'사용',autoDeduct:'자동차감',autoDeductReverse:'자동차감 복원'};
+  return movementLabel(row,fallback[row.type]||'수동조정');
+}
+
+function bagMovementSource(row) {
+  const note=String(row.note||row.reason||'');
+  if(row.type==='autoDeductReverse') return '생산 취소·복원';
+  if(/^동결제품 입고/.test(note)||row.sampleSetLogId) return '동결제품 입고';
+  if(/^내일생산불러오기/.test(note)||(row.type==='autoDeduct'&&row.executionId)) return '생산 불러오기';
+  if(/입고예정|입고 예정/.test(note)) return '입고 예정';
+  if(row.type==='incoming'||row.type==='in') return '봉투 입고';
+  if(row.type==='adjust'||row.manualMovement) return '수동조정';
+  return '경로 미기록';
+}
+
+function bagHistoryRow(log,logs) {
+  const kind=bagMovementLabel(log);
+  const amount=log.qty??log.delta;
+  const numberClass=amount>0?'stock-quantity--increase':amount<0?'stock-quantity--decrease':'';
+  const note=movementNote(log.note||log.reason||log.manualMovement?.reason||'—','bagLogs',logs,bagMovementLabel);
+  const hasBalance=Number.isFinite(log.before)&&Number.isFinite(log.after);
+  return `<tr>
+    <td>${escapeHtml(log.date||'—')}</td>
+    <td><span class="tag stock-movement-badge" data-movement-label="${escapeHtml(kind)}">${escapeHtml(kind)}</span></td>
+    <td class="bag-history-qty ${numberClass}">${amount>0?'+':''}${escapeHtml(formatBagNumber(amount))}</td>
+    <td>${escapeHtml(bagMovementSource(log))}</td><td>${escapeHtml(log.staffName||log.staff||'—')}</td>
+    <td class="bag-note">${escapeHtml(note)}${hasBalance?`<details><summary>변경 전후</summary>${escapeHtml(formatBagNumber(log.before))}장 → ${escapeHtml(formatBagNumber(log.after))}장</details>`:''}</td>
+  </tr>`;
+}
+
+function renderBagHistory(host,logs) {
+  const labels=[...new Set(logs.map(bagMovementLabel))];
+  host.innerHTML=`<div class="bag-history-heading"><h3>입출고·변동 이력</h3><span>최근 ${logs.length}건</span>
+    <div class="bag-history-filters">
+      <select aria-label="이력 구분"><option value="">전체 구분</option>${labels.map(label=>`<option value="${escapeHtml(label)}">${escapeHtml(label)}</option>`).join('')}</select>
+      <input type="search" aria-label="비고·담당자·처리 경로 검색" placeholder="비고·담당자·경로 검색">
+    </div></div>
+    <table class="bag-history-table"><thead><tr><th>날짜</th><th>구분</th><th>증감 (장)</th><th>처리 경로</th><th>담당자</th><th>비고·사유</th></tr></thead><tbody></tbody></table>
+    <div class="bag-paging"><span aria-live="polite"></span><button type="button" class="btn-secondary" data-prev>이전</button><button type="button" class="btn-secondary" data-next>다음</button></div>`;
+  let page=0;
+  const perPage=8;
+  const select=host.querySelector('select'), input=host.querySelector('input');
+  const prev=host.querySelector('[data-prev]'), next=host.querySelector('[data-next]');
+  function update(){
+    const search=input.value.trim().toLowerCase();
+    const filtered=logs.filter(log=>{
+      if(select.value&&bagMovementLabel(log)!==select.value) return false;
+      if(!search) return true;
+      const note=movementNote(log.note||log.reason||log.manualMovement?.reason||'','bagLogs',logs,bagMovementLabel);
+      return `${note} ${log.staffName||log.staff||''} ${bagMovementSource(log)}`.toLowerCase().includes(search);
+    });
+    const start=page*perPage;
+    const shown=filtered.slice(start,start+perPage);
+    host.querySelector('tbody').innerHTML=shown.map(log=>bagHistoryRow(log,logs)).join('')||'<tr><td colspan="6">표시할 이력이 없습니다.</td></tr>';
+    host.querySelector('.bag-paging span').textContent=filtered.length?`${start+1}–${start+shown.length} / ${filtered.length}건`:'0건';
+    prev.disabled=page===0;
+    next.disabled=start+shown.length>=filtered.length;
+  }
+  const filter=()=>{page=0;update();};
+  select.addEventListener('change',filter);
+  input.addEventListener('input',filter);
+  prev.addEventListener('click',()=>{page--;update();});
+  next.addEventListener('click',()=>{page++;update();});
+  update();
+}
 
 async function showBagDetail(bag) {
-  const detail = document.getElementById('bagDetail');
-  const canManageBagTypes = currentUserRole === 'admin' || currentUserRole === 'office';
-
-  // 입고 이력 로드
-  const logs = await loadBagDetailLogs(bag.id);
-  if(!detail.isConnected || selectedBagId!==bag.id)return;
-
-  const currentQty = Number(bag.currentQty || 0);
-  const minimumQty = Number(bag.minimumQty || 0);
-  const boxDiff = Math.floor(currentQty / (bag.piecesPerBox || 1)) - Math.floor(minimumQty / (bag.piecesPerBox || 1));
-  const status = currentQty <= 0 ? 'empty' : currentQty < minimumQty ? 'low' : 'normal';
-  detail.innerHTML = `
-    <div class="detail-header">
-      <span class="detail-title">${escapeHtml(bag.name)}</span>
-      <div class="detail-actions">
-        ${canManageBagTypes ? '<button class="btn-secondary" id="btnEditBag">수정</button>' : ''}
-        ${canManageBagTypes ? '<button class="btn-danger" id="btnDeleteBag">삭제</button>' : ''}
-        <button class="btn-secondary" id="btnAdjustBag">수동조정</button>
-        <button class="btn-primary" id="btnAddBagIncoming">+ 입고 등록</button>
-      </div>
-    </div>
-    <div class="detail-body">
-      <!-- 요약 -->
-      <div class="form-section">
-        <div class="stat-row">
-          <div class="stat-item">
-            <span class="stat-label">현재 재고</span>
-            <span class="stat-value">${escapeHtml(bag.currentQty || 0)}장 (${Math.floor((bag.currentQty || 0) / (bag.piecesPerBox || 1))}박스)</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">박스당 장수</span>
-            <span class="stat-value">${escapeHtml(bag.piecesPerBox || '-')}장</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">최소재고</span>
-            <span class="stat-value" style="color:${(bag.currentQty || 0) < (bag.minimumQty || 0) ? '#e53e3e' : '#1a1a1a'}">
-              ${Math.floor((bag.minimumQty || 0) / (bag.piecesPerBox || 1))}박스
-            </span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">상태</span>
-            <span class="stat-value bag-status-line">
-              <span class="egg-status egg-status--${status}">${status === 'empty' ? '0' : status === 'low' ? '부족' : '정상'}</span>
-              ${minimumQty > 0 ? `<span class="egg-minimum-diff">최소재고 대비 ${boxDiff >= 0 ? '+' : ''}${boxDiff}박스</span>` : ''}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <!-- 이력 테이블 -->
-      <div class="form-section">
-        <div class="section-header">
-          <span class="section-title">입고 이력</span>
-        </div>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>날짜</th>
-                <th>구분</th>
-                <th>수량(장)</th>
-                <th>담당자</th>
-                <th>비고</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${logs.length === 0 ? `<tr><td colspan="5" style="text-align:center;color:#aaa;padding:16px;">이력 없음</td></tr>` :
-                logs.map(l => `
-                  <tr>
-                    <td>${escapeHtml(l.date || '-')}</td>
-                    <td>
-                      <span class="tag stock-movement-badge" data-movement-label="${escapeHtml(bagMovementLabel(l))}">
-                        ${escapeHtml(bagMovementLabel(l))}
-                      </span>
-                    </td>
-                    <td class="${l.qty > 0 ? 'stock-quantity--increase' : l.qty < 0 ? 'stock-quantity--decrease' : ''}">${l.qty > 0 ? '+' : ''}${escapeHtml(l.qty)}</td>
-                    <td>${escapeHtml(l.staffName || '-')}</td>
-                    <td>${escapeHtml(movementNote(l.note || l.reason || '-', 'bagLogs', logs, bagMovementLabel))}</td>
-                  </tr>
-                `).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  `;
-
-  document.getElementById('btnAddBagIncoming').addEventListener('click', () => showBagIncomingModal(bag));
-  document.getElementById('btnAdjustBag').addEventListener('click', () => showBagAdjustModal(bag));
-  document.getElementById('btnEditBag')?.addEventListener('click', () => showEditBagModal(bag));
-  document.getElementById('btnDeleteBag')?.addEventListener('click', () => deleteBagType(bag));
+  const detail=document.getElementById('bagDetail');
+  if(!detail?.isConnected||selectedBagId!==bag.id) return;
+  const request=++detailRequest;
+  const current=Number(bag.currentQty??0),minimum=Number(bag.minimumQty??0),pieces=Number(bag.piecesPerBox);
+  const status=current<=0?'empty':current<minimum?'low':'normal';
+  const canManage=bagManaging&&['admin','office'].includes(currentUserRole);
+  detail.innerHTML=`<div class="bag-selected-card">
+    <div class="bag-selected-heading"><div><span class="bag-category">${bag.active===false?'비활성':bag.category==='raw'?'생식':'동결건조'}</span>
+      <h3 class="detail-title">${escapeHtml(bag.name)}</h3></div><div class="bag-actions">
+      ${canManage?'<button type="button" class="btn-secondary" id="btnEditBag">수정</button><button type="button" class="btn-danger" id="btnDeleteBag">삭제</button>':''}
+      <button type="button" class="btn-secondary" id="btnAdjustBag">수동조정</button><button type="button" class="btn-primary" id="btnAddBagIncoming">+ 입고 등록</button>
+    </div></div>
+    <div class="detail-body bag-balance"><span>현재 재고 <b>${escapeHtml(formatBagNumber(bag.currentQty??0))}</b>장</span>
+      <span class="egg-status egg-status--${status}">${status==='empty'?'0장':status==='low'?'부족':'정상'}</span>
+      <span>${pieces>0?`환산 ${escapeHtml(formatBagNumber(Math.floor(current/pieces)))}박스분 + ${escapeHtml(formatBagNumber(current%pieces))}장`:'박스 환산 기준 없음'}</span>
+      <span>1박스 ${escapeHtml(formatBagNumber(bag.piecesPerBox))}장 · 최소 ${escapeHtml(formatBagNumber(minimum))}장${minimum>0?` (기준 대비 ${current>=minimum?'+':''}${escapeHtml(formatBagNumber(current-minimum))}장)`:''}</span>
+    </div></div><section class="bag-history"><p role="status">이력을 불러오는 중입니다.</p></section>`;
+  detail.querySelector('#btnAddBagIncoming').addEventListener('click',()=>showBagIncomingModal(bag));
+  detail.querySelector('#btnAdjustBag').addEventListener('click',()=>showBagAdjustModal(bag));
+  detail.querySelector('#btnEditBag')?.addEventListener('click',()=>showEditBagModal(bag));
+  detail.querySelector('#btnDeleteBag')?.addEventListener('click',()=>deleteBagType(bag));
+  const history=detail.querySelector('.bag-history');
+  try {
+    const logs=await loadBagDetailLogs(bag.id);
+    if(request===detailRequest&&history.isConnected&&selectedBagId===bag.id) renderBagHistory(history,logs);
+  } catch(error) {
+    if(request!==detailRequest||!history.isConnected||selectedBagId!==bag.id) return;
+    console.error('[봉투 이력]',error);
+    history.innerHTML='<p role="status">이력을 불러오지 못했습니다. <button type="button" class="btn-secondary">다시 불러오기</button></p>';
+    history.querySelector('button').addEventListener('click',()=>showBagDetail(bag));
+  }
 }
 
 async function loadBagDeleteContext(bag,scope={getDocs}) {
@@ -656,8 +671,6 @@ function showBagIncomingModal(bag) {
     if(page&&!page.isCurrent())return;
     closeModal();
     await renderBag({force:true});
-    const updatedBag=bagTypes.find(b=>b.id===bag.id);
-    if(updatedBag)await showBagDetail(updatedBag);
     showStatus('입고 등록 완료!');
   });
 }
@@ -759,8 +772,6 @@ function showBagAdjustModal(bag) {
     if(page&&!page.isCurrent())return;
     closeModal();
     await renderBag({force:true});
-    const updatedBag=bagTypes.find(b=>b.id===bag.id);
-    if(updatedBag)await showBagDetail(updatedBag);
     showStatus('조정 완료!');
   });
 }

@@ -15,10 +15,10 @@ test('cancel note resolves loaded originals only and preserves raw text for HTML
 });
 
 test('bag cancel rendering escapes text and adds no read for missing originals',async()=>{
- const e=await pageEnvironment('bag',{instrument:'\nexport async function reviewDetail(bag){selectedBagId=bag.id;await showBagDetail(bag);}'});
+ const e=await pageEnvironment('bag');
  try {
   e.state.rows.bagLogs=[{id:'c',bagTypeId:'b1',timestamp:3,date:e.today,qty:1,type:'adjust',reason:'<img src=x onerror=alert(1)> · 취소 원본: bagLogs/old'}];
-  await e.page.renderBag();await e.page.reviewDetail(e.state.rows.bagTypes[0]);
+  await e.page.renderBag();
   const cell=e.document.querySelector('tbody tr td:last-child');
   assert.match(cell.textContent,/취소 원본: 이전 이력/);assert.equal(cell.querySelector('img'),null);
   assert.equal(e.state.reads.filter(r=>r.path==='bagLogs').length,1);assert.equal(e.state.writes.length,0);
@@ -26,6 +26,38 @@ test('bag cancel rendering escapes text and adds no read for missing originals',
 });
 
 const instrument='\nexport function reviewBagLogs(id,read){return loadBagDetailLogs(id,read);}';
+
+test('category toggles keep stock, selection and history on the same bag',async()=>{
+  const e=await pageEnvironment('bag');
+  try {
+    e.state.rows.bagTypes=[
+      {id:'raw',name:'생식 봉투',category:'raw',currentQty:120760,sortOrder:0},
+      {id:'fd',name:'동결 봉투',category:'freezeDry',currentQty:2363,sortOrder:1},
+      {id:'old',name:'보관 봉투',category:'raw',currentQty:0,sortOrder:2,active:false},
+    ];
+    e.state.rows.bagLogs=[
+      {id:'usage',bagTypeId:'raw',type:'autoDeduct',qty:-2140,note:'내일생산불러오기 자동차감',timestamp:2},
+      {id:'receipt',bagTypeId:'fd',type:'autoDeduct',qty:-111,staffName:'담당',note:'동결제품 입고 자동차감 - 덕캣',timestamp:1},
+    ];
+    await e.page.renderBag();
+    const list=()=>Array.from(e.document.querySelectorAll('.bag-pick'),el=>el.textContent.trim());
+    const history=()=>e.document.querySelector('.bag-history-table tbody').textContent;
+    assert.equal(list().length,2);
+    assert.match(list()[0],/120,760/);
+    assert.match(history(),/생산 불러오기/);
+    await e.fire('[data-bag-filter="freezeDry"]');
+    assert.equal(list().length,1);assert.match(list()[0],/동결 봉투/);
+    assert.match(history(),/-111/);assert.match(history(),/동결제품 입고 자동차감 - 덕캣/);
+    await e.fire('[data-bag-filter="all"]');
+    assert.equal(e.document.querySelector('.bag-row.active').dataset.id,'fd');
+    await e.fire('.bag-row[data-id="raw"] .bag-pick');
+    assert.match(history(),/-2,140/);
+    await e.fire('[data-bag-filter="inactive"]');
+    assert.equal(list().length,1);assert.match(list()[0],/보관 봉투/);
+    assert.match(history(),/표시할 이력이 없습니다/);
+    assert.equal(e.state.writes.length,0);
+  } finally {await e.cleanup();}
+});
 
 test('bag detail reads only the selected bag newest 30 logs when index is available',async()=>{
  const e=await pageEnvironment('bag',{instrument});

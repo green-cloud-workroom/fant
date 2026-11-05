@@ -29,8 +29,8 @@ test('holiday creation preserves literal title and description without changing 
  const e=await pageEnvironment('settings',{role:'office',instrument:'\nexport {handleAddHoliday,renderHolidaysSection};'});
  try{await e.page.renderSettings();e.state.rows.holidays=[];e.document.querySelector('#mainContent').innerHTML=e.page.renderHolidaysSection([]);e.fill('#hd_start',e.today);e.fill('#hd_end',e.today);e.fill('#hd_label',attackText);e.fill('#hd_desc',ordinaryText);for(const id of ['hd_affectsProduction','hd_affectsShipping','hd_shippingAvailablePrev'])e.document.getElementById(id).checked=true;await e.page.handleAddHoliday();const row=e.state.rows.holidays.find(h=>h.id===e.today);assert.ok(row,e.alerts.join('\n'));assert.equal(row.title,attackText);assert.equal(row.description,ordinaryText);assert.equal(row.affectsProduction,true);assert.equal(row.shippingClosedFromEnabled,false);const {document}=parseHTML(e.page.renderHolidaysSection([row]));assert.equal(document.querySelector('.holiday-label').textContent,attackText);assert.equal(document.querySelector('img'),null);}finally{await e.cleanup();}
 });
-test('valid bag category classes retain existing labels',async()=>{
- const e=await pageEnvironment('bag',{instrument:'\nexport {renderBagItem};'});try{for(const category of ['raw','freezeDry']){const {document}=parseHTML(e.page.renderBagItem({...e.state.rows.bagTypes[0],category}));assert.equal(document.querySelector('.tag').getAttribute('class'),'tag tag-'+category);}}finally{await e.cleanup();}
+test('valid bag rows retain their category for filtering',async()=>{
+ const e=await pageEnvironment('bag',{instrument:'\nexport {renderBagItem};'});try{for(const category of ['raw','freezeDry']){const {document}=parseHTML(e.page.renderBagItem({...e.state.rows.bagTypes[0],category}));assert.equal(document.querySelector('.bag-row').getAttribute('data-category'),category);}}finally{await e.cleanup();}
 });
 for(const role of ['admin','office'])test(`actual lazy settings sections safely render stored values (${role})`,async()=>{
  const e=await pageEnvironment('settings',{role,instantRoutes:['settings']});

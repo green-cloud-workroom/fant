@@ -4049,3 +4049,77 @@ input:checked + .toggle-slider:before { transform: translateX(16px); }
   .egg-entry-fields { grid-template-columns:minmax(0,1fr); }
   .egg-minimum-line { flex-wrap:wrap; gap:4px 6px; }
 }
+
+/* 봉투 종류와 현재 장수를 고정된 목록에서 보고, 선택 품목의 이력을 함께 읽는다. */
+.bag-workspace { padding:8px 12px 12px; color:#302820; }
+.bag-page-heading,.bag-selected-heading,.bag-selected-heading > div,.bag-history-heading,.bag-history-filters,.bag-paging,.bag-manage-tools { display:flex; align-items:center; gap:7px; }
+.bag-page-heading,.bag-selected-heading,.bag-manage-tools { justify-content:space-between; }
+.bag-page-heading { margin-bottom:7px; }
+.bag-page-heading h2 { margin:0; font-size:18px; }
+.bag-workspace :is(.btn-primary,.btn-secondary,.btn-danger) { padding:4px 9px; min-height:28px; font-size:12px; }
+.bag-columns { display:grid; grid-template-columns:clamp(276px,29%,335px) minmax(0,1fr); gap:12px; align-items:start; }
+.bag-catalog,.bag-selected-card,.bag-history { border:1px solid #e3d8ca; background:#fff; border-radius:6px; }
+.bag-catalog { min-width:0; overflow:hidden; }
+.bag-filters { display:flex; gap:2px; padding:4px; border-bottom:1px solid #e3d8ca; }
+.bag-filters button { flex:auto; padding:4px 2px; background:transparent; border:1px solid transparent; border-radius:4px; font:inherit; font-size:12px; white-space:nowrap; color:#63564a; cursor:pointer; }
+.bag-filters button[aria-pressed=true],.bag-pick[aria-pressed=true] { color:#754e2d; background:#f1e4d4; font-weight:700; }
+.bag-catalog-heading,.bag-group-name,.bag-manage-tools { padding:3px 9px; font-size:11px; color:#75695c; }
+.bag-catalog-heading { display:flex; justify-content:space-between; }
+.bag-group-name { background:#f8f4ee; color:#785638; }
+.bag-group-name span { margin-left:3px; }
+.bag-catalog .bag-row { padding:0; margin:0; border:0; border-radius:0; min-height:0; border-top:1px solid #eee7de; }
+.bag-pick { flex:1; min-width:0; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px; align-items:center; min-height:22px; padding:2px 9px; border:0; border-radius:0; background:white; color:#302820; font:inherit; font-size:12px; text-align:left; cursor:pointer; }
+.bag-pick:hover { background:#f8f4ee; }
+.bag-pick[aria-pressed=true] { box-shadow:inset 3px 0 #8b603f; }
+.bag-item-name,.bag-note { overflow-wrap:anywhere; }
+.bag-item-qty,.bag-history-qty,.bag-balance b { font-variant-numeric:tabular-nums; white-space:nowrap; }
+.bag-low { color:#aa382c; }
+.bag-row .toggle-switch { margin-right:5px; }
+.bag-workspace #bagDetail { min-width:0; container:bagDetail / inline-size; }
+.bag-selected-card { padding:9px 11px; margin-bottom:9px; }
+.bag-selected-heading,.bag-selected-heading > div,.bag-history-heading,.bag-history-filters { flex-wrap:wrap; }
+.bag-selected-heading .detail-title { font-size:16px; margin:0; }
+.bag-category { background:#f1e4d4; color:#785638; border-radius:4px; padding:3px 5px; font-size:11px; }
+.bag-balance.detail-body { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 10px; padding:6px 0 0; margin-top:7px; border-top:1px solid #e3d8ca; font-size:11px; color:#716557; }
+.bag-balance b { color:#302820; font-size:22px; margin-left:3px; }
+.bag-history { padding:9px 10px; }
+.bag-history-heading { margin-bottom:7px; }
+.bag-history-heading h3 { margin:0; font-size:14px; }
+.bag-history-heading > span,.bag-paging span { font-size:11px; color:#716557; }
+.bag-history-filters { margin-left:auto; }
+.bag-history-filters :is(input,select) { width:auto; min-width:0; max-width:100%; padding:4px 6px; border:1px solid #d9cec2; border-radius:4px; background:white; font:inherit; font-size:12px; }
+.bag-history-filters input { width:145px; }
+.bag-history-table { width:100%; border-collapse:collapse; table-layout:fixed; }
+.bag-history-table :is(th,td) { padding:6px; text-align:left; font-size:12px; }
+.bag-history-table th { font-size:11px; font-weight:500; color:#706455; background:#f6f1eb; }
+.bag-history-table td { border-bottom:1px solid #e5dbce; height:37px; }
+.bag-history-table th:nth-child(1) { width:80px; }
+.bag-history-table th:nth-child(2) { width:80px; }
+.bag-history-table th:nth-child(3) { width:78px; }
+.bag-history-table th:nth-child(4) { width:90px; }
+.bag-history-table th:nth-child(5) { width:54px; }
+.bag-history-table :is(th,td):nth-child(3) { text-align:right; }
+.bag-history-table td:nth-child(4),.bag-note { word-break:keep-all; }
+.bag-history-table .bag-history-qty { font-weight:700; }
+.bag-note details { font-size:11px; color:#776959; }
+.bag-note summary { cursor:pointer; }
+.bag-paging { margin-top:7px; }
+.bag-paging span { margin-right:auto; }
+@container bagDetail (max-width:550px) {
+  .bag-history-table,.bag-history-table tbody { display:block; }
+  .bag-history-table thead { display:none; }
+  .bag-history-table tr { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:4px 6px; border-top:1px solid #e5dbce; padding:6px 0; }
+  .bag-history-table td { padding:0; height:auto; border:0; }
+  .bag-history-table td:nth-child(3)::after { content:'장'; font-size:11px; }
+  .bag-history-table td:nth-child(4) { grid-column:1/3; }
+  .bag-history-table td:nth-child(5) { text-align:right; }
+  .bag-history-table td:last-child { grid-column:1/-1; }
+}
+@media(max-width:700px) {
+  .bag-columns { grid-template-columns:minmax(0,1fr); }
+  .bag-catalog .sortable-master-list,.bag-catalog .master-inactive-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .bag-pick { grid-template-columns:minmax(0,1fr); min-height:44px; gap:1px; }
+  .bag-item-qty::after { content:'장'; font-weight:400; padding-left:2px; }
+  .bag-history-filters { width:100%; margin-left:0; }
+  .bag-history-filters input { flex:1; }
+}
