@@ -1,5 +1,7 @@
 import { fingerprint } from '../services/actionGateway.js';
 import { atomicStockOperation, stockOperationId } from '../services/atomicStockOperation.js';
+import {openPanReceipt} from './frozenPanReceipt.js';
+import {groupLots, productGroups, productBoard, stockTotals, lotTotal, movements, historyTable} from './frozenPanDesk.js';
 import { escapeHtml } from '../utils/html.js';
 import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
@@ -12,20 +14,25 @@ import {
   collection, getDocsFromServer as getDocs, doc, addDoc, updateDoc, query, orderBy, getDocFromServer as getDoc, writeBatch
 } from 'firebase/firestore';
 import { getTodayKST as getToday } from '../utils/date.js';
-import { getActiveFreezeDryRecipes, getRecipeOptionsHtml } from '../utils/recipe.js';
+import { getActiveFreezeDryRecipes } from '../utils/recipe.js';
 import { blockIfClosed } from '../utils/closingGuard.js';
 import { currentUserRole } from '../app.js';
-import { round2, breadToSilicon, breadToFrozenPan } from '../utils/number.js';
+import { round2, breadToFrozenPan } from '../utils/number.js';
 import { showConfirmModal } from '../utils/modal.js';
 import { recordActivity } from '../services/activityLogs.js';
 import { renderFreezeOpInTab,disposeFreezeOpTab } from './freezeOp.js';
 
 
 let freezeDryRecipes = [];
-let activeTab = 'breadPan';  // 'breadPan' | 'frozenPan' — 묶음 3D 추가
+const defaultDesk = () => ({tab:'stock', name:'', detail:false, kind:'all', today:false, limit:60, lots:false});
+let desk = defaultDesk();
+let receiptDrafts = new Map();
+let historyPage;
+let historyRequest;
 
 export async function renderFrozenPan({force=false}={}) {
- activeTab='breadPan';
+ desk=defaultDesk();
+ receiptDrafts=new Map();
  document.getElementById('mainContent').innerHTML='<p style="padding:24px">동결판 재고 로딩 중...</p>';
  await refreshFrozenPanLayout({force});
 }
@@ -48,122 +55,121 @@ async function loadBreadPanLots(scope={getDocs,getDoc}, includeEmpty=false) {
 }
 
 async function loadBreadPanLogs(scope={getDocs,getDoc}) {
-  const q = query(collection(db, 'breadPanLogs'), orderBy('timestamp', 'desc'));
-  const snap = await scope.getDocs(q);
+  const snap = await scope.getDocs(collection(db, 'breadPanLogs'));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
 async function loadFrozenPanLogs(scope={getDocs,getDoc}) {
-  const q = query(collection(db, 'frozenPanLogs'), orderBy('timestamp', 'desc'));
-  const snap = await scope.getDocs(q);
+  const snap = await scope.getDocs(collection(db, 'frozenPanLogs'));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
 async function refreshFrozenPanLayout({force=false}={}) {
  const content=document.getElementById('mainContent');
- const data=await frozenPanResource.load(scope=>loadInitialModel(scope),{force,onChange:pageRefresh(frozenPanResource,refreshFrozenPanLayout)});
- if(!data||!content?.isConnected)return;
+ const page=getPageContext();
+ const onChange=pageRefresh(frozenPanResource,refreshFrozenPanLayout);
+ if(historyPage!==page) {
+   historyPage=page;
+   registerPageCleanup(()=>{historyPage=null;historyRequest=null;});
+ }
+ // Freeze orders have their own read permission. Keep their optional read out of
+ // the stock resource, whose permission guard must still protect all stock rows.
+ if (!historyRequest || force) historyRequest=loadFreezeHistory({getDocs});
+ const requestedHistory=historyRequest;
+ const [data,history]=await Promise.all([
+   frozenPanResource.load(scope=>loadInitialModel(scope),{force,onChange}),
+   requestedHistory,
+ ]);
+ if(!data||requestedHistory!==historyRequest||!content?.isConnected||(page&&!page.isCurrent()))return;
  freezeDryRecipes=data.recipes;staffCache=data.staff;
- renderFrozenPanLayout(data.rows,data.lots,data.breadPanLots,data.breadPanLogs,data.frozenPanLogs);
+ const groups=groupLots(data.breadPanLots), frozen=groupLots(data.lots);
+ const model={...data,...history,breadGroups:groups,frozenGroups:frozen,
+   groups:productGroups(data.recipes,groups,frozen),
+   records:movements(data.breadPanLogs,data.frozenPanLogs,history.freezeOrders)};
+ renderFrozenPanLayout(model);
 }
 
-function renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPanLogs) {
-  const content = document.getElementById('mainContent');
+function renderFrozenPanLayout(data) {
+  const root = document.getElementById('mainContent');
+  const {breadGroups:bread,frozenGroups:frozen,groups,records} = data;
+  const names = groups.flatMap(([,items])=>items);
+  if (!names.includes(desk.name)) desk.name = names[0] || '';
+  const orders = data.rows.filter(row=>row.type !== 'work' && row.status !== 'cancelled');
+  const tabs = [['stock','품목별 재고'],['history','전체 이력'],['frozenPan','동결판 발주 확인'],['freezeOp','동결가동']];
+  const history = rows => historyTable(rows, desk.limit, renderBreadPanLogRow, renderFrozenPanLogRow, data.freezeHistoryUnavailable);
+  const name = desk.name;
+  const redraw = () => renderFrozenPanLayout(data);
+  let body;
+  if (desk.tab === 'stock') {
+    const lotsHtml = renderBreadPanTab(bread, name) + renderFrozenPanTab(frozen, name);
+    const count = (bread[name]?.length || 0) + (frozen[name]?.length || 0);
+    body = '<div class="pan-split '+(desk.detail?'show-detail':'')+'">'+productBoard(groups,name,bread,frozen)
+      +'<div class="pan-detail"><section class="pan-box"><button class="btn-secondary pan-back" data-back>‹ 품목 목록</button>'
+      +'<header><h3>'+escapeHtml(name || '품목 없음')+'</h3><small>현재 재고</small></header>'
+      +'<div class="pan-numbers"><span>빵판 <b>'+lotTotal(bread[name])+'개</b></span><span>동결판 <b>'+lotTotal(frozen[name])+'판</b></span></div>'
+      +'<details '+(desk.lots?'open':'')+'><summary>입고일별 잔량 · '+count+'건</summary>'+lotsHtml+'</details></section>'
+      +'<section class="pan-box"><header><h3>품목 이력</h3><button class="btn-secondary" data-history>전체 이력 보기 ›</button></header>'
+      +history(records.filter(r=>r.log.productName===name))+'</section></div></div>';
+  } else if (desk.tab === 'history') {
+    const shown = records.filter(r=>(desk.kind==='all'||desk.kind===r.kind)&&(!desk.today||r.log.date===getToday()));
+    body = '<section class="pan-box"><header><h3>전체 이력</h3><small>전체 품목 · '+shown.length+'건</small></header>'
+      +'<div class="pan-filters">'+[['all','전체'],['bread','빵판'],['frozen','동결판']].map(([key,label])=>
+        '<button class="btn-secondary" data-kind="'+key+'" aria-pressed="'+(key===desk.kind)+'">'+label+'</button>').join('')
+      +'<label>기간 <select id="panPeriod"><option value="all">전체 기간</option><option value="today" '+(desk.today?'selected':'')+'>오늘</option></select></label></div>'+history(shown)+'</section>';
+  } else if (desk.tab === 'frozenPan') {
+    body = '<section class="pan-box"><header><h3>동결판 발주 확인</h3></header><div class="table-wrap"><table class="data-table"><thead><tr><th>날짜</th><th>구분</th><th>담당자</th><th>내용</th><th>상태</th><th>작업</th></tr></thead><tbody>'
+      +orders.map(renderPanRow).join('')+'</tbody></table></div>'+(!orders.length?'<p>발주 내역이 없습니다.</p>':'')+'</section>';
+  } else body = '<div id="freezeOpContent">동결가동 자료 로딩 중…</div>';
+  root.innerHTML = '<div class="frozen-pan-page pan-desk"><header class="pan-heading"><h2>동결판 재고</h2><div>'
+    +'<button id="panWork" class="btn-secondary">전처리 기록</button><button id="panAdjust" class="btn-secondary">수동조정</button><button id="panIncoming" class="btn-primary">＋ 입고</button></div></header>'
+    +stockTotals(data.breadPanLots,data.lots)+'<nav class="pan-tabs">'+tabs.map(([key,label])=>
+      '<button class="tab-btn '+(desk.tab===key?'active':'')+'" data-tab="'+key+'" aria-pressed="'+(desk.tab===key)+'">'+label+'</button>').join('')+'</nav>'+body+'</div>';
 
-  // 묶음 3 정책: 옛 type='work' 행은 화면에서 숨김 (DB는 묶음 10에서 일괄 wipe 예정)
-  rows = rows.filter(r => r.type !== 'work');
-
-  // 동결판 제품별 lot 집계 (source 포함)
-  const lotSummary = Object.create(null);
-  lots.forEach(l => {
-    if (!lotSummary[l.productName]) lotSummary[l.productName] = [];
-    lotSummary[l.productName].push({
-      date: l.date,
-      remaining: l.remaining,
-      source: l.source || null,  // 묶음 3H 추가
-    });
+  root.querySelector('#panIncoming').addEventListener('click',openReceiptPicker);
+  root.querySelector('#panWork').addEventListener('click',()=>showWorkRowModal(orders,data.lots));
+  root.querySelector('#panAdjust').addEventListener('click',()=>{
+    showModal('<h3 class="modal-title">수동조정</h3><div class="pan-adjust-options"><button id="breadAdjust" class="btn-secondary">빵판 조정 (개)</button><button id="frozenAdjust" class="btn-secondary">동결판 조정 (판)</button></div><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">닫기</button></div>');
+    document.getElementById('breadAdjust').onclick=showBreadPanAdjustModal;
+    document.getElementById('frozenAdjust').onclick=showFrozenPanAdjustModal;
   });
-
-  // 빵판 제품별 lot 집계
-  const breadLotSummary = Object.create(null);
-  breadPanLots.forEach(l => {
-    if (!breadLotSummary[l.productName]) breadLotSummary[l.productName] = [];
-    breadLotSummary[l.productName].push({ date: l.date, remaining: l.remaining });
+  function switchTab(tab) {
+    const leavingFreeze = desk.tab === 'freezeOp' && tab !== desk.tab;
+    desk.tab=tab; desk.limit=60;
+    if (tab==='stock') desk.detail=false;
+    if (leavingFreeze) { disposeFreezeOpTab(); return refreshFrozenPanLayout({force:true}); }
+    redraw();
+    if (tab==='history') {
+      historyRequest=null;
+      return refreshFrozenPanLayout();
+    }
+  }
+  root.querySelectorAll('[data-tab]').forEach(btn=>btn.addEventListener('click',()=>switchTab(btn.dataset.tab)));
+  root.querySelector('[data-history]')?.addEventListener('click',()=>{desk.kind='all';desk.today=false;switchTab('history');});
+  root.querySelectorAll('[data-product]').forEach(btn=>btn.addEventListener('click',()=>{
+    desk.name=btn.dataset.product; desk.detail=true; desk.lots=false; desk.limit=60;
+    redraw();
+    if (window.matchMedia?.('(max-width:700px)').matches) {
+      root.querySelector('.pan-back')?.focus({preventScroll:true});
+      root.scrollTop=0;
+    }
+  }));
+  root.querySelector('[data-back]')?.addEventListener('click',()=>{
+    desk.detail=false; redraw();
+    root.querySelector('.pan-board [aria-pressed="true"]')?.focus();
   });
-
-  // 합계 — 빵판 / 실리콘 / 동결판
-  const totalBreadPan = round2(breadPanLots.reduce((sum, l) => sum + (l.remaining || 0), 0));
-  const totalSilicon = breadToSilicon(totalBreadPan);
-  const totalPan = lots.reduce((sum, l) => sum + (l.remaining || 0), 0);
-
-  content.innerHTML = `
-    <div class="page-wrap frozen-pan-page">
-      <div class="page-header">
-        <h2 class="page-title">동결판 재고</h2>
-      </div>
-
-      <!-- 합계 요약 -->
-      <div class="form-section" style="background:white;border-radius:8px;padding:16px 20px;margin-bottom:16px;border:1px solid #e8e8e8;">
-        <div class="stat-row">
-          <div class="stat-item">
-            <span class="stat-label">현재 빵판</span>
-            <span class="stat-value" style="font-size:20px;color:#1a1a1a">${totalBreadPan}개</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">실리콘 환산</span>
-            <span class="stat-value" style="font-size:14px;color:#888">${totalSilicon}판</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">현재 총 동결판</span>
-            <span class="stat-value" style="font-size:20px;color:${totalPan < 10 ? '#e53e3e' : '#1a1a1a'}">${totalPan}판</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- 탭 nav -->
-      <div class="tab-nav" style="display:flex;gap:0;border-bottom:2px solid #e8e8e8;margin-bottom:16px;">
-        <button class="tab-btn ${activeTab === 'breadPan' ? 'active' : ''}" data-tab="breadPan"
-          style="padding:10px 20px;border:1px solid #e8e8e8;margin-bottom:-2px;font-size:14px;cursor:pointer;font-weight:${activeTab === 'breadPan' ? '600' : '400'};color:${activeTab === 'breadPan' ? '#1a1a1a' : '#888'};">
-          빵판 재고
-        </button>
-        <button class="tab-btn ${activeTab === 'frozenPan' ? 'active' : ''}" data-tab="frozenPan"
-          style="padding:10px 20px;border:1px solid #e8e8e8;margin-bottom:-2px;font-size:14px;cursor:pointer;font-weight:${activeTab === 'frozenPan' ? '600' : '400'};color:${activeTab === 'frozenPan' ? '#1a1a1a' : '#888'};">
-          동결판 재고
-        </button>
-        <button class="tab-btn ${activeTab === 'freezeOp' ? 'active' : ''}" data-tab="freezeOp"
-          style="padding:10px 20px;border:1px solid #e8e8e8;margin-bottom:-2px;font-size:14px;cursor:pointer;font-weight:${activeTab === 'freezeOp' ? '600' : '400'};color:${activeTab === 'freezeOp' ? '#1a1a1a' : '#888'};">
-          동결가동
-        </button>
-      </div>
-
-      <!-- 탭 콘텐츠 -->
-      ${activeTab === 'breadPan' ? renderBreadPanTab(breadLotSummary, breadPanLogs)
-        : activeTab === 'frozenPan' ? renderFrozenPanTab(rows, lotSummary, frozenPanLogs)
-        : '<div id="freezeOpContent" style="padding:4px 0;">로딩 중...</div>'}
-    </div>
-  `;
-
-  // 탭 nav 이벤트
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      activeTab = btn.dataset.tab;
-      renderFrozenPanLayout(rows, lots, breadPanLots, breadPanLogs, frozenPanLogs);
-    });
-  });
-
-  // 탭별 이벤트 바인딩
-  if(activeTab!=='freezeOp')disposeFreezeOpTab();
-  if (activeTab === 'breadPan') {
-    bindBreadPanTabEvents(rows, lots);
-  } else if (activeTab === 'frozenPan') {
-    bindFrozenPanTabEvents(rows, lots);
-  } else {
+  const details = root.querySelector('.pan-detail details');
+  details?.addEventListener('toggle',()=>{if(details.isConnected)desk.lots=details.open;});
+  root.querySelectorAll('[data-kind]').forEach(btn=>btn.addEventListener('click',()=>{desk.kind=btn.dataset.kind;desk.limit=60;redraw();}));
+  root.querySelector('#panPeriod')?.addEventListener('change',event=>{desk.today=event.target.value==='today';desk.limit=60;redraw();});
+  root.querySelector('[data-more]')?.addEventListener('click',()=>{desk.limit+=60;redraw();});
+  if (desk.tab === 'frozenPan') bindFrozenPanTabEvents(orders,data.lots);
+  if (desk.tab === 'freezeOp') {
     const page=getPageContext();
     renderFreezeOpInTab().catch(error=>{
       const host=document.getElementById('freezeOpContent');
       if(host&&(!page||page.isCurrent())){host.textContent='동결가동 자료를 불러오지 못했습니다. 탭을 다시 선택해주세요.';console.error(error);}
     });
-  }
+  } else disposeFreezeOpTab();
 }
 
 function getSourceBadge(source) {
@@ -180,62 +186,20 @@ function getSourceBadge(source) {
   return `<span style="display:inline-block;font-size:10px;background:${config.bg};color:${config.color};padding:1px 6px;border-radius:3px;margin-left:4px;font-weight:500;vertical-align:middle;">${config.label}</span>`;
 }
 
-function renderBreadPanTab(breadLotSummary, breadPanLogs) {
-  const lotEntries = Object.entries(breadLotSummary);
-  return `
-    <div class="page-header" style="margin-bottom:12px;">
-      <span style="font-size:14px;color:#555;font-weight:600;">빵판 lot 잔량</span>
-      <div style="display:flex;gap:8px;">
-        <button class="btn-secondary" id="btnBreadPanAdjust">+ 수동 조정</button>
-        <button class="btn-secondary" id="btnAddWorkRow">+ 작업 행 추가</button>
-        <button class="btn-primary" id="btnBreadPanIncoming">+ 빵판 입고</button>
-      </div>
-    </div>
-
-    <!-- 빵판 lot 잔량 -->
-    <div class="form-section" style="background:white;border-radius:8px;padding:16px 20px;margin-bottom:16px;border:1px solid #e8e8e8;">
-      ${lotEntries.length === 0 ? '<div style="color:#aaa;text-align:center;padding:8px;">빵판 lot 없음</div>' : `
-        <div class="stat-row">
-          ${lotEntries.map(([name, lotList]) => `
-            <div class="stat-item">
-              <span class="stat-label">${escapeHtml(name)}</span>
-              <div>
-                ${lotList.sort((a,b) => a.date.localeCompare(b.date)).map(l => `
-                  <div style="font-size:12px;color:#555">${round2(l.remaining)}개 <span style="color:#aaa">(${escapeHtml(l.date)})</span></div>
-                `).join('')}
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      `}
-    </div>
-
-    <!-- 빵판 이력 -->
-    <div class="table-wrap" style="background:white;border-radius:8px;border:1px solid #e8e8e8;overflow:hidden;">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>날짜</th>
-            <th>구분</th>
-            <th>제품</th>
-            <th>수량</th>
-            <th>담당자</th>
-            <th>비고</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${breadPanLogs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
-            breadPanLogs.map(l => renderBreadPanLogRow(l)).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
+function lotDetail(groups, name, kind) {
+  const entries = name === undefined ? Object.entries(groups) : [[name, groups[name] || []]];
+  return entries.filter(([,lots])=>lots.length).map(([product,lots])=>
+    '<div class="stat-item"><span class="stat-label">'+escapeHtml(product)+'</span><div>'
+    +lots.map(lot=>'<div>'+escapeHtml(lot.date)+' · '+(kind==='bread'?'빵판':'동결판')+' '+escapeHtml(lot.remaining)+(kind==='bread'?'개':'판')
+      +(kind==='frozen'?getSourceBadge(lot.source):'')+'</div>').join('')+'</div></div>').join('');
 }
+function renderBreadPanTab(groups, name) { return lotDetail(groups,name,'bread'); }
+function renderFrozenPanTab(groups, name) { return lotDetail(groups,name,'frozen'); }
 
 function renderBreadPanLogRow(log) {
   const typeLabel = movementLabel(log,{
     incoming: '입고',
-    preprocess: '전처리',
+    preprocess: '전처리 사용',
     adjust: '수동조정',
     rollback: '롤백',
   }[log.type] || log.type);
@@ -248,6 +212,7 @@ function renderBreadPanLogRow(log) {
   if (log.type === 'preprocess' && log.expectedFrozenQty != null && log.actualFrozenQty != null) {
     const diffText = log.diff > 0 ? `+${log.diff}` : log.diff < 0 ? `${log.diff}` : '0';
     noteText = `이론 ${log.expectedFrozenQty} / 실측 ${log.actualFrozenQty} (차 ${diffText})`;
+    if (log.note || log.reason) noteText += ' · '+(log.note || log.reason);
   } else if (log.note) {
     noteText = log.note;
   } else if (log.reason) {
@@ -271,85 +236,14 @@ function renderBreadPanLogRow(log) {
   `;
 }
 
-function renderFrozenPanTab(rows, lotSummary, frozenPanLogs) {
-  const lotEntries = Object.entries(lotSummary);
-  return `
-    <div class="page-header" style="margin-bottom:12px;">
-      <span style="font-size:14px;color:#555;font-weight:600;">동결판 lot 잔량</span>
-      <div style="display:flex;gap:8px;">
-        <button class="btn-secondary" id="btnFrozenPanAdjust">+ 수동 조정</button>
-        <button class="btn-secondary" id="btnTenderIn">+ 텐더동결 입고</button>
-      </div>
-    </div>
-
-    <!-- 동결판 lot 잔량 -->
-    <div class="form-section" style="background:white;border-radius:8px;padding:16px 20px;margin-bottom:16px;border:1px solid #e8e8e8;">
-      ${lotEntries.length === 0 ? '<div style="color:#aaa;text-align:center;padding:8px;">동결판 lot 없음</div>' : `
-        <div class="stat-row">
-          ${lotEntries.map(([name, lotList]) => `
-            <div class="stat-item">
-              <span class="stat-label">${escapeHtml(name)}</span>
-              <div>
-                ${lotList.sort((a,b) => a.date.localeCompare(b.date)).map(l => `
-                  <div style="font-size:12px;color:#555">${escapeHtml(l.remaining)}판 <span style="color:#aaa">(${escapeHtml(l.date)})</span>${getSourceBadge(l.source)}</div>
-                `).join('')}
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      `}
-    </div>
-
-    <!-- 발주 테이블 -->
-    <div style="font-size:14px;color:#555;font-weight:600;margin-bottom:8px;">발주 내역</div>
-    <div class="table-wrap" style="background:white;border-radius:8px;border:1px solid #e8e8e8;overflow:hidden;margin-bottom:16px;">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>날짜</th>
-            <th>구분</th>
-            <th>담당자</th>
-            <th>내용</th>
-            <th>상태</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">발주 내역 없음</td></tr>` :
-            rows.map(r => renderPanRow(r)).join('')}
-        </tbody>
-      </table>
-    </div>
-
-    <!-- 동결판 이력 -->
-    <div style="font-size:14px;color:#555;font-weight:600;margin-bottom:8px;">동결판 이력</div>
-    <div class="table-wrap" style="background:white;border-radius:8px;border:1px solid #e8e8e8;overflow:hidden;">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>날짜</th>
-            <th>구분</th>
-            <th>제품</th>
-            <th>수량</th>
-            <th>담당자</th>
-            <th>비고</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${frozenPanLogs.length === 0 ? `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">이력 없음</td></tr>` :
-            frozenPanLogs.map(l => renderFrozenPanLogRow(l)).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
 function renderFrozenPanLogRow(log) {
   const typeLabel = movementLabel(log,{
     tenderIn: '텐더동결 입고',
     preprocess: '전처리 입고',
     orderDeduct: '발주 차감',
     orderRollback: '발주 복원',
+    freezeDeduct: '동결가동 차감',
+    freezeRestore: '동결가동 복원',
     adjust: '수동조정',
   }[log.type] || log.type);
 
@@ -376,24 +270,7 @@ function renderFrozenPanLogRow(log) {
   `;
 }
 
-function bindBreadPanTabEvents(rows, lots) {
-  const btnIncoming = document.getElementById('btnBreadPanIncoming');
-  if (btnIncoming) btnIncoming.addEventListener('click', () => showBreadPanIncomingModal());
-
-  const btnAdjust = document.getElementById('btnBreadPanAdjust');
-  if (btnAdjust) btnAdjust.addEventListener('click', () => showBreadPanAdjustModal());
-
-  const btnWorkRow = document.getElementById('btnAddWorkRow');
-  if (btnWorkRow) btnWorkRow.addEventListener('click', () => showWorkRowModal(rows, lots));
-}
-
 function bindFrozenPanTabEvents(rows, lots) {
-  const btnTender = document.getElementById('btnTenderIn');
-  if (btnTender) btnTender.addEventListener('click', () => showTenderInModal());
-
-  const btnAdjust = document.getElementById('btnFrozenPanAdjust');
-  if (btnAdjust) btnAdjust.addEventListener('click', () => showFrozenPanAdjustModal());
-
   // 발주 확인 버튼
   document.querySelectorAll('.btn-order-confirm').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -446,6 +323,16 @@ function bindFrozenPanTabEvents(rows, lots) {
   });
 }
 
+
+function openReceiptPicker() {
+  openPanReceipt({recipes:freezeDryRecipes, drafts:receiptDrafts, showModal,
+    openBread:showBreadPanIncomingModal, openTender:showTenderInModal});
+}
+
+function clearReceiptDraft(productName) {
+  const recipe = freezeDryRecipes.find(r=>r.displayName===productName);
+  if (recipe) receiptDrafts.delete(recipe.id);
+}
 
 function showTenderInModal() {
   // 동결텐더 = 분리 작업 불필요한 동결건조 레시피 (requiresSeparation === false)
@@ -578,6 +465,7 @@ function showTenderInModal() {
       }});
 
       if(!command.isCurrent())return;
+      clearReceiptDraft(productName);
       closeModal();
       if(!command.isCurrent())return;
       await refreshFrozenPanLayout();
@@ -666,6 +554,7 @@ function showBreadPanIncomingModal() {
       log:{type:'incoming',date,productName,qty,lotId:lotRef.id,lotDate:date,staffName,note:note||null}});
 
     if(!command.isCurrent())return;
+    clearReceiptDraft(productName);
     closeModal();
     if(!command.isCurrent())return;
     await refreshFrozenPanLayout();
@@ -1661,18 +1550,32 @@ function showModal(html) {
 
 registerCloseModal('frozenPan', function() {
   const overlay = document.getElementById('modalOverlay');
-  if (overlay) overlay.remove();
+  if (overlay) {
+    const receipt = overlay.classList.contains('pan-receipt-overlay');
+    overlay.remove();
+    if (receipt) document.getElementById('panIncoming')?.focus();
+  }
 });
 
 import {pageResource} from '../state/pageResources.js';
 import {pageRefresh} from '../utils/pageRefresh.js';
-import {getPageContext} from '../utils/pageLifecycle.js';
+import {getPageContext,registerPageCleanup} from '../utils/pageLifecycle.js';
 import {loadPageStaff} from '../services/pageStaff.js';
 const frozenPanResource=pageResource('frozenPan');
 frozenPanResource.refresh=refreshFrozenPanLayout;
 
 import {runPageCommand} from '../services/pageCommand.js';
 import {commandWrites} from '../services/commandWrites.js';
+
+async function loadFreezeHistory(scope) {
+  try {
+    const snapshot = await scope.getDocs(collection(db,'freezeOrders'));
+    return {freezeOrders:snapshot.docs.map(d=>({...d.data(),id:d.id})),freezeHistoryUnavailable:false};
+  } catch (error) {
+    console.warn('동결가동 이력 조회 실패',error);
+    return {freezeOrders:[],freezeHistoryUnavailable:true};
+  }
+}
 
 // Read-only model construction shared by activation and idle preparation.
 async function loadInitialModel(scope) {

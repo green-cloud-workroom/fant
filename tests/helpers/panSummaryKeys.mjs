@@ -6,7 +6,7 @@ export async function summaryEnvironment(options={}){return pageEnvironment('fro
 export {showWorkRowModal,showBreadPanIncomingModal,showTenderInModal};
 let __bread,__frozen,__work;
 const __renderBread=renderBreadPanTab;renderBreadPanTab=(...a)=>{__bread=a[0];return __renderBread(...a);};
-const __renderFrozen=renderFrozenPanTab;renderFrozenPanTab=(...a)=>{__frozen=a[1];return __renderFrozen(...a);};
+const __renderFrozen=renderFrozenPanTab;renderFrozenPanTab=(...a)=>{__frozen=a[0];return __renderFrozen(...a);};
 const __bindWork=bindWorkItemEvents;bindWorkItemEvents=(...a)=>{__work=a[0];return __bindWork(...a);};
 export function __dicts(){return {bread:__bread,frozen:__frozen,work:__work};}
 export function __recipes(names,separation=true){freezeDryRecipes=names.map((displayName,i)=>({id:'r'+i,displayName,requiresSeparation:separation}));staffCache={senior:[{name:'담당'}]};}
