@@ -4,6 +4,8 @@ import {registerModalDismiss} from './modalManager.js';
 import {getPageContext} from './pageLifecycle.js';
 import {currentUser,currentUserRole,setCurrentMenu} from '../app.js';
 import {sessionStore} from '../state/sessionStore.js';
+import {createDisplayScope} from '../state/displayReads.js';
+import {useSessionReads} from '../config/performanceFlags.js';
 import {loadStockAlerts,syncStockAlerts,acknowledgeStockAlerts} from '../services/stockAlerts.js';
 import {stockAlertKinds} from '../domain/stockAlerts.js';
 
@@ -20,7 +22,9 @@ function updateSummaries(model) {
 export async function mountStockAlertSummary() {
   const node=document.querySelector('[data-stock-alert-summary]');if(!node)return;
   node.onclick=()=>openStockAlerts();
-  try{const model=await loadStockAlerts();if(node.isConnected)updateSummaries(model);}
+  // The shell already observes these queries. Rendering a row must not start
+  // another full server read; opening/acknowledging the modal still does.
+  try{const model=await loadStockAlerts(useSessionReads('main')?createDisplayScope('shell'):undefined);if(node.isConnected)updateSummaries(model);}
   catch{if(node.isConnected)node.textContent='⚠️ 부족재고 조회 실패 · 눌러서 다시 확인';}
 }
 export async function openStockAlerts() {

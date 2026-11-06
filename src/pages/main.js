@@ -3300,28 +3300,26 @@ async function prepareMainModel(scope, {today=getToday(),weekOffset=0,onProducti
   const todayBlocksRead = getAllBlockingItems(today, scope);
   todayBlocksRead.catch(() => {});
 
-  const [productionRows, recipeSnap, meatTypeSnap, meatSnap, eggSnap, compSnap,
-    overdueClosing] = await Promise.all([
+  const [productionRows, recipeSnap, compSnap, overdueClosing] = await Promise.all([
     productionsRead,
     recipeRead,
-    meatTypeRead,
-    meatRead,
-    eggRead,
     completionRead,
     overdueClosingRead,
   ]);
   const overdueDate = overdueClosing?.date || null;
-  const [overdueCompSnap, blocks, overdueProductionRows] = await Promise.all([
-    overdueDate ? scope.getDoc(doc(db, 'productionCompletion', overdueDate)) : null,
-    overdueClosing?.blockingData || todayBlocksRead,
-    overdueDate ? loadMainProductions([overdueDate,getNextBusinessDay(overdueDate)],scope) : [],
-  ]);
+  const overdueCompletionRead=overdueDate?guarded(scope.getDoc(doc(db,'productionCompletion',overdueDate))):null;
+  const overdueProductionRows=overdueDate?await loadMainProductions([overdueDate,getNextBusinessDay(overdueDate)],scope):[];
   const allProds = combineMainProductions(productionRows, overdueProductionRows);
   const rows=snap=>snap.docs.map(d=>({id:d.id,...d.data()}));
   const row=snap=>snap?.exists()?{id:snap.id,...snap.data()}:null;
   onProductionReady?.({ today, nextBizDay, overdueNextBizDay:overdueDate?getNextBusinessDay(overdueDate):null,
     allProds, recipeRows:rows(recipeSnap), completionDoc:row(compSnap), overdueClosing });
-  const [calendar, alerts, logs, supplementTypesSnap] = await Promise.all([calendarRead, alertsRead, prefetchedLogs, supplementTypesRead]);
+  // Only date selection and the production cards gate the read-only preview.
+  // Full action readiness still waits for every stock/log/closing read below.
+  const [meatTypeSnap,meatSnap,eggSnap,overdueCompSnap,blocks,calendar,alerts,logs,supplementTypesSnap]=await Promise.all([
+    meatTypeRead,meatRead,eggRead,overdueCompletionRead,overdueClosing?.blockingData||todayBlocksRead,
+    calendarRead,alertsRead,prefetchedLogs,supplementTypesRead,
+  ]);
   const model = buildMainViewModel({today,nextBizDay,overdueNextBizDay:overdueDate?getNextBusinessDay(overdueDate):null,allProds,
     recipeRows:rows(recipeSnap),meatTypeRows:rows(meatTypeSnap),meatRows:rows(meatSnap),
     eggStock:eggSnap.exists()?eggSnap.data():{currentQty:0,minimumQty:0},equipmentAlerts:alerts,

@@ -1,4 +1,4 @@
-import {loadStockAlerts,syncStockAlerts} from './services/stockAlerts.js';
+import {loadStockAlerts,recordStockAlertTransitions} from './services/stockAlerts.js';
 import {staffError} from './utils/staffText.js';
 import { flags, performanceDisabled } from './config/performanceFlags.js';
 import { createDisplayScope, displayPool } from './state/displayReads.js';
@@ -241,6 +241,8 @@ async function updateEquipmentBadge(scope = createReadScope()) {
 
 async function updateSubbar(scope = createReadScope()) {
   const content = document.getElementById('mainContent');
+  const epoch=sessionStore.epoch;
+  const isCurrent=()=>epoch===sessionStore.epoch&&document.getElementById('mainContent')===content;
   // KST 정확한 오늘 + 18개월 후 표시
   const todayKst = getTodayKST();
   const today = formatKstDateWithDay(todayKst);
@@ -259,21 +261,18 @@ async function updateSubbar(scope = createReadScope()) {
     const { db } = await import('./firebase.js');
     const { getDoc, getDocs, doc, collection } = await import('firebase/firestore');
 
-    const [eggSnap, meatTypesSnap, meatStocksSnap, bagSnap, scheduleSnap] = await Promise.all([
+    const [eggSnap, scheduleSnap, stockAlerts] = await Promise.all([
       scope.getDoc(doc(db, 'eggStock', 'global')),
-      scope.getDocs(collection(db, 'meatTypes')),
-      scope.getDocs(collection(db, 'meatStocks')),
-      scope.getDocs(collection(db, 'bagTypes')),
       scope.getDocs(collection(db, 'schedules')),
+      loadStockAlerts(scope,todayKst),
     ]);
-    if (document.getElementById('mainContent') !== content) return;
+    if (!isCurrent()) return;
     const eggQty = eggSnap.exists() ? eggSnap.data().currentQty : 0;
     document.getElementById('subEgg').textContent = `🥚 ${eggQty}개`;
 
-    let stockAlerts=await loadStockAlerts(scope,todayKst);
     // Observe recovery on inventory pages too, so a later shortage is a new event.
-    if(stockAlerts.plans.length)stockAlerts=await syncStockAlerts();
-    if(document.getElementById('mainContent')!==content)return;
+    if(stockAlerts.plans.length)await recordStockAlertTransitions(stockAlerts,isCurrent);
+    if(!isCurrent())return;
     const lowCount=stockAlerts.items.length;
     document.getElementById('subLowStock').classList.toggle('low-stock-warning',lowCount>0);
     document.getElementById('subLowStock').textContent=`⚠️ 부족재고 ${lowCount}종${stockAlerts.unknown.length?' · 수량 확인 필요':''}`;
@@ -286,6 +285,7 @@ async function updateSubbar(scope = createReadScope()) {
     document.getElementById('subUnread').textContent = `🔔 미확인로그 0건`;
 
   } catch (err) {
+    if(!isCurrent())return;
     const badge=document.getElementById('subLowStock');if(badge)badge.textContent='⚠️ 부족재고 조회 실패';
     console.error('서브바 업데이트 오류:', err);
   }

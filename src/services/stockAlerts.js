@@ -25,14 +25,20 @@ export function loadStockAlerts(scope=createServerReadScope(),today=getTodayKST(
     return {...stockAlertModel(stockAlertCatalog(data),data.history,today),history:data.history,supplementTypes:data.supplementTypes};
   });
 }
-export async function syncStockAlerts() {
-  const epoch=sessionStore.epoch,uid=auth.currentUser?.uid;
-  const model=await loadStockAlerts();
-  if(epoch!==sessionStore.epoch||uid!==auth.currentUser?.uid)throw Error('로그인 상태가 변경됐습니다. 다시 열어주세요.');
+// Display observers already own a server-confirmed snapshot. Persist only the
+// derived notification transitions; do not download all inventory/history again.
+export async function recordStockAlertTransitions(model,isCurrent) {
+  if(!isCurrent())throw Error('화면이나 로그인 상태가 변경됐습니다. 다시 열어주세요.');
   const batch=createAutoLogBatch(model.history);
   model.plans.forEach(plan=>batch.enqueue(plan));
   const result=await batch.flush();
   if(result.failedIds.length)throw Error('부족재고 알림을 갱신하지 못했습니다. 확인 완료는 보류하고 다시 조회해주세요.');
+  return result;
+}
+export async function syncStockAlerts() {
+  const epoch=sessionStore.epoch,uid=auth.currentUser?.uid;
+  const model=await loadStockAlerts();
+  const result=await recordStockAlertTransitions(model,()=>epoch===sessionStore.epoch&&uid===auth.currentUser?.uid);
   return result.createdIds.length||result.existingIds.length?loadStockAlerts():model;
 }
 export async function acknowledgeStockAlerts(shown,staff,isCurrent=()=>true) {
