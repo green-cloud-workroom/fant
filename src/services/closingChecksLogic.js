@@ -1,4 +1,5 @@
 import {displayActivity} from '../utils/activityDisplay.js';
+import {isHistoryOnlyActivity} from '../domain/activityLogPolicy.js';
 // src/services/closingChecksLogic.js
 //
 // 마감 차단/경고 항목 판정 — 순수 함수 + 집계 함수.
@@ -247,7 +248,7 @@ function summarizeClosingLog(log) {
 
 // Record navigation uses the same criteria as closing; it never acknowledges a log.
 export function isClosingLogPending(log,date,id) {
-  if(log.date!==date || log.acknowledged===true)return false;
+  if(log.date!==date || log.acknowledged===true || isHistoryOnlyActivity(log))return false;
   if(id===4)return isAutoRepackAckLog(log);
   if(id===5)return classifyClosingLog(log)==='production'&&!isAutoRepackAckLog(log)&&!isMinimumStockAlertLog(log);
   if(id===6)return classifyClosingLog(log)==='office'&&!isMinimumStockAlertLog(log);
@@ -258,13 +259,7 @@ export function isClosingLogPending(log,date,id) {
  * 5. 생산 로그 미확인 항목 있음
  */
 export function judgeProductionLogsAcknowledged(activityLogs, dateStr) {
-  const pending = (activityLogs || []).filter(log =>
-    log.date === dateStr &&
-    log.acknowledged !== true &&
-    classifyClosingLog(log) === 'production' &&
-    !isAutoRepackAckLog(log) &&
-    !isMinimumStockAlertLog(log)
-  );
+  const pending = (activityLogs || []).filter(log => isClosingLogPending(log,dateStr,5));
 
   return {
     blocked: pending.length > 0,

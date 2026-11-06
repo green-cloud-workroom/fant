@@ -7,6 +7,7 @@ import { confirmAutoRepack } from '../services/autoRepackConfirm.js';
 import { escapeHtml, recipeColor } from '../utils/html.js';
 import { displayActivity } from '../utils/activityDisplay.js';
 import { isClosingLogPending } from '../services/closingChecksLogic.js';
+import { isHistoryOnlyActivity } from '../domain/activityLogPolicy.js';
 import { inventoryHandoffButton, bindInventoryHandoff } from '../services/inventoryHandoff.js';
 import { registerCloseModal } from '../utils/modalManager.js';
 import { createReadScope } from '../services/readScope.js';
@@ -1205,7 +1206,7 @@ function renderBlockerArea(data = blockingData) {
 function renderLogSection(category) {
   const title = category === 'production' ? '🏭 생산 로그' : '🗒️ 사무 로그';
   const sectionLogs = combinedLogs
-    .filter(log => classifyLog(log) === category && !isStockAlert(log));
+    .filter(log => classifyLog(log) === category && !isStockAlert(log) && !isHistoryOnlyActivity(log));
 
   // 확인 필수 + 미확인 → 위로 / 나머지 → 시간순
   sectionLogs.sort((a, b) => {
@@ -1526,6 +1527,7 @@ async function ackAllInSection(category) {
   try { await loadCombinedLogs(); } catch (error) { alert(staffError(error)); return; }
   const targets = combinedLogs.filter(log =>
     classifyLog(log) === category &&
+    !isHistoryOnlyActivity(log) &&
     log.acknowledged !== true &&
     !logRequiresAck(log)
   );
@@ -1542,7 +1544,7 @@ async function ackAllInSection(category) {
   try {
     const action = await openAction({ refs: targets.map(log => 'activityLogs/' + log.id) });
     const staffLabel = getStaffLabelFromRole();
-    await action.submit(latest => Promise.all(latest.filter(log => log && log.acknowledged !== true && !logRequiresAck(log)).map(log => acknowledgeLog(log.id, staffLabel))));
+    await action.submit(latest => Promise.all(latest.filter(log => log && !isHistoryOnlyActivity(log) && log.acknowledged !== true && !logRequiresAck(log)).map(log => acknowledgeLog(log.id, staffLabel))));
     await loadCombinedLogs();
     refreshLogPanels();
   } catch (err) {
@@ -1811,7 +1813,8 @@ function renderModalLogList() {
 
 // 모달 안 로그 행 1개 (메인 패널의 행과 비슷하지만 시간 항상 표시)
 function renderModalLogRow(log) {
-  const isUnack = (log.acknowledged !== true);
+  const historyOnly = isHistoryOnlyActivity(log);
+  const isUnack = !historyOnly && (log.acknowledged !== true);
   const isCritical = logRequiresAck(log);
   const timeLabel = formatLogTime(log.timestamp);
 
@@ -1822,7 +1825,9 @@ function renderModalLogRow(log) {
     log.subAction === 'alert' && ['minStock', 'frozenStockLow'].includes(log.action) ? 'log-row-stock-warning' : '',
   ].filter(Boolean).join(' ');
 
-  const ackBtn = isUnack
+  const ackBtn = historyOnly
+    ? '<span class="log-history-only" title="생산 등록 이력 · 확인 불필요">이력</span>'
+    : isUnack
     ? `<button class="log-ack-btn" data-modal-log-act="ack" data-log-id="${escapeHtml(log.id)}">확인</button>`
     : `<span class="log-ack-done" title="${escapeHtml(log.acknowledgedBy || '')} 확인">✓ ${escapeHtmlMain(log.acknowledgedBy || '')}</span>`;
 

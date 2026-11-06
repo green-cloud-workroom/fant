@@ -43,7 +43,7 @@ const CLOSING_FLAG_BLOCKS = [
   { key: 'blockFrozenOrder', label: '동결건조 발주 미확인 시 마감 차단', desc: '오늘 등록된 발주 행이 확인/취소되지 않으면 차단' },
   { key: 'blockScheduleDue', label: '입고예정 미처리 시 마감 차단', desc: '오늘 도착 예정 입고가 완료/취소 처리되지 않으면 차단' },
   { key: 'blockAutoRepack', label: '자동 재포장 미확인 시 마감 차단', desc: '자동 재포장 trigger/diff 로그가 확인되지 않으면 차단' },
-  { key: 'blockProdLog', label: '생산 로그 미확인 시 마감 차단', desc: '생산 카테고리 로그 (생산/재포장/전처리 등) 미확인 시 차단' },
+  { key: 'blockProdLog', label: '생산 로그 미확인 시 마감 차단', desc: '생산/재포장/전처리 등 미확인 시 차단 (단순 생산 추가 이력 제외)' },
   { key: 'blockOfficeLog', label: '사무 로그 미확인 시 마감 차단', desc: '사무 카테고리 로그 (봉투/계란/원육/입고예정 등) 미확인 시 차단' },
   { key: 'blockEggOut', label: '계란 출고 미입력 시 마감 차단', desc: '노른자 사용 생산이 있는데 계란 출고가 입력되지 않으면 차단' },
   { key: 'blockProductReceipt', label: '생식 제품입고 미완료 → 마감 차단', desc: '생식 생산 카드 중 제품입고가 완료되지 않은 항목이 있으면 차단' },
