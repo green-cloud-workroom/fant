@@ -137,7 +137,7 @@ test('locked production blocks edits and preserves supplement reservation',async
 test('lost edit acknowledgement prevents dispatching a second save',async()=>{
   const e=await setup();try{
     e.fill('#pf_qty_select','2');await e.fire('#pf_qty_select','change');e.state.failNextCommit='after';
-    await e.fire('#btnSaveProduction');assert.match(e.alerts.at(-1),/자동 재전송하지 않습니다/);
+    await e.fire('#btnSaveProduction');assert.match(e.alerts.at(-1),/저장 결과를 아직 확인하지 못했습니다.*중복 처리될 수 있습니다/);
     await e.fire('#btnSaveProduction');
     assert.deepEqual(stocks(e),[10,19]);assert.equal(e.state.commits.length,1);
     assert.equal(e.state.rows.supplementLogs.length,3);assert.match(e.alerts.at(-1),/直前|직전 저장 결과/);
@@ -169,7 +169,7 @@ test('timeout blocks resubmission while a late commit is still allowed to settle
     });
     e.fill('#pf_qty_select','2');await e.fire('#pf_qty_select','change');
     await e.fire('#btnSaveProduction');assert.equal(e.state.commits.length,0);
-    assert.match(e.alerts.at(-1),/자동 재전송하지 않습니다/);
+    assert.match(e.alerts.at(-1),/저장 결과를 아직 확인하지 못했습니다.*중복 처리될 수 있습니다/);
     await e.fire('#btnSaveProduction');assert.equal(dispatches,1);
     release();await late;await Promise.resolve();
     assert.deepEqual(stocks(e),[10,19]);assert.equal(e.state.commits.length,1);

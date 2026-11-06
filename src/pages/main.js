@@ -1,3 +1,6 @@
+import {loadStockAlerts} from '../services/stockAlerts.js';
+import {isStockAlert} from '../domain/stockAlerts.js';
+import {stockAlertSummaryHtml,mountStockAlertSummary} from '../utils/stockAlertsView.js';
 import {staffError} from '../utils/staffText.js';
 import {openInventoryReceiptCorrection,INVENTORY_RECEIPT_CORRECTION_ENABLED,mountInventoryCorrectionRecovery} from '../services/inventoryReceiptCorrection.js';
 import { confirmAutoRepack } from '../services/autoRepackConfirm.js';
@@ -1185,24 +1188,14 @@ function renderBlockerArea(data = blockingData) {
     `);
   });
 
-  // 계란 부족 경고 (노랑) — 묶음 6C-3에서 minStock:alert 자동 발행으로 마이그레이션 예정
-  if (eggStock.minimumQty > 0 && eggStock.currentQty < eggStock.minimumQty) {
-    cards.push(`
-      <div class="alert-card alert-card-warning">
-        <span class="alert-card-label">⚠️ 계란 부족 (현재: ${eggStock.currentQty}개 / 최소: ${eggStock.minimumQty}개)</span>
-        <button class="alert-card-jump" data-jump="egg">처리하러 가기 →</button>
-      </div>
-    `);
-  }
-
-  // 설비 부품 — 교체 임박·지남 / 재고 부족 (노랑, 요약 1장)
+  // 설비 부품 — 교체 임박·지남. 재고 부족은 공통 요약에서 확인.
   const equipmentCard = renderEquipmentAlertCard();
   if (equipmentCard) cards.push(equipmentCard);
 
-  if (cards.length === 0) return '';
+  if (cards.length === 0) return stockAlertSummaryHtml;
 
   return `
-    <div class="log-blocker-area">
+    ${stockAlertSummaryHtml}<div class="log-blocker-area">
       ${cards.join('')}
     </div>
   `;
@@ -1212,7 +1205,7 @@ function renderBlockerArea(data = blockingData) {
 function renderLogSection(category) {
   const title = category === 'production' ? '🏭 생산 로그' : '🗒️ 사무 로그';
   const sectionLogs = combinedLogs
-    .filter(log => classifyLog(log) === category);
+    .filter(log => classifyLog(log) === category && !isStockAlert(log));
 
   // 확인 필수 + 미확인 → 위로 / 나머지 → 시간순
   sectionLogs.sort((a, b) => {
@@ -1339,6 +1332,7 @@ function getStaffLabelFromRole() {
 
 // 로그 패널 [확인] / [모두 확인] / [전체보기] / [히스토리] 바인딩
 function bindLogActions() {
+  mountStockAlertSummary();
   document.querySelectorAll('[data-log-act="ack"]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const logId = btn.dataset.logId;
@@ -1934,96 +1928,11 @@ async function triggerScheduleDueLogs(today, autoLogs, scope, state) {
   }
 }
 
-// 3. ⚠️ 최소재고 미달 — 계란 + 원육 + 봉투 (확인 필수, date=today로 dedup하니 매일 자동 반복)
+// Shortages keep one shared episode across dates; only transitions create a log.
 async function triggerMinStockLogs(today, autoLogs, scope, state) {
-  try {
-    // 계란
-    if (state.eggStock.minimumQty > 0 && state.eggStock.currentQty < state.eggStock.minimumQty) {
-      autoLogs.enqueue({
-        action: 'minStock',
-        subAction: 'alert',
-        date: today,
-        message: `⚠️ 계란 부족 — 현재 ${state.eggStock.currentQty}개 / 최소 ${state.eggStock.minimumQty}개`,
-        details: { kind: 'egg', current: state.eggStock.currentQty, minimum: state.eggStock.minimumQty },
-        dedupKey: `minStock:egg`,
-      });
-    }
-
-    // 원육 — meatTypes의 minimumQtyG 미달 (해당 type의 모든 stock remaining 합산)
-    const mtSnap = await scope.getDocs(collection(db, 'meatTypes'));
-    const msSnap = await scope.getDocs(collection(db, 'meatStocks'));
-    const meatStocksData = msSnap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      .filter(s => !s.closed);
-
-    for (const mtDoc of mtSnap.docs) {
-      const mt = { id: mtDoc.id, ...mtDoc.data() };
-      if (!mt.minimumQtyG) continue;
-      const total = meatStocksData
-        .filter(s => s.meatTypeId === mt.id)
-        .reduce((sum, s) => sum + (s.remaining || 0), 0);
-      if (total < mt.minimumQtyG) {
-        autoLogs.enqueue({
-          action: 'minStock',
-          subAction: 'alert',
-          date: today,
-          message: `⚠️ ${mt.name || '원육'} 부족 — 현재 ${(total/1000).toFixed(1)}kg / 최소 ${(mt.minimumQtyG/1000).toFixed(1)}kg`,
-          details: { kind: 'meat', meatTypeId: mt.id, name: mt.name, current: total, minimum: mt.minimumQtyG },
-          dedupKey: `minStock:meat:${mt.id}`,
-        });
-      }
-    }
-
-    // 봉투
-    const bagSnap = await scope.getDocs(collection(db, 'bagTypes'));
-    for (const bDoc of bagSnap.docs) {
-      const b = { id: bDoc.id, ...bDoc.data() };
-      if (b.minimumQty && (b.currentQty || 0) < b.minimumQty) {
-        autoLogs.enqueue({
-          action: 'minStock',
-          subAction: 'alert',
-          date: today,
-          message: `⚠️ ${b.name || '봉투'} 부족 — 현재 ${b.currentQty || 0}장 / 최소 ${b.minimumQty}장`,
-          details: { kind: 'bag', bagTypeId: b.id, name: b.name, current: b.currentQty || 0, minimum: b.minimumQty },
-          dedupKey: `minStock:bag:${b.id}`,
-        });
-      }
-    }
-
-    const supplementTypesSnap = await scope.getDocs(query(
-      collection(db, 'supplementTypes'),
-      where('active', '==', true),
-    ));
-    state.supplementTypeRows = supplementTypesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const supplementStockSnap = await scope.getDocs(collection(db, 'supplementStock'));
-    const supplementStockMap = new Map(
-      supplementStockSnap.docs.map(d => [d.id, { id: d.id, ...d.data() }])
-    );
-    const supplementMinQty = 5;
-
-    for (const typeDoc of supplementTypesSnap.docs) {
-      const type = { id: typeDoc.id, ...typeDoc.data() };
-      const stock = supplementStockMap.get(type.id);
-      const currentQty = stock ? Number(stock.currentQty || 0) : 0;
-      if (currentQty >= supplementMinQty) continue;
-      autoLogs.enqueue({
-        action: 'minStock',
-        subAction: 'alert',
-        date: today,
-        message: `⚠️ ${type.name || '영양제'} 부족 — 현재 ${currentQty}봉 / 최소 ${supplementMinQty}봉`,
-        details: {
-          kind: 'supplement',
-          supplementTypeId: type.id,
-          name: type.name,
-          current: currentQty,
-          minimum: supplementMinQty,
-        },
-        dedupKey: `supplementMin:alert:${type.id}`,
-      });
-    }
-  } catch (err) {
-    console.error('[6C-3] 최소재고 자동 발행 실패:', err); throw err;
-  }
+  const model=await loadStockAlerts(scope,today);
+  state.supplementTypeRows=model.supplementTypes;
+  model.plans.forEach(plan=>autoLogs.enqueue(plan));
 }
 
 // 자동 발행 통합 — loadAllData에서 호출
@@ -2038,7 +1947,7 @@ async function triggerAutoLogs(today, autoLogs, scope, state) {
   ]);
 }
 
-// 4. 🔧 설비 부품 — 교체 임박/지남(partDue) + 재고 부족(minStock kind:part). equipmentAlerts는 loadAllData에서 채움.
+// 4. 🔧 설비 부품 — 교체 임박/지남(partDue). 재고 부족은 triggerMinStockLogs에서 발행.
 async function triggerEquipmentLogs(today, autoLogs, scope, state) {
   for (const a of state.equipmentAlerts) {
     const p = a.part;
@@ -2050,15 +1959,6 @@ async function triggerEquipmentLogs(today, autoLogs, scope, state) {
         message: `🔧 ${partLabel(p)} 교체 ${a.overdue ? `예정일 ${Math.abs(a.dday)}일 지남` : formatDday(a.dday)} (예정 ${p.nextDueAt})`,
         details: { kind: 'part', partId: p.id, equipmentId: p.equipmentId, name: p.name, nextDueAt: p.nextDueAt, dday: a.dday },
         dedupKey: `partDue:${p.id}`,
-      });
-    } else if (a.kind === 'low') {
-      autoLogs.enqueue({
-        action: 'minStock',
-        subAction: 'alert',
-        date: today,
-        message: `⚠️ ${partLabel(p)} 부품 부족 — 현재 ${Number(p.currentQty || 0)}개 / 최소 ${Number(p.minimumQty || 0)}개`,
-        details: { kind: 'part', partId: p.id, equipmentId: p.equipmentId, name: p.name, current: Number(p.currentQty || 0), minimum: Number(p.minimumQty || 0) },
-        dedupKey: `minStock:part:${p.id}`,
       });
     }
   }
@@ -2791,16 +2691,14 @@ function renderMeatNeeds(targetProductions = productions, isCompleted = false) {
 }
 
 function renderEquipmentAlertCard() {
-  if (!equipmentAlerts.length) return '';
   const due = equipmentAlerts.filter(a => a.kind === 'due');
+  if (!due.length) return '';
   const overdue = due.filter(a => a.overdue).length;
-  const low = equipmentAlerts.filter(a => a.kind === 'low').length;
   const partsText = [
     overdue ? `교체 지남 ${overdue}` : '',
     due.length - overdue ? `교체 임박 ${due.length - overdue}` : '',
-    low ? `재고 부족 ${low}` : '',
   ].filter(Boolean).join(' · ');
-  const first = due[0] || equipmentAlerts[0];
+  const first = due[0];
   return `
       <div class="alert-card ${overdue ? 'alert-card-blocker' : 'alert-card-warning'}">
         <span class="alert-card-label">🔧 설비 부품 확인 필요 — ${partsText} (${escapeHtmlMain(partLabel(first.part))} 등)</span>
@@ -2811,7 +2709,8 @@ function renderEquipmentAlertCard() {
 
 // 메인 진입 시 하루 1회 팝업 (브라우저 sessionStorage 기준). 차단 모달 아님 — 닫기만 하면 됨.
 function maybeShowEquipmentPopup() {
-  if (!equipmentAlerts.length) return;
+  const dueAlerts=equipmentAlerts.filter(a=>a.kind==='due');
+  if (!dueAlerts.length) return;
   const key = `equipmentPopupShown_${getToday()}`;
   try {
     if (sessionStorage.getItem(key)) return;
@@ -2820,7 +2719,7 @@ function maybeShowEquipmentPopup() {
   const existing = document.getElementById('equipmentAlertPopup');
   if (existing) existing.remove();
 
-  const rows = equipmentAlerts.slice(0, 12).map(a => {
+  const rows = dueAlerts.slice(0, 12).map(a => {
     const p = a.part;
     const pill = a.kind === 'low'
       ? `<span class="eq-pill eq-pill-amber">재고 ${Number(p.currentQty || 0)}</span>`
@@ -2828,13 +2727,13 @@ function maybeShowEquipmentPopup() {
     const tail = a.kind === 'low' ? ` <span style="color:#888;">(최소 ${Number(p.minimumQty || 0)})</span>` : '';
     return `<div>${pill}${escapeHtmlMain(partLabel(p))}${tail}</div>`;
   }).join('');
-  const more = equipmentAlerts.length > 12 ? `<div style="color:#888;font-size:12px;">외 ${equipmentAlerts.length - 12}건</div>` : '';
+  const more = dueAlerts.length > 12 ? `<div style="color:#888;font-size:12px;">외 ${dueAlerts.length - 12}건</div>` : '';
 
   document.body.insertAdjacentHTML('beforeend', `
     <div class="modal-overlay" id="equipmentAlertPopup">
       <div class="modal-box" style="width:420px;">
         <h3 class="modal-title" style="margin-bottom:4px;">🔧 설비 부품 확인 필요</h3>
-        <p style="font-size:12px;color:#888;margin:0 0 12px;">교체 예정일 7일 이내·지남 또는 재고 부족 부품입니다.</p>
+        <p style="font-size:12px;color:#888;margin:0 0 12px;">교체 예정일이 7일 이내이거나 지난 부품입니다.</p>
         <div class="eq-popup-list">${rows}${more}</div>
         <div class="modal-actions">
           <button class="btn-secondary" id="equipmentPopupClose">닫기</button>

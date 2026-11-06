@@ -1,3 +1,4 @@
+import {loadStockAlerts,syncStockAlerts} from './services/stockAlerts.js';
 import {staffError} from './utils/staffText.js';
 import { flags, performanceDisabled } from './config/performanceFlags.js';
 import { createDisplayScope, displayPool } from './state/displayReads.js';
@@ -138,7 +139,7 @@ export function renderLayout() {
         <button type="button" class="subbar-item subbar-date-button" id="subToday" title="생산 날짜 선택">📅 --</button>
         <span class="subbar-item" id="sub18months">⏳ --</span>
         <span class="subbar-item" id="subEgg">🥚 --개</span>
-        <span class="subbar-item" id="subLowStock">⚠️ 부족재고 --개</span>
+        <button type="button" class="subbar-item subbar-stock-button" id="subLowStock">⚠️ 부족재고 확인 중</button>
         <span class="subbar-item" id="subSchedule">📦 입고예정 --건</span>
         <span class="subbar-item" id="subUnread">🔔 미확인로그 --건</span>
       </div>
@@ -169,6 +170,7 @@ export function renderLayout() {
     (await import('./pages/main.js')).showProductionDatePicker();
   });
   document.getElementById('closingBtn').addEventListener('click', handleClosingClick);
+  document.getElementById('subLowStock').addEventListener('click',async()=>{(await import('./utils/stockAlertsView.js')).openStockAlerts();});
 
   // 배너 클릭 핸들러 — Phase 3d에서 window.openBlockingModal 등록되면 모달, 없으면 fallback alert
   const banner = document.getElementById('blockBanner');
@@ -268,24 +270,13 @@ async function updateSubbar(scope = createReadScope()) {
     const eggQty = eggSnap.exists() ? eggSnap.data().currentQty : 0;
     document.getElementById('subEgg').textContent = `🥚 ${eggQty}개`;
 
-    const meatTypes = meatTypesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const meatStocks = meatStocksSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.closed);
-
-    let lowCount = 0;
-    meatTypes.forEach(mt => {
-      if (!mt.minimumQtyG) return;
-      const total = meatStocks
-        .filter(s => s.meatTypeId === mt.id)
-        .reduce((sum, s) => sum + (s.remaining || 0), 0);
-      if (total < mt.minimumQtyG) lowCount++;
-    });
-
-    bagSnap.docs.forEach(d => {
-      const b = d.data();
-      if (b.minimumQty && (b.currentQty || 0) < b.minimumQty) lowCount++;
-    });
-    document.getElementById('subLowStock').classList.toggle('low-stock-warning', lowCount > 0);
-    document.getElementById('subLowStock').textContent = `⚠️ 부족재고 ${lowCount}개`;
+    let stockAlerts=await loadStockAlerts(scope,todayKst);
+    // Observe recovery on inventory pages too, so a later shortage is a new event.
+    if(stockAlerts.plans.length)stockAlerts=await syncStockAlerts();
+    if(document.getElementById('mainContent')!==content)return;
+    const lowCount=stockAlerts.items.length;
+    document.getElementById('subLowStock').classList.toggle('low-stock-warning',lowCount>0);
+    document.getElementById('subLowStock').textContent=`⚠️ 부족재고 ${lowCount}종${stockAlerts.unknown.length?' · 수량 확인 필요':''}`;
 
     const pendingSchedules = scheduleSnap.docs
       .map(d => d.data())
@@ -295,6 +286,7 @@ async function updateSubbar(scope = createReadScope()) {
     document.getElementById('subUnread').textContent = `🔔 미확인로그 0건`;
 
   } catch (err) {
+    const badge=document.getElementById('subLowStock');if(badge)badge.textContent='⚠️ 부족재고 조회 실패';
     console.error('서브바 업데이트 오류:', err);
   }
 }

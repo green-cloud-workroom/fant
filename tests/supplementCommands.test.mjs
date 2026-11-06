@@ -15,18 +15,18 @@ async function setup(){
   return {...e,page,resource,refresh};
 }
 
-for(const name of ['고양이 치킨 2용 영양제',undefined])test(`supplement activity uses loaded name with ID fallback: ${name}`,async()=>{
+for(const name of ['고양이 치킨 2용 영양제',undefined])test(`supplement activity uses readable name and units: ${name}`,async()=>{
   const e=await pageEnvironment('supplement',{instrument:'\nexport {saveIncomingCell,saveAdjustCell};'});
   try {
   e.state.rows.supplementStock=[{id:'sku',currentQty:10}];
   if(name)e.state.rows.supplementTypes.push({id:'sku',name,active:true,sortOrder:100});
   await e.page.renderSupplement();
   await e.page.saveIncomingCell('sku','2026-09-14',2,'fixture',{kind:'receipt',operationId:'named-in',reason:'재고없음'});
-  assert.equal(e.state.rows.activityLogs.at(-1).message,`실제 입고 — ${name||'sku'} 2 / 재고없음`);
+  assert.equal(e.state.rows.activityLogs.at(-1).message,`실제 입고 — ${name||'영양제 품목명 확인 필요'} 2봉 / 재고없음`);
   await e.page.renderSupplement({force:true});
   await e.page.saveAdjustCell('sku','2026-09-14',-1,'사용','fixture',{kind:'usage',operationId:'named-out',reason:'사용'});
   const activity=e.state.rows.activityLogs.at(-1);
-  assert.equal(activity.message,`사용 — ${name||'sku'} -1 / 사용`);
+  assert.equal(activity.message,`사용 — ${name||'영양제 품목명 확인 필요'} -1봉 / 사용`);
   assert.deepEqual(Object.keys(activity.details).sort(),['after','app','before','delta','manualMovement','sourceCollection','sourceLogId']);
   assert.equal('supplementName' in e.state.rows.supplementLogs.at(-1),false);
   // Names come from the loaded list, never an additional transaction read.

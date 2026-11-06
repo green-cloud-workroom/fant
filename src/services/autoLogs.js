@@ -8,16 +8,16 @@ export function createAutoLogBatch(existingLogs) {
   const existingIds = new Set(existingLogs.map(log => log.id));
   const pending = new Map();
   return {
-    pendingIds: () => [...pending.keys()],
-    enqueue({ action, subAction, date, message, details, dedupKey }) {
+    pendingIds: () => [...pending.entries()].filter(([,data])=>data.acknowledged!==true).map(([id])=>id),
+    enqueue({ action, subAction, date, message, details, dedupKey, eventId, acknowledged=false }) {
       const safeKey = `${action}_${subAction}_${date}_${dedupKey}`.replace(/[^\w-]/g, '_');
-      const id = `auto_${safeKey}`;
+      const id = eventId || `auto_${safeKey}`;
       if (existingIds.has(id)) return;
       pending.set(id, {
         action, subAction, date, staff: '시스템', uid: null, message,
         details: { ...(details || {}), dedupKey, autoTriggered: true },
-        read: false, acknowledged: false, acknowledgedAt: null,
-        acknowledgedBy: null, acknowledgedByUid: null,
+        read: false, acknowledged, acknowledgedAt: acknowledged ? serverTimestamp() : null,
+        acknowledgedBy: acknowledged ? '시스템' : null, acknowledgedByUid: null,
       });
     },
     async flush() {
