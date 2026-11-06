@@ -1,3 +1,4 @@
+import {staffError} from '../utils/staffText.js';
 import {movementNote} from '../utils/movementNote.js';
 import { atomicStockOperation, stockOperationId } from '../services/atomicStockOperation.js';
 import {showStatus} from '../utils/statusToast.js';
@@ -174,7 +175,7 @@ function getMeatLogTypeLabel(type) {
     productionRollback: '생산복원',
     adjust: '수동조정',
   };
-  return map[type] || type;
+  return map[type] || '작업 구분 확인 필요';
 }
 
 function formatMeatLogTimestamp(ts) {
@@ -797,7 +798,7 @@ function initStockSummarySortable() {
           await persistStockSummaryCategoryOrder();
         } catch (err) {
           console.error('[meat] stock category order save failed:', err);
-          alert('카테고리 순서 저장 실패: ' + (err.message || err));
+          alert('카테고리 순서 저장 실패: ' + (staffError(err) || err));
           meatStockCategories = await loadMeatStockCategories();
           renderTab(currentTab);
         }
@@ -818,7 +819,7 @@ function initStockSummarySortable() {
           await persistStockSummaryMeatTypeGroups();
         } catch (err) {
           console.error('[meat] stock group save failed:', err);
-          alert('원료 카테고리 저장 실패: ' + (err.message || err));
+          alert('원료 카테고리 저장 실패: ' + (staffError(err) || err));
           meatTypes = await loadMeatTypes();
           renderTab(currentTab);
         }
@@ -1819,7 +1820,7 @@ function showMeatStockCategoriesModal() {
           await renderTab(currentTab);
         } catch (err) {
           console.error('[meat] stock category modal order save failed:', err);
-          alert('카테고리 순서 저장 실패: ' + (err.message || err));
+          alert('카테고리 순서 저장 실패: ' + (staffError(err) || err));
           meatStockCategories = await loadMeatStockCategories();
           showMeatStockCategoriesModal();
         }
@@ -1848,7 +1849,7 @@ function showMeatStockCategoriesModal() {
         if(saved)await renderTab(currentTab);
       } catch (err) {
         console.error('[meat] stock category rename failed:', err);
-        alert('카테고리명 저장 실패: ' + (err.message || err));
+        alert('카테고리명 저장 실패: ' + (staffError(err) || err));
         e.target.value = target.name;
       }
     });
@@ -1867,7 +1868,7 @@ function showMeatStockCategoriesModal() {
       await refreshMeatStockCategoryModal();
     } catch (err) {
       console.error('[meat] stock category add failed:', err);
-      alert('카테고리 추가 실패: ' + (err.message || err));
+      alert('카테고리 추가 실패: ' + (staffError(err) || err));
     }
   });
 
@@ -1895,7 +1896,7 @@ function showMeatStockCategoriesModal() {
         await refreshMeatStockCategoryModal();
       } catch (err) {
         console.error('[meat] stock category delete failed:', err);
-        alert('카테고리 삭제 실패: ' + (err.message || err));
+        alert('카테고리 삭제 실패: ' + (staffError(err) || err));
       }
 
  },{roles:['admin','office']});
@@ -2056,7 +2057,7 @@ function showMeatTypesModal(options = {}) {
             subAction: 'activeToggle',
             date: getToday(),
             staff: getRoleStaffLabel(),
-            message: `Meat type ${active ? 'active' : 'inactive'} — ${target?.name || id}`,
+            message: `원료 ${active ? '사용 시작' : '사용 중지'} — ${target?.name || '원료명 확인 필요'}`,
             details: {
               meatTypeId: id,
               meatName: target?.name || '',
@@ -2077,7 +2078,7 @@ function showMeatTypesModal(options = {}) {
         }
       } catch (err) {
         console.error('[meat] active save failed:', err);
-        alert('Save failed: ' + (err.message || err));
+        alert('저장 중 오류가 발생했습니다: ' + (staffError(err) || err));
         if(!command.committed)e.target.checked = !active;
       }
 
@@ -2176,7 +2177,7 @@ async function persistMeatTypeOrder() {
     await refreshMeatMasterAfterSave(command);
   } catch (err) {
     console.error('[meat] reorder save failed:', err);
-    alert('순번 저장 실패: ' + (err.message || err));
+    alert('순번 저장 실패: ' + (staffError(err) || err));
     meatTypes = await loadMeatTypes();
     if(!command.isCurrent())return;
     closeModal();

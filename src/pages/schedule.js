@@ -1,3 +1,4 @@
+import {staffError} from '../utils/staffText.js';
 import { escapeHtml } from '../utils/html.js';
 import {showStatus} from '../utils/statusToast.js';
 import {movementFields,bindMovementForm,readMovementForm} from '../utils/movementForm.js';
@@ -24,7 +25,7 @@ let scheduleMeatTypes=[],scheduleBagTypes=[];
 async function runScheduleCommand(callback,roles=['admin','office']) {
   const page=getPageContext();
   try{return await withReadCommand(scheduleResource,command=>{command.isCurrent=()=>!page||page.isCurrent();return callback(command);},{roles});}
-  catch(error){console.error('[입고 예정 저장]',error);alert(error.message);}
+  catch(error){console.error('[입고 예정 저장]',error);alert(staffError(error));}
 }
 
 export async function renderSchedule({force=false}={}) {
@@ -149,7 +150,7 @@ function renderScheduleLayout(schedules) {
         showCompleteModal(s);
       } catch (err) {
         console.error('완료 버튼 오류:', err);
-        alert('오류가 발생했습니다: ' + err.message);
+        alert('오류가 발생했습니다: ' + staffError(err));
       }
     });
   });
@@ -755,7 +756,7 @@ function showCompleteModal(s) {
     showStatus('완료 처리되었습니다!');
     } catch (err) {
       console.error('입고 완료 처리 오류:', err);
-      alert(`완료 처리 중 오류가 발생했습니다.\n\n${err.code || ''} ${err.message}\n\n이 메시지를 관리자에게 전달해주세요.`);
+      alert(`완료 처리 중 오류가 발생했습니다.\n\n${staffError(err)}\n\n이 메시지를 관리자에게 전달해주세요.`);
     }
   },['admin','office','production']));
 }

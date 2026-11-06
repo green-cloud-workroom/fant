@@ -15,7 +15,9 @@ test('adjustment requires classification; cancel requires an exact original and 
   let delta;const get=form.bindMovementForm({db:{},name:'bagLogs',filter:{bagTypeId:'b1'},onCancel:n=>{delta=n;},reasonInput:e.document.querySelector('#m_reason')});
   assert.throws(get,/처리 구분/);
   e.fill('#movement_kind','cancel');await e.fire('#movement_kind','change');
-  assert.throws(get,/원본/);assert.match(e.document.querySelector('#movement_source').textContent,/original/);
+  assert.throws(get,/원본/);assert.match(e.document.querySelector('#movement_source').textContent,/20장/);
+  assert.ok(!e.document.querySelector('#movement_source').textContent.includes('original'));
+  assert.ok(e.document.querySelector('#movement_source option[value="original"]'));
   e.fill('#movement_source','original');await e.fire('#movement_source','change');assert.equal(delta,-20);
   e.fill('#m_reason','중복 입력 취소');assert.equal(get().cancelOf,'original');assert.equal(get().reason,'중복 입력 취소');
   assert.equal(e.state.writes.length,0);

@@ -1,3 +1,4 @@
+import {staffError} from './utils/staffText.js';
 import { flags, performanceDisabled } from './config/performanceFlags.js';
 import { createDisplayScope, displayPool } from './state/displayReads.js';
 import { sessionStore } from './state/sessionStore.js';
@@ -446,7 +447,7 @@ function showBlockingModal(options = {}) {
         : (it.reason ? `<div class="blocking-modal-reason">${escapeModalText(it.reason)}</div>` : '');
       const jumpButtonHtml = isWarning
         ? ''
-        : `<button class="btn-primary blocking-modal-jump" data-jump="${it.jumpMenu}">처리하러 가기</button>`;
+        : `<button class="btn-primary blocking-modal-jump" data-jump="${it.jumpMenu}" data-blocker="${it.id}">${[4,5,6].includes(it.id)?escapeModalText(dateLabel)+' 기록 확인':'처리하러 가기'}</button>`;
       return `
         <div class="blocking-modal-item">
           <span class="blocking-modal-item-num">${num}</span>
@@ -511,8 +512,19 @@ function showBlockingModal(options = {}) {
 
       // 점프 버튼들 — 메뉴 전환 + 모달 닫기
       overlay.querySelectorAll('.blocking-modal-jump').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', async () => {
           const menuId = btn.dataset.jump;
+          if([4,5,6].includes(Number(btn.dataset.blocker))) {
+            btn.disabled=true;
+            try {
+              const {showClosingLogsModal}=await import('./pages/main.js');
+              if(!overlay.isConnected)return;
+              overlay.remove();
+              await showClosingLogsModal(data.date,Number(btn.dataset.blocker));
+              resolve(false);
+            } catch(error) { btn.disabled=false;console.error('[마감 기록 열기]',error); }
+            return;
+          }
           overlay.remove();
           setCurrentMenu(menuId);
           renderLayout();
@@ -750,7 +762,7 @@ async function showCloseConfirmModal(targetDate) {
       updateBlockingBanner();
     } catch (e) {
       console.error('closeDate error', e);
-      alert(`마감 실패: ${e.message}`);
+      alert(`마감 실패: ${staffError(e)}`);
       okBtn.disabled = false;
       okBtn.textContent = '마감';
     }
@@ -845,7 +857,7 @@ async function showReleaseConfirmModal(targetDate) {
       updateBlockingBanner();
     } catch (e) {
       console.error('releaseClosing error', e);
-      alert(`마감해제 실패: ${e.message}`);
+      alert(`마감해제 실패: ${staffError(e)}`);
       okBtn.disabled = false;
       okBtn.textContent = '마감해제';
     }

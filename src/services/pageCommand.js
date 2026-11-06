@@ -1,3 +1,4 @@
+import {staffError} from '../utils/staffText.js';
 import {withReadWorkflow} from './readCommand.js';
 import {getPageContext} from '../utils/pageLifecycle.js';
 
@@ -16,6 +17,6 @@ export async function runPageCommand(resource,callback,{roles=['admin','office']
     return result;
   } catch(error) {
     console.error(`[${resource.route} 저장]`,error);
-    alert(error.message);
+    alert(staffError(error));
   }
 }

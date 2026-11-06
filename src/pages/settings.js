@@ -1,3 +1,4 @@
+import {staffError} from '../utils/staffText.js';
 import {escapeHtml as escapeSettingsHtml} from '../utils/html.js';
 import { showPromptModal, showConfirmModal } from '../utils/modal.js';
 import { db } from '../firebase.js';
@@ -486,7 +487,7 @@ async function mergeIngredientNames(fromNames, toName, staffName, onDone) {
     await renderSettings();
   } catch (err) {
     console.error('[settings] ingredient name merge failed:', err);
-    alert('원료 명칭 통합 실패: ' + err.message);
+    alert('원료 명칭 통합 실패: ' + staffError(err));
   }
 
  },{roles:['admin','office']});
@@ -533,7 +534,7 @@ async function persistCopySheetOrder() {
     });
   } catch (err) {
     console.error('[settings] copySheetOrder save failed:', err);
-    alert('카테고리 순서 저장 실패: ' + err.message);
+    alert('카테고리 순서 저장 실패: ' + staffError(err));
     await renderSettings();
   }
 
@@ -600,7 +601,7 @@ function bindClosingFlagEvents(initialFlags) {
         });
       } catch (err) {
         console.error('[settings] closingFlags save failed:', err);
-        alert('저장 실패: ' + err.message);
+        alert('저장 실패: ' + staffError(err));
         e.target.checked = before;
       }
 
@@ -693,7 +694,7 @@ async function handleNumberBlur(input, field, initialValues) {
     await logSystemValueChange(valueKey, before, after, command);
   } catch (err) {
     console.error('[settings] systemValue save failed:', err);
-    alert('저장 실패: ' + err.message);
+    alert('저장 실패: ' + staffError(err));
   }
 
  },{roles:['admin','office']});
@@ -741,7 +742,7 @@ async function handleFractionBlur(input, field, initialValues) {
     await logSystemValueChange(valueKey, before, after, command);
   } catch (err) {
     console.error('[settings] systemValue save failed:', err);
-    alert('저장 실패: ' + err.message);
+    alert('저장 실패: ' + staffError(err));
   }
 
  },{roles:['admin','office']});
@@ -834,7 +835,7 @@ function bindMenuStaffGroupEvents(initialGroups) {
         });
       } catch (err) {
         console.error('[settings] menuStaffGroups save failed:', err);
-        alert('저장 실패: ' + err.message);
+        alert('저장 실패: ' + staffError(err));
         e.target.checked = before.includes(groupKey);
       }
 
@@ -1149,7 +1150,7 @@ async function handleAddHoliday() {
     await renderSettings();
   } catch (err) {
     console.error(err);
-    alert('등록 실패: ' + err.message);
+    alert('등록 실패: ' + staffError(err));
   }
 
  },{roles:['admin','office']});
@@ -1203,7 +1204,7 @@ async function handleImportPublicHolidays() {
     await renderSettings();
   } catch (err) {
     console.error(err);
-    alert('자동 등록 실패: ' + err.message);
+    alert('자동 등록 실패: ' + staffError(err));
   }
 
  },{roles:['admin','office']});
@@ -1285,7 +1286,7 @@ async function handleEditHoliday(holidayId) {
     await renderSettings();
   } catch (err) {
     console.error(err);
-    alert('수정 실패: ' + err.message);
+    alert('수정 실패: ' + staffError(err));
   }
 
  },{roles:['admin','office']});
@@ -1324,7 +1325,7 @@ async function handleDeleteHoliday(holidayId) {
     await renderSettings();
   } catch (err) {
     console.error(err);
-    alert('삭제 실패: ' + err.message);
+    alert('삭제 실패: ' + staffError(err));
   }
 
  },{roles:['admin','office']});

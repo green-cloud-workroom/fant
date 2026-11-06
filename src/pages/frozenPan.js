@@ -1,3 +1,4 @@
+import {staffError} from '../utils/staffText.js';
 import { fingerprint } from '../services/actionGateway.js';
 import { atomicStockOperation, stockOperationId } from '../services/atomicStockOperation.js';
 import {openPanReceipt} from './frozenPanReceipt.js';
@@ -201,8 +202,8 @@ function renderBreadPanLogRow(log) {
     incoming: '입고',
     preprocess: '전처리 사용',
     adjust: '수동조정',
-    rollback: '롤백',
-  }[log.type] || log.type);
+    rollback: '차감 복원',
+  }[log.type] || '작업 구분 확인 필요');
 
   const qtyClass = log.qty > 0 ? 'stock-quantity--increase' : 'stock-quantity--decrease';
   const qtySign = log.qty > 0 ? '+' : '';
@@ -219,7 +220,7 @@ function renderBreadPanLogRow(log) {
     noteText = log.reason;
   }
 
-  // 제품명 옆에 차감/조정 대상 lot 입고일 표시 (입고 자기 자신은 제외)
+  // 제품명 옆에 차감/조정 대상 재고 건 입고일 표시 (입고 자기 자신은 제외)
   const lotDateLabel = (log.lotDate && log.type !== 'incoming')
     ? `<span style="font-size:11px;color:#999;margin-left:4px;">(입고 ${escapeHtml(log.lotDate)})</span>`
     : '';
@@ -245,7 +246,7 @@ function renderFrozenPanLogRow(log) {
     freezeDeduct: '동결가동 차감',
     freezeRestore: '동결가동 복원',
     adjust: '수동조정',
-  }[log.type] || log.type);
+  }[log.type] || '작업 구분 확인 필요');
 
   const qtyClass = log.qty > 0 ? 'stock-quantity--increase' : 'stock-quantity--decrease';
   const qtySign = log.qty > 0 ? '+' : '';
@@ -473,7 +474,7 @@ function showTenderInModal() {
 
     } catch (err) {
       console.error('showTenderInModal 저장 에러:', err);
-      alert(`저장 중 오류가 발생했습니다.\n\n${err.message}`);
+      alert(`저장 중 오류가 발생했습니다.\n\n${staffError(err)}`);
     }
 
  },{roles:['admin','office','production']});
@@ -569,7 +570,7 @@ async function showBreadPanAdjustModal() {
   const allBreadLots = await loadBreadPanLots({getDocs,getDoc}, true);
 
   if (allBreadLots.length === 0) {
-    alert('조정할 빵판 lot이 없습니다.\n빵판 입고를 먼저 진행해주세요.');
+    alert('조정할 빵판 재고가 없습니다.\n빵판 입고를 먼저 진행해주세요.');
     return;
   }
 
@@ -587,7 +588,7 @@ async function showBreadPanAdjustModal() {
     ${movementFields({incoming:false,reasonField:false})}
     <h3 class="modal-title">빵판 수동 조정</h3>
     <div class="form-group">
-      <label>대상 lot *</label>
+      <label>대상 재고 건 *</label>
       <select id="m_lot">
         <option value="">선택</option>
         ${lotOptions}
@@ -635,7 +636,7 @@ async function showBreadPanAdjustModal() {
     const reason = selection.reason;
     const staffName = document.getElementById('m_staff').value;
 
-    if (!lotId) { alert('대상 lot을 선택해주세요.'); return; }
+    if (!lotId) { alert('대상 재고 건을 선택해주세요.'); return; }
     if (qtyInput <= 0) { alert('수량은 0보다 커야 합니다.'); return; }
     if (!staffName) { alert('담당자를 선택해주세요.'); return; }
 
@@ -644,7 +645,7 @@ async function showBreadPanAdjustModal() {
 
     // lot 현재값 조회
     const lotSnap = await getDoc(doc(db, 'breadPanLots', lotId));
-    if (!lotSnap.exists()) { alert('lot을 찾을 수 없습니다.'); return; }
+    if (!lotSnap.exists()) { alert('재고 건을 찾을 수 없습니다.'); return; }
     const lot = lotSnap.data();
     const lotDate = lot.date;
 
@@ -679,7 +680,7 @@ async function showFrozenPanAdjustModal() {
   const allFrozenLots = await loadFrozenPanLots({getDocs,getDoc}, true);
 
   if (allFrozenLots.length === 0) {
-    alert('조정할 동결판 lot이 없습니다.\n동결판 입고를 먼저 진행해주세요.');
+    alert('조정할 동결판 재고가 없습니다.\n동결판 입고를 먼저 진행해주세요.');
     return;
   }
 
@@ -696,7 +697,7 @@ async function showFrozenPanAdjustModal() {
     ${movementFields({incoming:false,reasonField:false})}
     <h3 class="modal-title">동결판 수동 조정</h3>
     <div class="form-group">
-      <label>대상 lot *</label>
+      <label>대상 재고 건 *</label>
       <select id="m_lot">
         <option value="">선택</option>
         ${lotOptions}
@@ -744,13 +745,13 @@ async function showFrozenPanAdjustModal() {
     const reason = selection.reason;
     const staffName = document.getElementById('m_staff').value;
 
-    if (!lotId) { alert('대상 lot을 선택해주세요.'); return; }
+    if (!lotId) { alert('대상 재고 건을 선택해주세요.'); return; }
     if (!Number.isInteger(qtyInput) || qtyInput <= 0) { alert('수량은 0보다 큰 정수여야 합니다.'); return; }
     if (!staffName) { alert('담당자를 선택해주세요.'); return; }
 
     const delta = adjustType === 'plus' ? qtyInput : -qtyInput;
     const lotSnap = await getDoc(doc(db, 'frozenPanLots', lotId));
-    if (!lotSnap.exists()) { alert('lot을 찾을 수 없습니다.'); return; }
+    if (!lotSnap.exists()) { alert('재고 건을 찾을 수 없습니다.'); return; }
 
     const lot = lotSnap.data();
     if (await blockIfClosed(getToday(), command)) return;
@@ -859,7 +860,7 @@ async function showWorkRowModal(rows, lots) {
 
     <div style="font-size:12px;color:#666;background:#f9f9f9;padding:10px;border-radius:6px;margin-bottom:12px;">
       <strong>환산</strong>: 빵판 1개 → 동결판 4/9개 (≈0.44)<br>
-      <strong>FIFO 적용</strong>: 같은 제품에 여러 lot이 있으면 오래된 lot부터 차감됩니다.<br>
+      <strong>먼저 입고된 순서로 사용</strong>: 같은 제품에 여러 입고 건이 있으면 먼저 입고된 재고부터 차감됩니다.<br>
       <strong>실측</strong>: 이론값과 실제 산출 동결판 수가 다르면 차이가 별도 기록됩니다.
     </div>
 
@@ -997,7 +998,7 @@ async function handleWorkRowSave() {
           before,
           after,
           lotId: lot.id,
-          lotDate: lot.date,  // ★ 신규 — 차감 대상 lot의 입고일 (어느 날 입고된 빵판이 빠졌는지)
+          lotDate: lot.date,  // ★ 신규 — 차감 대상 재고 건의 입고일 (어느 날 입고된 빵판이 빠졌는지)
           expectedFrozenQty: isFirstLot ? expectedFrozenQty : null,
           actualFrozenQty: isFirstLot ? item.actualFrozenQty : null,
           diff: isFirstLot ? diff : null,
@@ -1092,7 +1093,7 @@ async function handleWorkRowSave() {
 
   } catch (err) {
     console.error('handleWorkRowSave 에러:', err);
-    alert(`저장 중 오류가 발생했습니다.\n\n${err.message}`);
+    alert(`저장 중 오류가 발생했습니다.\n\n${staffError(err)}`);
   }
 
  },{roles:['admin','office','production']});
@@ -1161,7 +1162,7 @@ function bindWorkItemEvents(productSummary) {
       diffEl.style.color = '#888';
 
       if (!summary || summary.total <= 0) {
-        stockInfoEl.textContent = productName ? '⚠️ 빵판 lot 없음' : '제품을 선택하세요';
+        stockInfoEl.textContent = productName ? '⚠️ 빵판 재고 없음' : '제품을 선택하세요';
         stockInfoEl.style.color = productName ? '#e53e3e' : '#888';
         breadEl.value = '';
         breadEl.max = '';

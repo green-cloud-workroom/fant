@@ -1,3 +1,4 @@
+import {displayActivity} from '../utils/activityDisplay.js';
 import {collection,doc,getDocFromServer,runTransaction,serverTimestamp,Timestamp,onSnapshot,query,where} from 'firebase/firestore';
 import {db} from '../firebase.js';
 import {currentUser,currentUserRole} from '../app.js';
@@ -34,7 +35,7 @@ async function writeRequest(ref, expected, action, input, by, stockPatch) {
     }
     tx.set(doc(collection(ref,'events')),requestEvent(row,value,action,by,time));
     await recordActivity({action:'supplementRequest',subAction:action,date:getTodayKST(),staff:by.name,
-      message:`영양제 신청 ${action}`,details:{app:'production',requestId:ref.id}}, {batch:tx});
+      message:displayActivity({action:'supplementRequest',subAction:action}),details:{app:'production',requestId:ref.id}}, {batch:tx});
     return {...row,...value,id:ref.id};
   });
 }
@@ -98,7 +99,7 @@ export async function stockInRequest(initial,by,incoming) {
         tx.update(ref,patch);
         tx.set(doc(collection(ref,'events')),requestEvent(row,patch,'stockIn',by,time));
         await recordActivity({action:'supplementRequest',subAction:'stockIn',date:getTodayKST(),staff:by.name,
-          message:'영양제 신청 stockIn',details:{app:'production',requestId:ref.id}}, {batch:tx});
+          message:'영양제 · 입고',details:{app:'production',requestId:ref.id}}, {batch:tx});
         next={...row,...patch,id:ref.id};
       });
       if(!next)throw Error('원자적 입고 콜백이 실행되지 않았습니다.');

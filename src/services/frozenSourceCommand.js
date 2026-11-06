@@ -13,8 +13,8 @@ function sorted(value){if(Array.isArray(value))return value.map(sorted);if(value
 async function inputHash(value){const data=new TextEncoder().encode(JSON.stringify(sorted(value)));return [...new Uint8Array(await crypto.subtle.digest('SHA-256',data))].map(x=>x.toString(16).padStart(2,'0')).join('');}
 function frozenJson(value){const result=JSON.parse(JSON.stringify(value));const freeze=v=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};return freeze(result);}
 export function frozenSourceHoldMessage(blockers=[]){
-  if(blockers.some(code=>code.includes('COMPONENT')))return '구성품 snapshot·자식 원장 근거를 확인해야 합니다.';
-  if(blockers.some(code=>code.includes('HANDOFF')||code.includes('INVENTORY')||code.includes('WORKFLOW')||code.includes('REQUEST_NOT_PENDING')))return '재고앱 처리 필요: 인계·입고·사용·실사 기록이 연결되어 있습니다. 재고앱 입고 관리에 원본 ID와 수정 항목을 전달해주세요.';
+  if(blockers.some(code=>code.includes('COMPONENT')))return '구성품의 입고 당시 수량과 이후 사용 기록을 확인해야 합니다.';
+  if(blockers.some(code=>code.includes('HANDOFF')||code.includes('INVENTORY')||code.includes('WORKFLOW')||code.includes('REQUEST_NOT_PENDING')))return '재고앱 처리 필요: 인계·입고·사용·실사 기록이 연결되어 있습니다. 재고앱 입고 관리에 입고일·제품명과 수정 항목을 전달해주세요.';
   if(blockers.includes('SOURCE_DATE_CLOSED'))return '마감된 날짜의 입고입니다. 마감 및 재고앱 기록을 먼저 확인해 주세요.';
   return '입고 요청·원본·봉투 근거가 일치하지 않아 정정·취소를 보류합니다. 원본을 유지하고 재고앱 입고 관리에서 확인해 주세요.';
 }

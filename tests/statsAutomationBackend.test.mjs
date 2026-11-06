@@ -245,6 +245,7 @@ test('adjustment event immediately enriches only existing confirms, duplicate/co
   const e=await adjustmentBackend();const requests=[...e.records].filter(([p])=>p.startsWith('confirmRequests/'));
   Object.assign(requests[0][1],{acknowledgedUids:['office'],acknowledgements:[{uid:'office',at:'seen'}],replies:[{text:'보존'}]});
   const before=structuredClone(requests[0][1]);
+  e.reads.length=0; // Measure the adjustment handler, excluding initial delivery setup.
   const event={params:{logId:'adjustment'},data:{data:()=>e.records.get('meatLogs/adjustment')}};
   const results=await Promise.all([e.api.onProductionStatsAdjustmentCreated(event),e.api.onProductionStatsAdjustmentCreated(event)]);
   assert.equal(results.reduce((n,r)=>n+r.updated,0),2);assert.ok(results.every(r=>r.created===0));

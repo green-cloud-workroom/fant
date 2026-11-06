@@ -1,3 +1,4 @@
+import {staffError} from '../utils/staffText.js';
 import {movementNote} from '../utils/movementNote.js';
 import {showStatus} from '../utils/statusToast.js';
 import {movementLabel,movementReason} from '../services/manualMovementLogic.js';
@@ -39,7 +40,7 @@ async function saveEggChange(previous,patch,log=null,activity=null,date=null,sel
   },{roles:['admin','office','production']});
 }
 async function runEggSave(callback) {
-  try{return await callback();}catch(error){console.error('[계란 저장]',error);alert(error.message);}
+  try{return await callback();}catch(error){console.error('[계란 저장]',error);alert(staffError(error));}
 }
 
 let eggFifoExpanded = false;

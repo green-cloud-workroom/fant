@@ -1,3 +1,4 @@
+import {displayActivity} from '../utils/activityDisplay.js';
 // src/services/closingChecksLogic.js
 //
 // 마감 차단/경고 항목 판정 — 순수 함수 + 집계 함수.
@@ -170,7 +171,7 @@ export function judgeProductReceiptsCompleted(productions, dateStr) {
       ? `${dateStr} 제품입고 ${unreceived.length}건이 완료되지 않았습니다`
       : '',
     count: unreceived.length,
-    details: unreceived.map(p => p.recipeName || p.id || '생산')
+    details: unreceived.map(p => p.recipeName || '생산 품목명 확인 필요')
   };
 }
 
@@ -193,7 +194,8 @@ export function judgeAutoRepackLogsAcknowledged(activityLogs, dateStr) {
     reason: pending.length > 0
       ? `자동 재포장 확인 ${pending.length}건 미완료`
       : '',
-    count: pending.length
+    count: pending.length,
+    details: pending.map(summarizeClosingLog)
   };
 }
 
@@ -239,10 +241,17 @@ function isMinimumStockAlertLog(log) {
 }
 
 function summarizeClosingLog(log) {
-  const action = log.action || 'unknown';
-  const subAction = log.subAction || '-';
   const message = log.message || log.title || log.text || '(메시지 없음)';
-  return `${action}:${subAction} — ${message}`;
+  return displayActivity({...log,message});
+}
+
+// Record navigation uses the same criteria as closing; it never acknowledges a log.
+export function isClosingLogPending(log,date,id) {
+  if(log.date!==date || log.acknowledged===true)return false;
+  if(id===4)return isAutoRepackAckLog(log);
+  if(id===5)return classifyClosingLog(log)==='production'&&!isAutoRepackAckLog(log)&&!isMinimumStockAlertLog(log);
+  if(id===6)return classifyClosingLog(log)==='office'&&!isMinimumStockAlertLog(log);
+  return false;
 }
 
 /**
@@ -323,7 +332,7 @@ export function judgeBagMinimumStock(bagTypes) {
       const boxText = currentBox !== null && minimumBox !== null
         ? ` (${currentBox}박스 / 최소 ${minimumBox}박스)`
         : '';
-      return `${b.name || b.id || '봉투'}: ${current}장 / 최소 ${minimum}장${boxText}`;
+      return `${b.name || '봉투 품목명 확인 필요'}: ${current}장 / 최소 ${minimum}장${boxText}`;
     })
   };
 }
@@ -352,7 +361,7 @@ export function judgeMeatMinimumStock(meatTypes, meatStocks) {
     details: lowItems.map(mt => {
       const currentKg = ((mt.currentQtyG || 0) / 1000).toLocaleString('ko-KR', { maximumFractionDigits: 2 });
       const minimumKg = ((mt.minimumQtyG || 0) / 1000).toLocaleString('ko-KR', { maximumFractionDigits: 2 });
-      return `${mt.name || mt.id || '원육'}: ${currentKg}kg / 최소 ${minimumKg}kg`;
+      return `${mt.name || '원료명 확인 필요'}: ${currentKg}kg / 최소 ${minimumKg}kg`;
     })
   };
 }
@@ -378,7 +387,7 @@ export function judgeSupplementMinimumStock(supplementTypes, supplementStocks, m
       : '',
     count: lowItems.length,
     details: lowItems.map(s =>
-      `${s.name || s.id || '영양제'}: 현재 ${s.currentQty}봉 / 최소 ${s.minQty}봉`
+      `${s.name || '영양제 품목명 확인 필요'}: 현재 ${s.currentQty}봉 / 최소 ${s.minQty}봉`
     )
   };
 }

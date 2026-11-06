@@ -1,3 +1,4 @@
+import {quantityText,stockUnit} from '../utils/staffText.js';
 import {collection,doc,getDocFromServer,getDocsFromServer,query,where,runTransaction,serverTimestamp} from 'firebase/firestore';
 import {MOVEMENT_LABELS,movementAmount,movementKind,cancellableMovement,originalMovementKind,movementReason,movementReasonRequired} from './manualMovementLogic.js';
 
@@ -167,7 +168,7 @@ export async function saveManualMovement({db,command,name,stockId,log,selection,
     if(scheduleRef&&kind!=='test')tx.update(scheduleRef,{...scheduleChange.patch,ledgerId:ledgerRef.id,completedAt:serverTimestamp(),updatedAt:serverTimestamp()});
     tx.set(activityRef,{action:activity?.action||({supplementLogs:'supplementStock',meatLogs:'meat',bagLogs:'bag',eggLogs:'egg',breadPanLogs:'breadPan',frozenPanLogs:'frozenPan'}[name]),
       subAction:name==='supplementLogs'?(kind==='receipt'?'incoming':'manualAdjust'):name==='eggLogs'?(kind==='receipt'?'in':kind==='usage'?'out':'adjust'):kind==='receipt'?'incoming':'adjust',date:log.date,staff:log.staff||log.staffName,uid,
-      message:`${MOVEMENT_LABELS[kind]} — ${log.meatNameSnapshot||log.bagNameSnapshot||(name==='supplementLogs'&&supplementName)||log.supplementTypeId||log.productName||'계란'} ${entered}${kind==='test'?' (재고 변동 없음)':''} / ${reason}${kind==='cancel'?' / 원본: '+name+'/'+selection.cancelOf:''}`,
+      message:`${MOVEMENT_LABELS[kind]} — ${log.meatNameSnapshot||log.bagNameSnapshot||(name==='supplementLogs'&&supplementName)||(name==='supplementLogs'?'영양제 품목명 확인 필요':log.productName)||(name==='eggLogs'?'계란':'품목명 확인 필요')} ${quantityText(name==='meatLogs'?entered/1000:entered)}${stockUnit(name)}${kind==='test'?' (재고 변동 없음)':''} / ${reason}${kind==='cancel'?' / 취소 대상: 이전 입출고 기록':''}`,
       ...(activity?{subAction:activity.subAction,message:activity.message}:{}),
       details:{...activity?.details,app:'production',sourceCollection:name,sourceLogId:logRef.id,manualMovement:metadata,delta,before,after},
       read:false,acknowledged:false,acknowledgedAt:null,acknowledgedBy:null,acknowledgedByUid:null,timestamp:serverTimestamp()});

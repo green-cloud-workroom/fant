@@ -1,3 +1,4 @@
+import {staffError} from '../utils/staffText.js';
 import { atomicStockOperation, stockOperationId } from '../services/atomicStockOperation.js';
 import {showStatus} from '../utils/statusToast.js';
 import {escapeHtml} from '../utils/html.js';
@@ -122,7 +123,7 @@ function computeBalancesAfter(stocks, logs) {
 }
 
 function getLogTypeLabel(type) {
-  return { incoming: '입고', separate: '분리', out: '출고', adjust: '조정', delete: '삭제' }[type] || type;
+  return { incoming: '입고', separate: '분리', out: '출고', adjust: '조정', delete: '삭제' }[type] || '작업 구분 확인 필요';
 }
 
 function getLogTypeColor(type) {
@@ -275,7 +276,7 @@ function renderFrozenSepLayout(stocks, logs = []) {
           });
         } catch (err) {
           console.error('saveSepProductOrder:', err);
-          alert('순서 저장 실패: ' + err.message);
+          alert('순서 저장 실패: ' + staffError(err));
         }
         if(!command.isCurrent())return;
         renderFrozenSepLayout(stocks, logs);

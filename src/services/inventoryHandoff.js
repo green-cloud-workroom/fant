@@ -1,3 +1,4 @@
+import {staffError} from '../utils/staffText.js';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { auth } from '../firebase.js';
 import { openAction } from './actionGateway.js';
@@ -21,7 +22,7 @@ export function bindInventoryHandoff(root = document) {
     event.preventDefault(); event.stopPropagation();
     if (button.disabled) return;
     button.disabled = true;
-    showHandoff(button.dataset.inventoryHandoff).catch(error => alert(error.message || String(error))).finally(() => { button.disabled = false; });
+    showHandoff(button.dataset.inventoryHandoff).catch(error => alert(staffError(error) || String(error))).finally(() => { button.disabled = false; });
   }, true);
 }
 export async function showHandoff(receiptId) {

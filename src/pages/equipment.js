@@ -1,3 +1,4 @@
+import {staffError} from '../utils/staffText.js';
 import {recordActivity as commandBatchActivity} from '../services/activityLogs.js';
 // 설비 부품 페이지
 // 왼쪽: 기계 목록(종류별 묶음, 별칭으로 개별 기계 구분) / 오른쪽: 선택 기계의 부품 표 + 이력.
@@ -20,7 +21,7 @@ const equipmentResource=pageResource('equipment');
 async function runEquipmentCommand(callback,roles=['admin','office']) {
   const page=getPageContext();
   try{return await withReadCommand(equipmentResource,command=>{command.isCurrent=()=>!page||page.isCurrent();return callback(command);},{roles});}
-  catch(error){console.error('[설비 저장]',error);alert(error.message);}
+  catch(error){console.error('[설비 저장]',error);alert(staffError(error));}
 }
 import { showConfirmModal } from '../utils/modal.js';
 import {
@@ -228,7 +229,7 @@ async function persistEquipmentOrderWithCommand(command) {
     await reloadAll({force:true});
   } catch (err) {
     console.error('[equipment] reorder save failed:', err);
-    alert('순번 저장 실패: ' + (err.message || err));
+    alert('순번 저장 실패: ' + (staffError(err) || err));
     const latest=await loadEquipmentRows();
     if(!command.isCurrent())return;
     equipments=latest;
@@ -442,7 +443,7 @@ async function renderPartHistory() {
               logs.map(l => `
                 <tr>
                   <td>${l.date || '-'}</td>
-                  <td><span class="tag ${l.type === 'in' ? 'tag-raw' : l.type === 'replace' ? 'tag-freezeDry' : 'tag-cat'}">${TYPE_LABEL[l.type] || l.type}</span></td>
+                  <td><span class="tag ${l.type === 'in' ? 'tag-raw' : l.type === 'replace' ? 'tag-freezeDry' : 'tag-cat'}">${TYPE_LABEL[l.type] || '작업 구분 확인 필요'}</span></td>
                   <td class="${l.qty > 0 ? 'stock-quantity--increase' : l.qty < 0 ? 'stock-quantity--decrease' : ''}">${l.qty > 0 ? '+' : ''}${l.qty ?? 0}</td>
                   <td style="color:#888;">${l.before ?? '-'} → ${l.after ?? '-'}</td>
                   <td>${esc(l.staffName || '-')}</td>
@@ -567,7 +568,7 @@ function showEquipmentModal(eq) {
       renderLayout();
     } catch (err) {
       console.error('[equipment] save failed:', err);
-      alert('저장 중 오류가 발생했습니다: ' + (err.message || err));
+      alert('저장 중 오류가 발생했습니다: ' + (staffError(err) || err));
     }
   }));
 }
@@ -628,7 +629,7 @@ async function deleteEquipmentWithCommand(eq,command) {
     renderLayout();
   } catch (err) {
     console.error('[equipment] delete failed:', err);
-    alert(err.message||'삭제 중 오류가 발생했습니다.');
+    alert(staffError(err)||'삭제 중 오류가 발생했습니다.');
   }
 }
 
@@ -681,7 +682,7 @@ function showCategoryManageModal() {
       renderLayout();
     } catch (err) {
       console.error('[equipment] rename category failed:', err);
-      alert(err.message||'저장 중 오류가 발생했습니다.');
+      alert(staffError(err)||'저장 중 오류가 발생했습니다.');
     }
   }));
 }
@@ -803,7 +804,7 @@ function showPartModal(part, eq) {
       renderDetail();
     } catch (err) {
       console.error('[equipment] part save failed:', err);
-      alert('저장 중 오류가 발생했습니다: ' + (err.message || err));
+      alert('저장 중 오류가 발생했습니다: ' + (staffError(err) || err));
     }
   }));
 }
@@ -846,7 +847,7 @@ async function deletePartWithCommand(part,command) {
     renderDetail();
   } catch (err) {
     console.error('[equipment] part delete failed:', err);
-    alert(err.message||'삭제 중 오류가 발생했습니다.');
+    alert(staffError(err)||'삭제 중 오류가 발생했습니다.');
   }
 }
 

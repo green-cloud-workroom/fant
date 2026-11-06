@@ -54,7 +54,7 @@ export async function buildProductionLoad({ db, today, nextBizDay, staffName, wr
       const totalAvailable = repackedSum + processedSum + frozenSum;
 
       if (totalAvailable < neededG) {
-        const meatName = meatStocks.find(s => s.meatTypeId === meatTypeId)?.meatNameSnapshot || meatTypeId;
+        const meatName = meatStocks.find(s => s.meatTypeId === meatTypeId)?.meatNameSnapshot || '원료명 확인 필요';
         notify(
           `${meatName} 재고가 부족하여 내일 생산을 불러올 수 없습니다.\n\n` +
           `필요량: ${(neededG/1000).toFixed(1)}kg\n` +

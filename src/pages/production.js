@@ -1,3 +1,4 @@
+import {staffError} from '../utils/staffText.js';
 import { escapeHtml, recipeColor } from '../utils/html.js';
 import {showStatus} from '../utils/statusToast.js';
 import { registerCloseModal } from '../utils/modalManager.js';
@@ -28,7 +29,7 @@ let productionResourceDate='';
 async function runProductionCommand(callback) {
   const page=getPageContext();let committed=false,continueWith=null;
   try{return await withReadWorkflow(productionResource,async command=>{command.isCurrent=()=>!page||page.isCurrent();try{const result=await callback(command);continueWith=result?.continueWith||null;return result;}finally{committed=command.committed;}});}
-  catch(error){console.error('[생산 저장]',error);alert((committed?'일부 저장이 완료되었습니다. 중복 저장하지 말고 최신 자료를 확인해주세요. ':'')+error.message);}
+  catch(error){console.error('[생산 저장]',error);alert((committed?'일부 저장이 완료되었습니다. 중복 저장하지 말고 최신 자료를 확인해주세요. ':'')+staffError(error));}
   finally{if(committed && (!page||page.isCurrent()) && !productionResource.blocked){
     await renderProduction({force:true});
     if(continueWith&&(!page||page.isCurrent())&&selectedDate===continueWith.date){
@@ -575,7 +576,7 @@ async function persistProductionCardOrderWithCommand(command) {
     refreshProductionCardsView();
   } catch (err) {
     console.error('[production] card reorder failed:', err);
-    alert('카드 순서 저장 실패: ' + err.message);
+    alert('카드 순서 저장 실패: ' + staffError(err));
     const rows=await loadProductions(selectedDate);
     if(!command.isCurrent())return;
     productions=rows;
@@ -997,7 +998,7 @@ async function showProductionForm(production, draft=null) {
       } catch(err) {
         if(['permission-denied','production-order-conflict','production-validation','outcome-unknown'].includes(err.code))throw err;
         console.error('[production] save failed:',err);
-        alert(getSupplementSaveErrorMessage(err.message,err.supplementName));return;
+        alert(getSupplementSaveErrorMessage(staffError(err),err.supplementName));return;
       }
     } else {
       await runProductionOrderTransaction({db,date:selectedDate,command,actorUid:currentUser?.uid,prepare:async ({transaction,rows})=>{

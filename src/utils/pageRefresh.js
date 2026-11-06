@@ -1,3 +1,4 @@
+import {staffError} from './staffText.js';
 import {getPageContext,registerPageCleanup} from './pageLifecycle.js';
 import {canLeavePage,hasDirtyFields} from './formDraft.js';
 import {dismissAllModals} from './modalManager.js';
@@ -19,6 +20,6 @@ export function pageRefresh(resource,refresh,{draftSelector}={}) {
       button.addEventListener('click',async()=>{if(await canLeavePage()){if(page&&!page.isCurrent())return;dismissAllModals();await refresh({force:true});}});
       notice.append(button);host.prepend(notice);return;
     }
-    timer=setTimeout(()=>refresh().catch(error=>{if(host.isConnected){const notice=document.createElement('p');notice.textContent=error.message;host.prepend(notice);}}),120);
+    timer=setTimeout(()=>refresh().catch(error=>{if(host.isConnected){const notice=document.createElement('p');notice.textContent=staffError(error);host.prepend(notice);}}),120);
   };
 }

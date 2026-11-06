@@ -55,12 +55,13 @@ export function followingStockAdjustments(data, event, today) {
       reason: typeof row.reason === 'string' && row.reason.trim() ? row.reason : '미기재' }));
 }
 
+const staffEvidenceNote = text => String(text||'').replace(/(?:취소 원본|원본):\s*[A-Za-z]+Logs\/[^\s·/]+/g,'취소 대상: 이전 입출고 기록');
 export function adjustmentContextText(item) {
   const rows = item.kind === 'quantity' ? item.evidence.followingAdjustments || [] : [];
   if (!rows.length) return '';
   const fmt = n => n.toLocaleString('ko-KR', { maximumFractionDigits: 3 });
   return ['[같은 재고 건의 후속 조정 이력]', ...rows.map(row =>
-    `${new Date(Date.parse(row.at) + 9 * 3600000).toISOString().slice(0, 19).replace('T', ' ')} KST · ${fmt(row.before)}${row.unit} → ${fmt(row.after)}${row.unit}\n담당: ${row.staff} / 사유: ${row.reason}\n조정 원본: ${row.source}`),
+    `${new Date(Date.parse(row.at) + 9 * 3600000).toISOString().slice(0, 19).replace('T', ' ')} KST · ${fmt(row.before)}${row.unit} → ${fmt(row.after)}${row.unit}\n담당: ${row.staff} / 사유: ${staffEvidenceNote(row.reason)}`),
     '재고 조정 이력이며, 원본 입고량이 정정됐다는 의미는 아닙니다.'].join('\n');
 }
 
@@ -110,7 +111,7 @@ function currentStocks(data) {
     ...(data.eggStock || []).filter(s => s.id === 'global').map(s => ({ itemId: 'eggLogs:egg', name: '계란',
       unit: '개', qty: s.currentQty, minimum: s.minimumQty ?? null, source: 'eggStock/global' })),
     ...(data.bagTypes || []).filter(s => s.active !== false).map(s => ({ itemId: 'bagLogs:' + s.id,
-      name: s.name || s.id, unit: '장', qty: s.currentQty, minimum: s.minimumQty ?? null, source: 'bagTypes/' + s.id })),
+      name: s.name || '봉투 품목명 확인 필요', unit: '장', qty: s.currentQty, minimum: s.minimumQty ?? null, source: 'bagTypes/' + s.id })),
   ];
 }
 function minimumSchedule(data,stock,today) {
@@ -192,7 +193,7 @@ export function weeklyOutlook(data, today) {
   const range = automationRange(today), usage = usageEvents(data, range);
   const weekEnd = addDays(periodKey(today, 'weekly'), 6);
   const schedules = (data.schedules || []).filter(s => s.status === 'scheduled').map(s => ({
-    source: 'schedules/' + s.id, itemId: scheduleItem(s), name: s.itemNameSnapshot || s.itemId || '품목 확인 필요',
+    source: 'schedules/' + s.id, itemId: scheduleItem(s), name: s.itemNameSnapshot || '품목명 확인 필요',
     date: validDate(s.date) ? s.date : null, qty: number(s.orderedQty) ? s.orderedQty : null,
     unit: s.orderedUnit || '단위 확인 필요', amount: scheduledAmount(s) })).sort((a,b) => String(a.date).localeCompare(String(b.date)) || a.source.localeCompare(b.source));
   const forecasts = [], minimum = [], unavailable = [];
@@ -457,9 +458,9 @@ function evidenceText(item) {
   const e = item.evidence, fmt = v => number(v) ? v.toLocaleString('ko-KR', { maximumFractionDigits: 3 }) : '확인 불가';
   if(item.kind==='minimum')return `현재 재고: ${fmt(e.qty)}${e.unit}\n최소재고: ${fmt(e.minimum)}${e.unit}\n입고 예정: 없음\n${e.shortageDate?'소진 예상일: '+e.shortageDate+'\n':''}재고와 발주 여부를 확인해주세요. 남은 재고로 운영 가능하면 다시 확인할 날짜를 선택할 수 있습니다.`;
   if (item.kind === 'registration') return `최근 입고 기록: ${e.lastDate}\n평균 입고 간격: ${fmt(e.meanInterval)}일 (간격 표본 ${e.samples}개)\n확인 권고 시점: ${e.suggestedDate}\n입고예정관리에서 등록 여부와 일정을 확인해주세요.\n${e.note}`;
-  if (item.kind === 'quantity') return `기록일: ${e.date}\n수량: ${fmt(e.qty)}${e.unit}\n이전 수량 중앙값: ${fmt(e.baseline)}${e.unit} (표본 ${e.samples}건)\n입력 수량과 단위를 확인해주세요. 오류로 확정한 알림은 아닙니다.\n원본: ${e.source}`;
-  if (item.kind === 'duplicateReceipt') return `먼저 기록된 입고: ${e.originalDate} · ${fmt(e.originalQty)}${e.unit}\n확인이 필요한 입고: ${e.date} · ${fmt(e.qty)}${e.unit}\n판단 근거: ${e.basis}\n${e.scheduleIds.length ? '입고예정: ' + e.scheduleIds.join(', ') + '\n' : ''}실제로 각각 입고됐는지 확인해주세요. 오류 확정이나 자동 재고 조정은 아닙니다.\n비교 원본: ${e.originalSource}\n확인 원본: ${e.source}`;
-  if (item.kind === 'cancellation') return `취소 기록일: ${e.date}\n원본 기록일: ${e.originalDate}\n원본 수량: ${fmt(e.qty)}${e.unit}\n취소 수량: ${fmt(e.cancelQty)}${e.unit}\n합산 잔량: ${fmt(e.remainingQty)}${e.unit}\n확인 사항: ${e.problem}\n사유: ${e.reason}\n원본 연결·품목·반대 수량과 처리 이력을 확인해주세요. 자동 재고 조정은 하지 않습니다.\n취소 대상: ${e.originalSource}\n취소 기록: ${e.source}`;
+  if (item.kind === 'quantity') return `기록일: ${e.date}\n수량: ${fmt(e.qty)}${e.unit}\n이전 수량 중앙값: ${fmt(e.baseline)}${e.unit} (표본 ${e.samples}건)\n입력 수량과 단위를 확인해주세요. 오류로 확정한 알림은 아닙니다.\n통계에서 해당 날짜·품목의 원본 기록을 확인해주세요.`;
+  if (item.kind === 'duplicateReceipt') return `먼저 기록된 입고: ${e.originalDate} · ${fmt(e.originalQty)}${e.unit}\n확인이 필요한 입고: ${e.date} · ${fmt(e.qty)}${e.unit}\n판단 근거: ${e.basis}\n${e.scheduleIds.length ? '관련 입고 예정 ' + e.scheduleIds.length + '건\n' : ''}실제로 각각 입고됐는지 확인해주세요. 오류 확정이나 자동 재고 조정은 아닙니다.\n통계에서 두 날짜의 입고 기록을 확인해주세요.`;
+  if (item.kind === 'cancellation') return `취소 기록일: ${e.date}\n원본 기록일: ${e.originalDate}\n원본 수량: ${fmt(e.qty)}${e.unit}\n취소 수량: ${fmt(e.cancelQty)}${e.unit}\n합산 잔량: ${fmt(e.remainingQty)}${e.unit}\n확인 사항: ${e.problem}\n사유: ${staffEvidenceNote(e.reason)}\n원본 연결·품목·반대 수량과 처리 이력을 확인해주세요. 자동 재고 조정은 하지 않습니다.\n통계에서 위 날짜의 원본과 취소 기록을 확인해주세요.`;
   if (item.kind === 'shortage') return `현재 재고: ${fmt(e.qty)}${e.unit}\n기록상 달력 일평균: ${fmt(e.calendarDailyMean)}${e.unit}\n추정 잔여: ${fmt(e.estimatedDaysLeft)}일\n현재 재고와 보충 필요 여부를 확인해주세요.\n${e.note}`;
   if (item.kind === 'weekly') return weeklyOutlookText(e);
   throw Error('알 수 없는 알림 종류');

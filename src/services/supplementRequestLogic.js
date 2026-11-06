@@ -4,7 +4,7 @@ export {requestItems} from './supplementRequestItems.js';
 export const requestStatuses = {requested:'신청 (확정 전)',preparing:'준비중 (확정 전)',done:'입고 요청',cancelled:'취소'};
 // Presentation only: preserve the shared status and all stock writer decisions.
 export function requestDisplayStatus(row) {
-  if (row.status !== 'done') return requestStatuses[row.status] || row.status;
+  if (row.status !== 'done') return requestStatuses[row.status] || '신청 상태 확인 필요';
   const received=(row.items||[]).filter(item=>Object.hasOwn(row.stockIn||{},item.supplementTypeId)).length;
   if (row.stockInCompletedAt || (received>0 && received===row.items.length)) return '입고 완료';
   return received>0 ? '일부 입고' : '입고 대기';

@@ -1,3 +1,4 @@
+import {staffError} from '../utils/staffText.js';
 import {movementNote} from '../utils/movementNote.js';
 import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
@@ -158,12 +159,12 @@ function renderSupplementLayout() {
 
   updateSupplementTabs();
   bindSupplementEvents();
-  document.getElementById('supplementRequestsTab')?.addEventListener('click',()=>openRequestsTab().catch(error=>alert(error.message)));
+  document.getElementById('supplementRequestsTab')?.addEventListener('click',()=>openRequestsTab().catch(error=>alert(staffError(error))));
   document.getElementById('supplementStockTab')?.addEventListener('click',async()=>{
     disposeRequests?.();disposeRequests=null;supplementSubTab='stock';
     await renderSupplement({force:true});
   });
-  if(supplementSubTab==='requests')openRequestsTab().catch(error=>alert(error.message));
+  if(supplementSubTab==='requests')openRequestsTab().catch(error=>alert(staffError(error)));
 }
 
 function getStockQty(typeId) {
@@ -172,7 +173,7 @@ function getStockQty(typeId) {
 }
 
 function getSupplementName(typeId) {
-  return supplementTypes.find(t => t.id === typeId)?.name || typeId || '-';
+  return supplementTypes.find(t => t.id === typeId)?.name || '영양제 품목명 확인 필요';
 }
 
 function getFilteredSupplementTypes() {
@@ -235,7 +236,7 @@ function buildSupplementRecipeGroups(types) {
     if (!map.has(recipeId)) {
       map.set(recipeId, {
         recipeId,
-        recipeName: type.recipeName || type.name || recipeId,
+        recipeName: type.recipeName || type.name || '영양제 품목명 확인 필요',
         sortOrder: getSupplementRecipeSort(type),
         types: [],
       });
@@ -323,14 +324,14 @@ function renderSupplementTypeRow(type) {
   return `
     <tr class="${inactive ? 'supplement-row--inactive' : ''}">
       <td class="supplement-td-name">
-        <span title="${escapeHtml(type.name || type.id)}">${escapeHtml(type.unit ?? type.name ?? type.id)}</span>
+        <span title="${escapeHtml(type.name || '영양제 품목명 확인 필요')}">${escapeHtml(type.unit ?? type.name ?? '단위 확인 필요')}</span>
         ${inactive ? '<span class="tag tag-inactive">비활성</span>' : ''}
       </td>
       <td class="supplement-td-qty ${qtyClass} ${qty === 0 ? 'supplement-qty--empty' : ''}">${qty}봉</td>
       <td class="supplement-td-status">${renderStockStatus(qty, inactive)}</td>
       <td class="supplement-td-actions">
-        ${!inactive && isStaffRole() ? `<button class="btn-secondary supplement-action-in" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">입고</button>` : ''}
-        ${!inactive && isWriterRole() ? `<button class="btn-secondary supplement-action-adjust" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">수동조정</button>` : ''}
+        ${!inactive && isStaffRole() ? `<button class="btn-secondary supplement-action-in" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || '영양제 품목명 확인 필요')}">입고</button>` : ''}
+        ${!inactive && isWriterRole() ? `<button class="btn-secondary supplement-action-adjust" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || '영양제 품목명 확인 필요')}">수동조정</button>` : ''}
       </td>
     </tr>
   `;
@@ -365,15 +366,15 @@ function renderSupplementFlatTable() {
     return `
       <tr class="${inactive ? 'supplement-row--inactive' : ''}">
         <td class="supplement-td-name">
-          ${escapeHtml(type.name || type.id)}
+          ${escapeHtml(type.name || '영양제 품목명 확인 필요')}
           ${inactive ? '<span class="tag tag-inactive">비활성</span>' : ''}
         </td>
         <td class="supplement-td-qty ${qtyClass} ${qty === 0 ? 'supplement-qty--empty' : ''}">${qty}봉</td>
         <td class="supplement-td-status">${renderStockStatus(qty, inactive)}</td>
         <td class="supplement-td-recent">${renderRecentChange(type.id)}</td>
         <td class="supplement-td-actions">
-          ${!inactive && isStaffRole() ? `<button class="btn-secondary supplement-action-in" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">입고</button>` : ''}
-          ${!inactive && isWriterRole() ? `<button class="btn-secondary supplement-action-adjust" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || type.id)}">수동조정</button>` : ''}
+          ${!inactive && isStaffRole() ? `<button class="btn-secondary supplement-action-in" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || '영양제 품목명 확인 필요')}">입고</button>` : ''}
+          ${!inactive && isWriterRole() ? `<button class="btn-secondary supplement-action-adjust" data-id="${escapeHtml(type.id)}" data-name="${escapeHtml(type.name || '영양제 품목명 확인 필요')}">수동조정</button>` : ''}
         </td>
       </tr>
     `;
@@ -531,7 +532,7 @@ function renderSupplementLogTable(logs) {
 
 function renderLogTypeTag(type,log,shared=false) {
   if(shared) {
-    const label=movementLabel(log,({in:'입고',autoDeduct:'자동차감',adjust:'수동조정'})[type] || type || '-');
+    const label=movementLabel(log,({in:'입고',autoDeduct:'자동차감',adjust:'수동조정'})[type] || '작업 구분 확인 필요');
     return `<span class="tag stock-movement-badge" data-movement-label="${escapeHtml(label)}">${escapeHtml(label)}</span>`;
   }
   if(log?.manualMovement)return `<span class="tag tag-common">${escapeHtml(movementLabel(log,type))}</span>`;
@@ -677,7 +678,7 @@ function openIncomingModal(typeId, typeName, entryDate=getTodayKST(), initialQty
       showStatus('입고 완료');
     } catch (err) {
       console.error('[supplement] incoming modal save failed:', err);
-      alert(`입고 등록 중 오류가 발생했습니다: ${err.message || err}`);
+      alert(`입고 등록 중 오류가 발생했습니다: ${staffError(err) || err}`);
       button.disabled = false;
     }
   });
@@ -739,7 +740,7 @@ function openAdjustModal(typeId, typeName, entryDate=getTodayKST(), initialQty=n
       if (err.message === 'NEGATIVE_SUPPLEMENT_STOCK') {
         alert('재고가 마이너스가 됩니다. 조정 수량을 확인해주세요.');
       } else {
-        alert(`수동 조정 중 오류가 발생했습니다: ${err.message || err}`);
+        alert(`수동 조정 중 오류가 발생했습니다: ${staffError(err) || err}`);
       }
       button.disabled = false;
     }

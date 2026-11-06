@@ -1,3 +1,4 @@
+import {staffError} from '../utils/staffText.js';
 import { db } from '../firebase.js';
 import {
   collection, getDocsFromServer as getDocs, doc, updateDoc, query, orderBy,
@@ -186,7 +187,7 @@ function renderPage(orders, lots, options = {}) {
           await reload();
           alert('발주서가 취소되었습니다.');
         } catch (err) {
-          alert('취소 실패: ' + err.message);
+          alert('취소 실패: ' + staffError(err));
         }
       });
     });
@@ -344,7 +345,7 @@ function showCreateModal(stock, lots) {
     try {
       deductions = calcDeductions(items, lots);
     } catch (err) {
-      alert(err.message); return;
+      alert(staffError(err)); return;
     }
 
     const batch = writeBatch(db);

@@ -1,3 +1,4 @@
+import {staffError} from '../utils/staffText.js';
 import { escapeHtml, recipeColor } from '../utils/html.js';
 import { db } from '../firebase.js';
 import {
@@ -20,7 +21,7 @@ async function runRecipeCommand(callback){
   const page=getPageContext();
   let committed=false;
   try{return await withReadCommand(recipeResource,async command=>{command.isCurrent=()=>!page||page.isCurrent();try{return await callback(command);}finally{committed=command.committed;}});}
-  catch(error){console.error('[레시피 저장 검증]',error);alert(committed?'저장은 완료됐지만 후속 화면 갱신을 확인하지 못했습니다. 최신 자료를 다시 확인해주세요.':error.message);error.recipeReported=true;throw error;}
+  catch(error){console.error('[레시피 저장 검증]',error);alert(committed?'저장은 완료됐지만 후속 화면 갱신을 확인하지 못했습니다. 최신 자료를 다시 확인해주세요.':staffError(error));error.recipeReported=true;throw error;}
   finally{if(committed){recipeResource.disconnect();if(!page||page.isCurrent()){const detail=document.querySelector('.recipe-detail-panel');if(!detail||!hasDirtyFields(detail))await renderRecipe({force:true});}}}
 }
 
@@ -511,7 +512,7 @@ function bindRecipeListEvents() {
             subAction: 'activeToggle',
             date: getToday(),
             staff: getRoleStaffLabel(),
-            message: `Recipe ${active ? 'active' : 'inactive'} — ${recipe ? getDisplayName(recipe) : id}`,
+            message: `레시피 ${active ? '사용 시작' : '사용 중지'} — ${recipe ? getDisplayName(recipe) : '레시피명 확인 필요'}`,
             details: {
               recipeId: id,
               recipeName: recipe ? getDisplayName(recipe) : null,
@@ -522,7 +523,7 @@ function bindRecipeListEvents() {
         });
       } catch (err) {
         console.error('[recipe] active save failed:', err);
-        if(!err.recipeReported)alert(err.message||'활성 상태 저장 중 오류가 발생했습니다.');
+        if(!err.recipeReported)alert(staffError(err)||'활성 상태 저장 중 오류가 발생했습니다.');
         e.target.checked = previousActive;
       }
     });
@@ -906,7 +907,7 @@ async function deleteRecipeWithCommand(recipe, command) {
     alert('레시피가 삭제되었습니다.');
   } catch (err) {
     console.error('[recipe] delete failed:', err);
-    alert(err.message||'레시피 삭제 중 오류가 발생했습니다.');
+    alert(staffError(err)||'레시피 삭제 중 오류가 발생했습니다.');
   }
 }
 
@@ -1315,7 +1316,7 @@ async function saveRecipeWithCommand(id, command) {
     }
   } catch (err) {
     console.error('[recipe] save failed:', err);
-    alert(err.message||'레시피 저장 중 오류가 발생했습니다.');
+    alert(staffError(err)||'레시피 저장 중 오류가 발생했습니다.');
     return;
   }
 

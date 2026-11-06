@@ -45,7 +45,7 @@ for(const instant of [false,true])test(`main panels and modal share loaded names
     await e.page.renderMain();
     await e.page.autoLogCoordinator.run('main:'+e.today,async()=>({}));
     const log={...legacy(),details:{app:'production',sourceCollection:'supplementLogs',sourceLogId:'old-log',manualMovement:{kind:'receipt'},delta:2,before:0,after:2}},before=JSON.stringify(log),commits=e.state.commits.length;
-    assert.equal(e.page.getDisplayLogMessage(log),`실제 입고 — ${hostile} 2 / 재고없음`);
+    assert.equal(e.page.getDisplayLogMessage(log),`${hostile} · 실제 입고 2봉 / 사유: 재고없음`);
     for(const render of [e.page.renderLogRow,e.page.renderModalLogRow]) {
       const html=render(log);
       assert.ok(html.includes('&lt;img'));
@@ -53,7 +53,8 @@ for(const instant of [false,true])test(`main panels and modal share loaded names
       assert.ok(html.includes('&amp;'));
       assert.ok(!html.includes(id));
       const unknown={...log,details:{supplementTypeId:'missing_2'},message:'실제 입고 — missing_2 2'};
-      assert.ok(render(unknown).includes(unknown.message));
+      assert.ok(render(unknown).includes('영양제 품목명 확인 필요'));
+      assert.ok(!render(unknown).includes('missing_2'));
     }
     assert.equal(JSON.stringify(log),before);
     assert.equal(e.state.commits.length,commits);

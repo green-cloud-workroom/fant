@@ -1,3 +1,5 @@
+import {supportReference} from '../utils/correctionDisplay.js';
+import {staffError} from '../utils/staffText.js';
 import {openInventoryReceiptCorrection,INVENTORY_RECEIPT_CORRECTION_ENABLED,mountInventoryCorrectionRecovery} from '../services/inventoryReceiptCorrection.js';
 import {prepareFrozenSampleSetIncoming} from '../services/frozenSampleSetIncoming.js';
 import { escapeHtml } from '../utils/html.js';
@@ -256,7 +258,7 @@ async function persistFrozenProductOrder() {
       .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   } catch (err) {
     console.error('[frozenProduct] reorder save failed:', err);
-    alert('순번 저장 실패: ' + (err.message || err));
+    alert('순번 저장 실패: ' + (staffError(err) || err));
     frozenProducts = await loadFrozenProducts();
     if(!command.isCurrent())return;
     await renderFrozenProductLayout();
@@ -405,7 +407,7 @@ function renderReceiptHistory(host,product,logs) {
       });
     }
     for(const btn of host.querySelectorAll('[data-logid]')){
-      btn.addEventListener('click',()=>openIncomingAction(product,btn.dataset.logid,btn.classList.contains('btn-del-row')?'cancel':'correct').catch(error=>alert(error.message)));
+      btn.addEventListener('click',()=>openIncomingAction(product,btn.dataset.logid,btn.classList.contains('btn-del-row')?'cancel':'correct').catch(error=>alert(staffError(error))));
     }
   }
   previous.addEventListener('click',()=>{page--;draw();});
@@ -454,7 +456,7 @@ async function openIncomingAction(product,logId,kind) {
     if(page&&!page.isCurrent())return;
     if(['completed','입고완료'].includes(receipt.data()?.status)){
       await openInventoryReceiptCorrection({sourceCollection:'frozenLogs',sourceId:log.id,mode:kind==='cancel'?'cancel':'edit',showModal,closeModal:()=>window.closeModal(),onComplete:()=>renderFrozenProduct({force:true}),onMetadata:kind==='correct'?async()=>{
-        try{const metadata=await prepareFrozenSourceCommand(log.id,{expectedProductId:product.id});showEditIncomingModal(product,log,metadata,'correct');}catch(error){alert(error.message);}
+        try{const metadata=await prepareFrozenSourceCommand(log.id,{expectedProductId:product.id});showEditIncomingModal(product,log,metadata,'correct');}catch(error){alert(staffError(error));}
       }:undefined});
       return;
     }
@@ -462,7 +464,7 @@ async function openIncomingAction(product,logId,kind) {
   const flow=await prepareFrozenSourceCommand(log.id,{expectedProductId:product.id});
   if(page&&!page.isCurrent())return;
   if(!flow.eligible&&!(kind==='correct'&&flow.metadataEligible)){
-    showModal(`<h3 class="modal-title">재고앱 처리 필요 / 근거 확인</h3><p>${escapeHtml(flow.holdMessage)}</p><p>원본 ID: ${escapeHtml(log.id)} · 요청 버전: ${escapeHtml(flow.source.revision)}</p><p>원본 수량과 봉투 재고를 자동으로 바꾸지 않습니다.</p><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">닫기</button></div>`);
+    showModal(`<h3 class="modal-title">재고앱 처리 필요 / 근거 확인</h3><p>${escapeHtml(flow.holdMessage)}</p><p>${escapeHtml(product.name)} · ${escapeHtml(log.date)} 입고</p>${supportReference(log.id)}<p>원본 수량과 봉투 재고를 자동으로 바꾸지 않습니다.</p><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">닫기</button></div>`);
     return;
   }
   showEditIncomingModal(product,log,flow,kind);
@@ -480,7 +482,7 @@ function showEditIncomingModal(product,log,flow,kind='correct') {
     <div class="form-group"><label>유통기한</label><input id="m_source_expiry" type="date" value="${escapeHtml(flow.source.expiryDate)}"></div>
     <div class="form-group"><label>표시 담당자</label><select id="m_source_staff"><option value="">선택</option>${getStaffOptions(['senior','lead','office'],flow.source.staffName)}</select></div>
     <div class="form-group"><label>메모</label><input id="m_source_note" maxlength="2000" value="${escapeHtml(flow.source.note)}"></div>`}
-    ${flow.source.components?.length?`<p>저장 당시 구성비로 함께 정정합니다. ${flow.source.components.map(c=>`${escapeHtml(c.productId)}: 현재 ${escapeHtml(c.before)}봉, 세트당 ${escapeHtml(c.ratio)}봉`).join(' / ')}</p><label><input id="m_component_shortage" type="checkbox">구성품이 부족해 음수가 되어도 진행할 것을 확인합니다.</label>`:''}
+    ${flow.source.components?.length?`<p>저장 당시 구성비로 함께 정정합니다. ${flow.source.components.map(c=>`${escapeHtml(c.productName||c.productNameSnapshot||frozenProducts.find(p=>p.id===c.productId)?.name||'구성품명 확인 필요')}: 현재 ${escapeHtml(c.before)}봉, 세트당 ${escapeHtml(c.ratio)}봉`).join(' / ')}</p><label><input id="m_component_shortage" type="checkbox">구성품이 부족해 음수가 되어도 진행할 것을 확인합니다.</label>`:''}
     <div class="form-group"><label>${cancelling?'취소':'정정'} 사유</label><input id="m_source_reason" maxlength="500" type="text"></div>
     <p id="m_source_status" role="status"></p>
     <div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">닫기</button><button id="btnInspectFrozenSource" class="btn-secondary" hidden>서버 결과 확인</button><button id="btnSubmitFrozenSource" class="btn-primary">${cancelling?'입고 취소':'수정 저장'}</button></div>`);
@@ -490,7 +492,7 @@ function showEditIncomingModal(product,log,flow,kind='correct') {
   inspect.addEventListener('click',async()=>{
     if(busy)return;busy=true;inspect.disabled=true;
     try{const actual=await flow.inspectResult();if(page&&!page.isCurrent())return;if(actual.confirmed)await finish();else status.textContent='아직 이 작업의 서버 결과를 확인하지 못했습니다. 새 요청을 만들지 말고 잠시 후 다시 확인해주세요.';}
-    catch(error){if(!page||page.isCurrent())status.textContent=error.message;}
+    catch(error){if(!page||page.isCurrent())status.textContent=staffError(error);}
     finally{busy=false;inspect.disabled=false;}
   });
   save.addEventListener('click',async()=>{
@@ -504,7 +506,7 @@ function showEditIncomingModal(product,log,flow,kind='correct') {
         if(await blockIfClosed(flow.source.date,command))return;
         await flow.submit(kind,{quantity,reason,command,...(!cancelling?{expiryDate:document.getElementById('m_source_expiry').value,staffName:document.getElementById('m_source_staff').value,note:document.getElementById('m_source_note').value}:{}),allowComponentShortage:document.getElementById('m_component_shortage')?.checked===true});
         if(command.isCurrent())await finish();
-      }catch(error){if(!page||page.isCurrent()){status.textContent=error.message;inspect.hidden=false;}}
+      }catch(error){if(!page||page.isCurrent()){status.textContent=staffError(error);inspect.hidden=false;}}
     },{roles:['admin','office']});
     busy=false;
     if(!flow.dispatched&&(!page||page.isCurrent()))status.textContent||='입고 상태를 다시 확인한 뒤 창을 새로 열어주세요.';
@@ -806,7 +808,7 @@ function mountSetResultCheck(host,product,flow) {
         syncDraftMarker();
         if(host.isConnected) await renderFrozenProduct({force:true});
       }else if(host.isConnected) host.querySelector('p').textContent='아직 서버 결과를 확인하지 못했습니다. 잠시 후 다시 확인해주세요.';
-    }catch(error){if(host.isConnected) host.querySelector('p').textContent=error.message;}
+    }catch(error){if(host.isConnected) host.querySelector('p').textContent=staffError(error);}
     finally{inspect.disabled=false;}
   });
 }
@@ -835,9 +837,9 @@ async function showIncomingModal(product,host=null) {
       if(current()&&components.length) stockMap=await getFrozenStockByProduct();
     }catch(error){
       if(!current()) return;
-      if(!host){alert(error.message);return;}
+      if(!host){alert(staffError(error));return;}
       host.innerHTML='<h3>세트 입고</h3><p role="status"></p><button type="button" class="btn-secondary">다시 확인</button>';
-      host.querySelector('p').textContent=error.message;
+      host.querySelector('p').textContent=staffError(error);
       host.querySelector('button').addEventListener('click',event=>{
         event.currentTarget.disabled=true;
         return showIncomingModal(product,host);
@@ -953,7 +955,7 @@ async function showIncomingModal(product,host=null) {
             showStatus('샘플세트 입고 완료!');
           }catch(error){
             if(!current()) return;
-            alert(error.message);
+            alert(staffError(error));
             if(sampleSetServerFlow.dispatched){
               if(host) pendingSetChecks.set(product.id,sampleSetServerFlow);
               if(host) mountSetResultCheck(host,product,sampleSetServerFlow);
@@ -966,7 +968,7 @@ async function showIncomingModal(product,host=null) {
                     const result=await sampleSetServerFlow.inspectResult();
                     if(result.confirmed&&command.isCurrent()){finish();await renderFrozenProduct({force:true});}
                     else alert('아직 결과를 확인하지 못했습니다. 자동 재전송하지 않습니다.');
-                  }catch(e){alert(e.message);}
+                  }catch(e){alert(staffError(e));}
                 });
                 save.after(inspect);
               }

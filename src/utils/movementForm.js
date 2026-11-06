@@ -1,17 +1,21 @@
+import {staffError} from './staffText.js';
+import {quantityText,readableNote} from './staffText.js';
 import {collection,doc} from 'firebase/firestore';
 import {listCancellationSources} from '../services/manualMovements.js';
 import {MOVEMENT_LABELS,movementAmount,movementReason,movementReasonRequired} from '../services/manualMovementLogic.js';
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const sourceLabel=(name,row)=>{
-  const amount=movementAmount(row),unit={meatLogs:'kg',bagLogs:'장',eggLogs:'개',supplementLogs:'봉',breadPanLogs:'kg',frozenPanLogs:'판'}[name];
-  const label=MOVEMENT_LABELS[row.manualMovement?.kind]||({frozenIncoming:'입고',incoming:'입고',in:'입고',out:'사용',adjust:'기존 수동조정'}[row.type])||row.type;
-  return `${row.date} · ${label} · ${name==='meatLogs'?amount/1000:amount}${unit} · ${row.reason||row.note||row.staff||row.staffName||''} · ${row.id}`;
+export const sourceLabel=(name,row,index=0)=>{
+  const amount=movementAmount(row),unit={meatLogs:'kg',bagLogs:'장',eggLogs:'개',supplementLogs:'봉',breadPanLogs:'개',frozenPanLogs:'판'}[name];
+  const label=MOVEMENT_LABELS[row.manualMovement?.kind]||({frozenIncoming:'입고',incoming:'입고',in:'입고',out:'사용',adjust:'기존 수동조정'}[row.type])||'작업 구분 확인 필요';
+  const when=row.timestamp?.toDate?.() || (row.timestamp instanceof Date?row.timestamp:null);
+  const time=when?when.toLocaleTimeString('ko-KR',{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}):'';
+  return `${row.date} ${time} · ${label} · ${quantityText(name==='meatLogs'?amount/1000:amount)}${unit} · ${row.staff||row.staffName||'담당자 미기재'} · ${readableNote(row.reason||row.note||'')} · 목록 ${index+1}번`;
 };
 export function movementFields({incoming=false,allowed=incoming?['receipt','test']:Object.keys(MOVEMENT_LABELS),defaultKind=incoming?'receipt':'',reasonField=true}={}) {
   return `<div class="form-group"><label for="movement_kind">처리 구분 *</label><select id="movement_kind"><option value="">선택해주세요</option>${Object.entries(MOVEMENT_LABELS).map(([k,v])=>`<option value="${k}" ${k===defaultKind?'selected':''} ${!allowed.includes(k)?'disabled':''}>${v}</option>`).join('')}</select><p id="movement_hint" style="font-size:12px;color:#666">입고 외 사용·실사 보정·오입력 취소는 수동조정에서 입력합니다. 테스트는 재고에 반영하지 않습니다.</p></div><div id="movement_source_group" class="form-group" hidden style="display:none"><label for="movement_source">취소할 원본 *</label><select id="movement_source" style="width:100%;max-width:100%;min-width:0;box-sizing:border-box"><option value="">원본을 선택해주세요</option></select></div>${reasonField?'<div class="form-group"><label for="movement_reason">처리 사유</label><input id="movement_reason" maxlength="200" placeholder="실사 보정·취소·테스트 사유를 입력해주세요" /></div>':''}`;
 }
 export function readMovementForm(getter) {
-  try{return getter();}catch(error){alert(error.message);return null;}
+  try{return getter();}catch(error){alert(staffError(error));return null;}
 }
 export function bindMovementForm({db,name,filter,onCancel,reasonInput,filterInputs=[]}) {
   const kind=document.getElementById('movement_kind'),source=document.getElementById('movement_source'),group=document.getElementById('movement_source_group'),host=kind?.closest('.modal-overlay')||kind?.parentElement?.parentElement;
@@ -55,7 +59,7 @@ export function bindMovementForm({db,name,filter,onCancel,reasonInput,filterInpu
     if(kind.value!=='cancel')return;
     loading=true;source.disabled=true;source.innerHTML='<option value="">원본 기록 조회 중…</option>';
     try{const found=await listCancellationSources(db,name,typeof filter==='function'?filter():filter);
-      if(request!==revision||!host?.isConnected)return;rows=found;source.innerHTML='<option value="">원본을 선택해주세요</option>'+rows.map(r=>`<option value="${esc(r.id)}">${esc(sourceLabel(name,r))}</option>`).join('');
+      if(request!==revision||!host?.isConnected)return;rows=found;source.innerHTML='<option value="">원본을 선택해주세요</option>'+rows.map((r,i)=>`<option value="${esc(r.id)}">${esc(sourceLabel(name,r,i))}</option>`).join('');
     }catch(e){if(request===revision){source.innerHTML='<option value="">조회 실패 — 구분을 다시 선택해주세요</option>';rows=[];}}
     finally{if(request===revision){loading=false;source.disabled=false;}}
   });

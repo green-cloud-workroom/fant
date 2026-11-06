@@ -1,3 +1,6 @@
+import {correctionSummary} from '../utils/correctionDisplay.js';
+import {itemName,unitText} from '../utils/staffText.js';
+import {staffError} from '../utils/staffText.js';
 import {getFunctions,httpsCallable} from 'firebase/functions';
 import {auth} from '../firebase.js';
 import {openAction} from './actionGateway.js';
@@ -12,7 +15,7 @@ export function inventoryReceiptCorrectionLink(receiptId, sourceId) {
     receiptId, sourceId, contract: 'restore/inventory-contract.md'});
 }
 const messages={used_stock:'이미 출고·사용한 수량이라 줄일 수 없습니다.',reserved_stock:'예약된 재고를 먼저 확인해주세요.',count_conflict:'확정 실사와 겹쳐 정정할 수 없습니다.',component_shortage:'세트 구성품 재고가 부족합니다.',stale_context:'재고 상태가 바뀌었습니다. 준비부터 다시 확인해주세요.',unsupported_state:'이 입고 상태는 수량 정정을 지원하지 않습니다.',ambiguous_legacy:'로트·최초 원장 근거를 확인해주세요.',lot_key_mismatch:'입고 로트 연결이 다릅니다.'};
-export function inventoryCorrectionMessage(blocked){return messages[blocked?.reason]||blocked?.message||'입력·권한 또는 서버 결과를 확인해주세요.';}
+export function inventoryCorrectionMessage(blocked){return messages[blocked?.reason]||'입력·권한 또는 서버 결과를 확인해주세요.';}
 const copy=value=>JSON.parse(JSON.stringify(value));
 // Transport is injected so the identical recovery state machine can be tested
 // against both real local callable handlers and a lost-response transport.
@@ -85,18 +88,18 @@ export async function openInventoryReceiptCorrection({sourceCollection,sourceId,
  const saved=flow.savedRequest;
  showModal(`<h3>재고 입고 수량 ${mode==='cancel'?'취소':'정정'}</h3><p>수량만 정정합니다. 재고 반영 후 생산 원본을 확정합니다.</p>
  ${prepared&&!prepared.ok?`<p role="alert">${escape(inventoryCorrectionMessage(prepared.blocked))}</p>`:''}
- <div id="irc_pending_details">${flow.pending?`<p>미확정 작업 ${escape(flow.operationId)}</p><p>저장 시각: ${escape(flow.createdAt??'확인 필요')} · 모드: ${saved.mode==='cancel'?'취소':'수량 정정'}</p><p>저장 수량: ${saved.mode==='cancel'?'전체 취소 (0)':saved.lines.map(l=>`${escape(l.productId)} / ${escape(l.lotKey)}: ${escape(l.qty)}`).join(' · ')}</p><p>사유: ${escape(saved.reason)}</p>`:''}</div>
- ${lots.map((l,i)=>`<div><label>${escape(l.productName)} (${escape(l.unit)})</label><p>받은 수량 ${escape(l.receivedQty)} · 현재 ${escape(l.currentQty)} · 예약 ${escape(l.reservedQty)} · 최대 감소 ${escape(l.maxDecreaseQty)}</p><label>정정 후 <input id="irc_qty_${i}" type="number" step="${l.unit==='box'?'0.5':'1'}" value="${mode==='cancel'?0:escape(l.receivedQty)}" ${mode==='cancel'?'disabled':''}></label></div>`).join('')}
+ <div id="irc_pending_details">${flow.pending?correctionSummary(saved,{lots,context:flow.context,createdAt:flow.createdAt}):''}</div>
+ ${lots.map((l,i)=>`<div><label>${escape(itemName(l.productName))} (${escape(unitText(l.unit))})</label><p>받은 수량 ${escape(l.receivedQty)} · 현재 ${escape(l.currentQty)} · 예약 ${escape(l.reservedQty)} · 최대 감소 ${escape(l.maxDecreaseQty)}</p><label>정정 후 <input id="irc_qty_${i}" type="number" step="${l.unit==='box'?'0.5':'1'}" value="${mode==='cancel'?0:escape(l.receivedQty)}" ${mode==='cancel'?'disabled':''}></label></div>`).join('')}
  ${onMetadata?'<button id="irc_metadata" class="btn-secondary">메모·표시 담당자 수정</button>':''}
  <label>사유 <input id="irc_reason" maxlength="500"></label><p id="irc_status" role="status"></p>
  <div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">닫기</button><button id="irc_confirm" ${!flow.pending&&!prepared?.ok?'disabled':''}>${flow.pending?pendingLabel():'위 수량 확인 후 '+(mode==='cancel'?'취소':'정정')}</button><button id="irc_discard" class="btn-secondary" ${flow.pending&&!flow.hasInventoryResult?'':'hidden'}>폐기</button></div>`);
  document.getElementById('irc_metadata')?.addEventListener('click',()=>{if(!flow.pending)onMetadata();});
  const button=document.getElementById('irc_confirm'),status=document.getElementById('irc_status'),discard=document.getElementById('irc_discard');
- discard?.addEventListener('click',async()=>{button.disabled=true;discard.disabled=true;try{await gate.confirm();await flow.discard();check();closeModal();await onComplete();}catch(error){status.textContent=error.message;button.disabled=false;discard.disabled=false;}});
+ discard?.addEventListener('click',async()=>{button.disabled=true;discard.disabled=true;try{await gate.confirm();await flow.discard();check();closeModal();await onComplete();}catch(error){status.textContent=staffError(error);button.disabled=false;discard.disabled=false;}});
  button.addEventListener('click',async()=>{
   button.disabled=true;
   try{if(flow.pending){await gate.confirm();await flow.recover({resume:!flow.hasInventoryResult});}else {await gate.confirm();await flow.submit({mode,quantities:lots.map((_,i)=>document.getElementById('irc_qty_'+i).value),reason:document.getElementById('irc_reason').value});}check();closeModal();await onComplete();}
-  catch(error){if(!page||page.isCurrent()){status.textContent=error.message;button.textContent=flow.pending?pendingLabel():'입력 확인 후 다시 시도';if(flow.pending){const old=flow.savedRequest;document.getElementById('irc_pending_details').textContent=`미확정 작업 ${flow.operationId} · 저장 시각: ${flow.createdAt??'확인 필요'} · 모드: ${old.mode==='cancel'?'취소':'수량 정정'} · 저장 수량: ${old.mode==='cancel'?'전체 취소 (0)':old.lines.map(l=>l.productId+' / '+l.lotKey+': '+l.qty).join(' · ')} · 사유: ${old.reason}`;discard.hidden=flow.hasInventoryResult;}}}
+  catch(error){if(!page||page.isCurrent()){status.textContent=staffError(error);button.textContent=flow.pending?pendingLabel():'입력 확인 후 다시 시도';if(flow.pending){document.getElementById('irc_pending_details').innerHTML=correctionSummary(flow.savedRequest,{lots,context:flow.context,createdAt:flow.createdAt});discard.hidden=flow.hasInventoryResult;}}}
   finally{button.disabled=!flow.pending&&flow.prepared?.ok!==true;}
  });
  return true;
@@ -118,10 +121,10 @@ export async function mountInventoryCorrectionRecovery({sourceCollection,role,ro
   const response=await (recoveryCache?recoveryCache.promise:load());
   if(!current())return;
   const appendIntents=intents=>{
-   for(const pending of intents||[]){
+   for(const [index,pending] of (intents||[]).entries()){
     const button=document.createElement('button');button.className='btn-secondary';
-    button.textContent=`${pending.inventoryResult?.ok===true?'확정 마저 하기':'미실행 정정 확인'} (${pending.request.operationId})`;
-    button.addEventListener('click',()=>openInventoryReceiptCorrection({sourceCollection,sourceId:pending.sourceId,mode:pending.request.mode,pending,...options}).catch(error=>alert(error.message)));
+    button.textContent=`${pending.inventoryResult?.ok===true?'확정 마저 하기':'미실행 정정 확인'} · ${itemName(pending.context?.productName||pending.context?.recipeName,'입고 기록')} · ${pending.createdAt?new Date(pending.createdAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'}):'시각 확인 필요'} · ${holder.childNodes.length+1}번`;
+    button.addEventListener('click',()=>openInventoryReceiptCorrection({sourceCollection,sourceId:pending.sourceId,mode:pending.request.mode,pending,...options}).catch(error=>alert(staffError(error))));
     holder.appendChild(button);
    }
   };
@@ -137,11 +140,11 @@ export async function mountInventoryCorrectionRecovery({sourceCollection,role,ro
      if(!current())return;
      appendIntents(next.data.intents);cursor=next.data.nextCursor;
      if(!cursor)more.remove();
-    }catch(error){if(current())alert('미확정 작업 조회 실패: '+error.message);}
+    }catch(error){if(current())alert('미확정 작업 조회 실패: '+staffError(error));}
     finally{more.disabled=false;}
    });
    holder.appendChild(more);
   }
   if(!holder.childNodes.length)holder.remove();
- }catch(error){if(recoveryCache)recoveryCache.promise=null;if(current())holder.textContent='미확정 작업 조회 실패: '+error.message;}
+ }catch(error){if(recoveryCache)recoveryCache.promise=null;if(current())holder.textContent='미확정 작업 조회 실패: '+staffError(error);}
 }

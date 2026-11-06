@@ -1,3 +1,4 @@
+import {staffError} from '../utils/staffText.js';
 import {movementNote} from '../utils/movementNote.js';
 import {escapeHtml} from '../utils/html.js';
 import {showStatus} from '../utils/statusToast.js';
@@ -25,7 +26,7 @@ const bagResource=pageResource('bag');
 async function runBagCommand(callback,roles=['admin','office']) {
   const page=getPageContext();
   try{return await withReadCommand(bagResource,command=>{command.isCurrent=()=>!page||page.isCurrent();return callback(command);},{roles});}
-  catch(error){console.error('[봉투 저장]',error);alert(error.message);}
+  catch(error){console.error('[봉투 저장]',error);alert(staffError(error));}
 }
 async function saveBagStockChange(bag,patch,log,activity,date,selection) {
   return runBagCommand(async command=>{
@@ -194,7 +195,7 @@ async function persistBagOrderWithCommand(category,command) {
     await renderBag({force:true});
   } catch (err) {
     console.error('[bag] reorder save failed:', err);
-    alert('순번 저장 실패: ' + (err.message || err));
+    alert('순번 저장 실패: ' + (staffError(err) || err));
     const latest=await loadBagTypes();
     if(!command.isCurrent())return;
     bagTypes=latest;
@@ -246,7 +247,7 @@ const list=document.getElementById('bagList');
             subAction: 'activeToggle',
             date: getToday(),
             staff: getRoleStaffLabel(),
-            message: `봉투 종류 ${active ? '활성' : '비활성'} — ${target?.name || id}`,
+            message: `봉투 종류 ${active ? '활성' : '비활성'} — ${target?.name || '봉투 품목명 확인 필요'}`,
             details: {
               bagTypeId: id,
               bagName: target?.name || null,
@@ -261,7 +262,7 @@ const list=document.getElementById('bagList');
         });
       } catch (err) {
         console.error('[bag] active save failed:', err);
-        alert(err.message||'활성 상태 저장 중 오류가 발생했습니다.');
+        alert(staffError(err)||'활성 상태 저장 중 오류가 발생했습니다.');
         e.target.checked = !active;
       }
     });
@@ -423,8 +424,8 @@ async function deleteBagTypeWithCommand(bag,command) {
   try {
     const { linkedRecipes, linkedProducts, logDocs } = await loadBagDeleteContext(bag,command);
     const linkedNames = [
-      ...linkedRecipes.map(r => r.displayName || r.name || r.id),
-      ...linkedProducts.map(p => p.name || p.id),
+      ...linkedRecipes.map(r => r.displayName || r.name || '레시피명 확인 필요'),
+      ...linkedProducts.map(p => p.name || '제품명 확인 필요'),
     ];
     if (linkedNames.length > 0) {
       alert(`${linkedNames.join(', ')}에 연결되어 있어 삭제할 수 없습니다.\n연결을 먼저 해제해주세요.`);
@@ -467,7 +468,7 @@ async function deleteBagTypeWithCommand(bag,command) {
     alert('봉투가 삭제되었습니다.');
   } catch (err) {
     console.error('[bag] delete failed:', err);
-    alert(err.message||'봉투 삭제 중 오류가 발생했습니다.');
+    alert(staffError(err)||'봉투 삭제 중 오류가 발생했습니다.');
   }
 }
 
