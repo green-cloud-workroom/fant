@@ -1,0 +1,1 @@
+import{n as e}from"./index-BOlpGsyN.js";function t(t){return`<details class="support-reference"><summary>문의용 번호 보기</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere;user-select:all">`+e(t)+`</pre></details>`}export{t};
