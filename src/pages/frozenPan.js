@@ -2,7 +2,9 @@ import {staffError} from '../utils/staffText.js';
 import { fingerprint } from '../services/actionGateway.js';
 import { atomicStockOperation, stockOperationId } from '../services/atomicStockOperation.js';
 import {openPanReceipt} from './frozenPanReceipt.js';
-import {groupLots, productGroups, productBoard, stockTotals, lotTotal, movements, historyTable} from './frozenPanDesk.js';
+import {panStockGridModel,renderPanStockGrid,validatePanCategories} from './panStockGrid.js';
+import {openPanCategoryEditor} from './panCategoryEditor.js';
+import {groupLots, productGroups, stockTotals, lotTotal, movements, historyTable} from './frozenPanDesk.js';
 import { escapeHtml } from '../utils/html.js';
 import {showStatus} from '../utils/statusToast.js';
 import {movementLabel} from '../services/manualMovementLogic.js';
@@ -25,7 +27,7 @@ import { renderFreezeOpInTab,disposeFreezeOpTab } from './freezeOp.js';
 
 
 let freezeDryRecipes = [];
-const defaultDesk = () => ({tab:'stock', name:'', detail:false, kind:'all', today:false, limit:60, lots:false});
+const defaultDesk = () => ({tab:'stock', name:'', detail:false, kind:'all', today:false, limit:60, lots:false,collapsed:new Set()});
 let desk = defaultDesk();
 let receiptDrafts = new Map();
 let historyPage;
@@ -102,15 +104,16 @@ function renderFrozenPanLayout(data) {
   const redraw = () => renderFrozenPanLayout(data);
   let body;
   if (desk.tab === 'stock') {
+    const grid=panStockGridModel(data.recipes,bread,frozen,data.categoryConfig);
     const lotsHtml = renderBreadPanTab(bread, name) + renderFrozenPanTab(frozen, name);
     const count = (bread[name]?.length || 0) + (frozen[name]?.length || 0);
-    body = '<div class="pan-split '+(desk.detail?'show-detail':'')+'">'+productBoard(groups,name,bread,frozen)
-      +'<div class="pan-detail"><section class="pan-box"><button class="btn-secondary pan-back" data-back>‹ 품목 목록</button>'
+    body = renderPanStockGrid(grid,desk.collapsed,['admin','office'].includes(currentUserRole))+(desk.detail?'<div class="pan-grid-selection">'
+      +'<div class="pan-detail"><section class="pan-box"><button class="btn-secondary pan-grid-close" data-back>상세 닫기</button>'
       +'<header><h3>'+escapeHtml(name || '품목 없음')+'</h3><small>현재 재고</small></header>'
       +'<div class="pan-numbers"><span>빵판 <b>'+lotTotal(bread[name])+'개</b></span><span>동결판 <b>'+lotTotal(frozen[name])+'판</b></span></div>'
       +'<details '+(desk.lots?'open':'')+'><summary>입고일별 잔량 · '+count+'건</summary>'+lotsHtml+'</details></section>'
       +'<section class="pan-box"><header><h3>품목 이력</h3><button class="btn-secondary" data-history>전체 이력 보기 ›</button></header>'
-      +history(records.filter(r=>r.log.productName===name))+'</section></div></div>';
+      +history(records.filter(r=>r.log.productName===name))+'</section></div></div>':'');
   } else if (desk.tab === 'history') {
     const shown = records.filter(r=>(desk.kind==='all'||desk.kind===r.kind)&&(!desk.today||r.log.date===getToday()));
     body = '<section class="pan-box"><header><h3>전체 이력</h3><small>전체 품목 · '+shown.length+'건</small></header>'
@@ -127,6 +130,16 @@ function renderFrozenPanLayout(data) {
       '<button class="tab-btn '+(desk.tab===key?'active':'')+'" data-tab="'+key+'" aria-pressed="'+(desk.tab===key)+'">'+label+'</button>').join('')+'</nav>'+body+'</div>';
 
   root.querySelector('#panIncoming').addEventListener('click',openReceiptPicker);
+  root.querySelectorAll('[data-pan-fold]').forEach(button=>button.addEventListener('click',()=>{
+    const id=button.dataset.panFold;desk.collapsed.has(id)?desk.collapsed.delete(id):desk.collapsed.add(id);redraw();
+  }));
+  root.querySelector('#panCategories')?.addEventListener('click',()=>{
+    const grid=panStockGridModel(data.recipes,bread,frozen,data.categoryConfig);
+    openPanCategoryEditor({config:grid.editorConfig,names:grid.names,showModal,onSave:async config=>{
+      const saved=await savePanCategories(config,data.categoryConfig);
+      if(saved){document.getElementById('modalOverlay')?.remove();await refreshFrozenPanLayout({force:true});}
+    }});
+  });
   root.querySelector('#panWork').addEventListener('click',()=>showWorkRowModal(orders,data.lots));
   root.querySelector('#panAdjust').addEventListener('click',()=>{
     showModal('<h3 class="modal-title">수동조정</h3><div class="pan-adjust-options"><button id="breadAdjust" class="btn-secondary">빵판 조정 (개)</button><button id="frozenAdjust" class="btn-secondary">동결판 조정 (판)</button></div><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">닫기</button></div>');
@@ -150,13 +163,13 @@ function renderFrozenPanLayout(data) {
     desk.name=btn.dataset.product; desk.detail=true; desk.lots=false; desk.limit=60;
     redraw();
     if (window.matchMedia?.('(max-width:700px)').matches) {
-      root.querySelector('.pan-back')?.focus({preventScroll:true});
-      root.scrollTop=0;
+      root.querySelector('.pan-grid-close')?.focus({preventScroll:true});
+      root.querySelector('.pan-detail')?.scrollIntoView?.({block:'start'});
     }
   }));
   root.querySelector('[data-back]')?.addEventListener('click',()=>{
     desk.detail=false; redraw();
-    root.querySelector('.pan-board [aria-pressed="true"]')?.focus();
+    [...root.querySelectorAll('[data-product]')].find(button=>button.dataset.product===desk.name)?.focus();
   });
   const details = root.querySelector('.pan-detail details');
   details?.addEventListener('toggle',()=>{if(details.isConnected)desk.lots=details.open;});
@@ -1580,8 +1593,19 @@ async function loadFreezeHistory(scope) {
 
 // Read-only model construction shared by activation and idle preparation.
 async function loadInitialModel(scope) {
-  const [rows,lots,breadPanLots,breadPanLogs,frozenPanLogs,recipes,staff]=await Promise.all([
-   loadFrozenPanRows(scope),loadFrozenPanLots(scope),loadBreadPanLots(scope),loadBreadPanLogs(scope),loadFrozenPanLogs(scope),getActiveFreezeDryRecipes(scope),loadPageStaff(scope)]);
-  return {rows,lots,breadPanLots,breadPanLogs,frozenPanLogs,recipes,staff};
+  const [rows,lots,breadPanLots,breadPanLogs,frozenPanLogs,recipes,staff,categorySnap]=await Promise.all([
+   loadFrozenPanRows(scope),loadFrozenPanLots(scope),loadBreadPanLots(scope),loadBreadPanLogs(scope),loadFrozenPanLogs(scope),getActiveFreezeDryRecipes(scope),loadPageStaff(scope),scope.getDoc(doc(db,'settings','panStockCategories'))]);
+  return {rows,lots,breadPanLots,breadPanLogs,frozenPanLogs,recipes,staff,categoryConfig:categorySnap.exists()?categorySnap.data():null};
+}
+async function savePanCategories(config,baseline){
+ const next=validatePanCategories(config);
+ return runPageCommand(frozenPanResource,async command=>{
+  await commandWrites(command).runTransaction(db,async tx=>{
+   const ref=doc(db,'settings','panStockCategories'),fresh=await tx.get(ref);
+   if(fingerprint(fresh.exists()?fresh.data():null)!==fingerprint(baseline||null))throw Error('다른 사용자가 카테고리를 변경했습니다. 최신 화면에서 다시 편집해주세요.');
+   tx.set(ref,next);
+  });
+  return true;
+ });
 }
 export function preparePage({cacheOnly=true}={}) { return frozenPanResource.prepare?.('default',loadInitialModel,{cacheOnly}); }

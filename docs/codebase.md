@@ -303,6 +303,10 @@ spec_v24:
 
 동결판/빵판 재고 및 발주 흐름.
 
+2026-11-10: 품목별 재고는 카테고리 가로 접기와 입고일별 현재 잔량 표를 사용한다.
+표시 전용 설정 `settings/panStockCategories`는 version/category 배열/productName 매핑 배열로 저장하며 admin/office만 편집한다.
+자세한 데이터·검증 범위는 `PAN_STOCK_GRID_20261110.md` 참조. 재고 변경·입고·발주 처리 로직은 유지한다.
+
 권한 변경:
 - 발주 취소(`cancelOrder`): admin/office만 가능. production 차단.
 - 확인 완료된 발주 취소 버튼은 production에서 DOM 제거.
