@@ -4,6 +4,8 @@ import { atomicStockOperation, stockOperationId } from '../services/atomicStockO
 import {openPanReceipt} from './frozenPanReceipt.js';
 import {panStockGridModel,renderPanStockGrid,validatePanCategories} from './panStockGrid.js';
 import {openPanCategoryEditor} from './panCategoryEditor.js';
+import {mountPanStockEntry} from './panStockEntry.js';
+import {saveBreadPanIncoming} from '../services/breadPanIncoming.js';
 import {groupLots, productGroups, stockTotals, lotTotal, movements, historyTable} from './frozenPanDesk.js';
 import { escapeHtml } from '../utils/html.js';
 import {showStatus} from '../utils/statusToast.js';
@@ -27,7 +29,7 @@ import { renderFreezeOpInTab,disposeFreezeOpTab } from './freezeOp.js';
 
 
 let freezeDryRecipes = [];
-const defaultDesk = () => ({tab:'stock', name:'', detail:false, kind:'all', today:false, limit:60, lots:false,collapsed:new Set()});
+const defaultDesk = () => ({tab:'stock', name:'', detail:false, kind:'all', today:false, limit:60, lots:false,collapsed:new Set(),entry:null});
 let desk = defaultDesk();
 let receiptDrafts = new Map();
 let historyPage;
@@ -130,6 +132,17 @@ function renderFrozenPanLayout(data) {
       '<button class="tab-btn '+(desk.tab===key?'active':'')+'" data-tab="'+key+'" aria-pressed="'+(desk.tab===key)+'">'+label+'</button>').join('')+'</nav>'+body+'</div>';
 
   root.querySelector('#panIncoming').addEventListener('click',openReceiptPicker);
+  if(desk.tab==='stock')mountPanStockEntry({root,grid:panStockGridModel(data.recipes,bread,frozen,data.categoryConfig),collapsed:desk.collapsed,entry:desk.entry,
+    breadNames:new Set(data.recipes.filter(r=>r.requiresSeparation).map(r=>r.displayName)),staffOptions:getStaffOptions(['senior','office']),
+    onAdd:()=>{if(desk.entry?.saving)return;if(!desk.entry)desk.entry={date:getToday(),staffName:'',note:'',amounts:new Map(),active:null,operationId:doc(collection(db,'stockLedger')).id};redraw();},
+    onChange:redraw,onCancel:()=>{if(!desk.entry?.saving){desk.entry=null;redraw();}},onSave:button=>saveInlineBreadIncoming(button),
+    onConvert:async productName=>{
+      if(desk.entry){showStatus('입력 중인 빵판 입고를 먼저 저장하거나 취소해주세요.');return;}
+      const recipe=freezeDryRecipes.find(r=>r.displayName===productName);
+      if(!recipe){showStatus('현재 사용 중인 레시피가 아닙니다. 기존 재고는 수동조정에서 처리해주세요.');return;}
+      if(recipe.requiresSeparation)await showWorkRowModal(orders,data.lots,{productName});
+      else{showTenderInModal();const select=document.getElementById('m_recipe');if(select)select.value=productName;}
+    }});
   root.querySelectorAll('[data-pan-fold]').forEach(button=>button.addEventListener('click',()=>{
     const id=button.dataset.panFold;desk.collapsed.has(id)?desk.collapsed.delete(id):desk.collapsed.add(id);redraw();
   }));
@@ -832,9 +845,11 @@ function renderPanRow(r) {
   `;
 }
 
-async function showWorkRowModal(rows, lots) {
+async function showWorkRowModal(rows, lots, {productName=''}={}) {
+  const page=getPageContext();
   // 빵판 lot 다시 로드 (최신 잔량 반영)
   const allBreadLots = await loadBreadPanLots();
+  if(page&&!page.isCurrent())return;
 
   // 동결생식 레시피만 (분리 작업 필요한 것만)
   const breadPanRecipes = freezeDryRecipes.filter(r => r.requiresSeparation === true);
@@ -895,6 +910,7 @@ async function showWorkRowModal(rows, lots) {
 
   bindWorkItemEvents(productSummary);
   refreshAvailableProducts();
+  if(productName){const select=document.querySelector('#workItems .wi-name');select.value=productName;select.onchange();}
 
   document.getElementById('btnAddWorkItem').addEventListener('click', () => {
     document.getElementById('workItems').insertAdjacentHTML(
@@ -1609,3 +1625,19 @@ async function savePanCategories(config,baseline){
  });
 }
 export function preparePage({cacheOnly=true}={}) { return frozenPanResource.prepare?.('default',loadInitialModel,{cacheOnly}); }
+
+async function saveInlineBreadIncoming(button){
+ const pending=desk.entry;if(!pending)return;
+ const date=pending.date,staffName=pending.staffName,note=pending.note.trim();
+ const items=[...pending.amounts].filter(([,amount])=>amount!=='').map(([productName,amount])=>({productName,qty:Number(amount)}));
+ return runPageCommand(frozenPanResource,async command=>{
+  if(!items.length)throw Error('입고할 품목의 빵 칸을 눌러 수량을 입력해주세요.');
+  if(await blockIfClosed(date,command))return;
+  const active=await getActiveFreezeDryRecipes(command),eligible=new Set(active.filter(r=>r.requiresSeparation).map(r=>r.displayName));
+  if(items.some(item=>!eligible.has(item.productName)))throw Error('입고할 레시피가 변경됐습니다. 최신 자료를 확인해주세요.');
+  await saveBreadPanIncoming({db,command,operationId:stockOperationId(db,button),date,staffName,note,items,uid:currentUser?.uid||null});
+  if(!command.isCurrent())return;
+  if(desk.entry===pending)desk.entry=null;
+  await refreshFrozenPanLayout({force:true});showStatus('빵판 입고 완료!');
+ },{roles:['admin','office','production']});
+}

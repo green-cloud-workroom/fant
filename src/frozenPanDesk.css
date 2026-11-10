@@ -38,6 +38,24 @@
 .pan-totals { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px 22px; padding:6px 10px; margin:8px 0; background:white; border:1px solid #e4ddd3; border-radius:6px; }
 .pan-totals b,.pan-numbers b { font-size:19px; }
 .pan-totals small,.pan-box small { color:#706455; }
+.pan-totals.pan-item-summary { display:block; padding:0 12px; }
+.pan-summary-line { display:grid; grid-template-columns:230px minmax(0,1fr); align-items:baseline; gap:12px; padding:10px 0; }
+.pan-summary-line+.pan-summary-line { border-top:1px solid #e4ddd3; }
+.pan-summary-items { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px; min-width:0; }
+.pan-summary-items>span { overflow-wrap:anywhere; }
+.pan-summary-items b { font-size:13px; }
+.pan-summary-dot { color:#948879; padding:0 5px; }
+.pan-inline-controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:9px; margin-bottom:8px; background:#f2e5d2; border-radius:5px; }
+.pan-inline-controls label { display:flex; align-items:center; gap:5px; margin:0; }
+.pan-inline-controls input,.pan-inline-controls select { width:auto; max-width:160px; padding:5px; font-size:12px; }
+.pan-inline-controls small { color:#706455; }
+.pan-inline-row :is(th,td) { background:#fff5df!important; }
+.pan-inline-row .pan-grid-date small { display:block; font-size:10px; color:#815831; }
+.pan-inline-row input { width:100%; min-width:0; padding:6px 1px; font-size:12px; text-align:center; }
+.pan-inline-cell,.pan-grid-convert { display:block; width:100%; min-height:28px; padding:2px; background:none; border:0; color:inherit; font:inherit; font-variant-numeric:tabular-nums; }
+.pan-inline-cell:hover { background:#fff; }
+.pan-grid-convert { color:#855b3a; text-decoration:underline dotted; text-underline-offset:4px; }
+@media(max-width:700px) { .pan-summary-line { grid-template-columns:1fr; gap:5px; } }
 .pan-low { color:#a23d32; }
 .pan-tabs,.pan-numbers { display:flex; gap:6px; flex-wrap:wrap; align-items:baseline; }
 .pan-tabs { margin-bottom:8px; }

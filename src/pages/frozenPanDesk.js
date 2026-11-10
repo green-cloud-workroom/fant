@@ -71,8 +71,9 @@ export const lotTotal = lots => round2((lots || []).reduce((n,lot) => n + Number
 
 export function stockTotals(bread, frozen) {
   const count = lotTotal(bread);
-  return '<div class="pan-totals"><span>빵판 <b>'+count+'개</b> <small>실리콘 환산 '+breadToSilicon(count)+'판</small></span>'
-    + '<span>동결판 <b class="'+(lotTotal(frozen)<10?'pan-low':'')+'">'+lotTotal(frozen)+'판</b></span></div>';
+  const summary=(lots,unit)=>Object.entries(groupLots(lots)).filter(([,rows])=>lotTotal(rows)>0).map(([name,rows])=>'<span>'+h(name)+' <b>'+lotTotal(rows)+unit+'</b></span>').join('<span class="pan-summary-dot" aria-hidden="true">·</span>')||'<small>현재 남은 재고 없음</small>';
+  return '<div class="pan-totals pan-item-summary"><div class="pan-summary-line"><span>빵판 총 <b>'+count+'개</b> <small>실리콘 '+breadToSilicon(count)+'판</small></span><div class="pan-summary-items">'+summary(bread,'개')+'</div></div>'
+    + '<div class="pan-summary-line"><span>동결판 총 <b class="'+(lotTotal(frozen)<10?'pan-low':'')+'">'+lotTotal(frozen)+'판</b></span><div class="pan-summary-items">'+summary(frozen,'판')+'</div></div></div>';
 }
 
 export function productBoard(groups, selected, bread, frozen) {
