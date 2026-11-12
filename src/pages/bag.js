@@ -88,7 +88,7 @@ function renderBagLayout({keepDetail=false}={}) {
           <div class="bag-filters" role="group" aria-label="봉투 종류">
             ${filters.map(([key,label])=>`<button type="button" data-bag-filter="${key}" aria-pressed="${key===bagCategory}">${label} <b>${visibleBags(key).length}</b></button>`).join('')}
           </div>
-          <div class="bag-catalog-heading"><strong>봉투명</strong><span>현재 재고 (장)</span></div>
+          <div class="bag-catalog-heading"><strong>봉투명</strong><span title="박스당 장수로 환산한 온전한 박스 수">박스</span><span>재고 (장)</span></div>
           ${canManage&&bagManaging?'<div class="bag-manage-tools"><span>품목 관리</span><button type="button" class="btn-secondary" id="btnNewBag">+ 추가</button></div>':''}
           <div id="bagList">${renderBagList(rows)}</div>
         </aside>
@@ -133,10 +133,14 @@ function renderBagItem(bag) {
   const active=bag.active!==false;
   const selected=bag.id===selectedBagId;
   const low=Number(bag.currentQty)<Number(bag.minimumQty||0);
+  const pieces=Number(bag.piecesPerBox);
+  const quantity=Number(bag.currentQty);
+  const boxes=Number.isFinite(pieces)&&pieces>0&&bag.currentQty!=null&&Number.isFinite(quantity)?Math.floor(quantity/pieces):null;
   return `<div class="recipe-list-item bag-row${selected?' active':''}" data-id="${escapeHtml(bag.id)}" data-category="${escapeHtml(bag.category)}">
     ${manage&&active?'<span class="drag-handle" aria-label="순서 변경" title="순서 변경">≡</span>':''}
     <button type="button" class="bag-pick" aria-pressed="${selected}">
       <span class="bag-item-name">${escapeHtml(bag.name)}</span>
+      <span class="bag-item-boxes" title="${boxes===null?'박스 환산 기준 없음':`1박스 ${formatBagNumber(pieces)}장 · 잔여 ${formatBagNumber(quantity%pieces)}장`}" aria-label="${boxes===null?'박스 환산 기준 없음':`환산 ${formatBagNumber(boxes)}박스`}">${boxes===null?'—':escapeHtml(formatBagNumber(boxes))}</span>
       <strong class="bag-item-qty${low?' bag-low':''}" aria-label="현재 ${escapeHtml(formatBagNumber(bag.currentQty))}장">${escapeHtml(formatBagNumber(bag.currentQty))}</strong>
     </button>
     ${manage?`<label class="toggle-switch" title="${active?'활성':'비활성'}" onclick="event.stopPropagation()"><input type="checkbox" class="bag-active-toggle" aria-label="${escapeHtml(bag.name)} 활성" data-id="${escapeHtml(bag.id)}" ${active?'checked':''}><span class="toggle-slider"></span></label>`:''}
